@@ -1,0 +1,14 @@
+# vs文件
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.user
+*.vcxproj.filters
+
+# 输出
+bin/
+bin-int/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
