@@ -63,14 +63,17 @@ project "Engine"
 
 	filter "configurations:Debug"
 		defines "EG_DEBUG"
+		buildoptions "/MDd"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "EG_RELEASE"
+		buildoptions "/MD"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "EG_DIST"
+		buildoptions "/MD"
 		optimize "On"
 
 project "SandBox"
@@ -110,12 +113,15 @@ project "SandBox"
 
 	filter "configurations:Debug"
 		defines "EG_DEBUG"
+		buildoptions "/MDd"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "EG_RELEASE"
+		buildoptions "/MD"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "EG_DIST"
+		buildoptions "/MD"
 		optimize "On"
