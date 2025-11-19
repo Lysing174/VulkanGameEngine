@@ -11,7 +11,6 @@ public:
 	}
 	void OnUpdate() override
 	{
-		EG_INFO("ExampleLayer::Update");
 	}
 	void OnEvent(Engine::Event& event) override
 	{
