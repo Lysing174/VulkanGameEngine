@@ -13,6 +13,8 @@ workspace "VulkanEngine"
 
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
+include "vendor/bin/imgui"
+
 project "Engine"
 	location "Engine"
 	kind "SharedLib"
@@ -34,6 +36,7 @@ project "Engine"
 	{
 		"ThirdParty/Include",
 		"Engine/src",
+		"vendor/bin/imgui",
 		"D:/program/vulkanSDK1.4.304.1/Include",
 		"D:/program/vulkanSDK1.4.304.1/Third-Party/Include"
 	}
@@ -43,6 +46,7 @@ project "Engine"
 	}
 	links {
         "glfw3.lib",
+		"ImGui",
         "opengl32.lib"
     }
 	filter "system:windows"
