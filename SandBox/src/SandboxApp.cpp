@@ -9,6 +9,14 @@ public:
 	{
 
 	}
+	void OnImGuiRender() override
+	{
+		ImGui::ShowDemoWindow();
+	}
+	void OnDetach() override
+	{
+
+	}
 	void OnUpdate() override
 	{
 	}

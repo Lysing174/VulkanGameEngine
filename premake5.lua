@@ -48,7 +48,6 @@ project "Engine"
 	links {
         "glfw3.lib",
 		"ImGui",
-        "opengl32.lib",
 		"vulkan-1.lib"
     }
 	filter "system:windows"
@@ -99,11 +98,20 @@ project "SandBox"
 	includedirs
 	{
 		"ThirdParty/Include",
-		"Engine/src"
+		"Engine/src",
+		"vendor/bin/imgui",
+		"D:/program/vulkanSDK1.4.304.1/Include",
+		"D:/program/vulkanSDK1.4.304.1/Third-Party/Include"
+	}
+	libdirs
+	{
+		"D:/program/vulkanSDK1.4.304.1/Lib",
+		"D:/program/vulkanSDK1.4.304.1/Third-Party/Lib"
 	}
 
 	links
 	{
+		"ImGui",
 		"Engine"
 	}
 

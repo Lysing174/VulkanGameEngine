@@ -1,4 +1,7 @@
 #pragma once
+#include "imgui.h"
+#include "Engine/ImGui/ImGuiLayer.h"
+
 #ifdef EG_PLATFORM_WINDOWS
 
 extern Engine::Application* Engine::CreateApplication();
@@ -6,8 +9,8 @@ extern Engine::Application* Engine::CreateApplication();
 int main(int argc,char** argv) 
 {
 	Engine::Log::Init();
-	EG_WARN("warn");
 	auto* app = Engine::CreateApplication();
+	ImGui::SetCurrentContext(Engine::ImGuiLayer::GetContext());
 	app->Run();
 	delete app;
 }

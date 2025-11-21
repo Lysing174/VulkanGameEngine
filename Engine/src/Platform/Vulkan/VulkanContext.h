@@ -156,17 +156,22 @@ namespace Engine {
         VulkanContext(GLFWwindow* windowHandle);
         ~VulkanContext();
 
-       /* void run() {
-            initWindow();
-            initVulkan();
-            mainLoop();
-            cleanup();
-        }*/
         virtual void Init() override;
         virtual void SwapBuffers() override;
 
-
         static void onWindowResized(GLFWwindow* window, int width, int height);
+        VkCommandBuffer beginSingleTimeCommands();
+        void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+
+
+        VkInstance GetInstance() { return instance; }
+        VkPhysicalDevice GetPhysicalDevice() { return physicalDevice; }
+        VkDevice GetDevice() { return device; }
+        VkQueue GetGraphicsQueue() { return graphicsQueue; }
+        VkDescriptorPool GetDescriptorPool() { return descriptorPool; } // 刚加的
+        uint32_t GetMinImageCount() { return 2; } // 通常是 2 或 3，看你的 swapchain 设置
+        uint32_t GetImageCount() { return (uint32_t)swapChainImages.size(); } // 你 swapchain 里的图片数量
+        VkRenderPass GetRenderPass() { return renderPass; } // 必须！ImGui 需要知道它在哪个 RenderPass 里画
 
     private:
         VkInstance instance;
@@ -375,10 +380,6 @@ namespace Engine {
         void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
 
         void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
-
-        VkCommandBuffer beginSingleTimeCommands();
-
-        void endSingleTimeCommands(VkCommandBuffer commandBuffer);
 
         uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
