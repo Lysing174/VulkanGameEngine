@@ -5,6 +5,7 @@
 #include "Events/Event.h"
 #include "Events/ApplicationEvent.h"
 #include "Engine/ImGui/ImGuiLayer.h"
+#include "Platform/Vulkan/VulkanContext.h"
 #include "Window.h"
 namespace Engine {
 	class ENGINE_API Application
@@ -27,6 +28,7 @@ namespace Engine {
 
 		inline static Application& Get() { return *s_Instance; }
 	private:
+		bool OnWindowResize(WindowResizeEvent& e);
 		bool OnWindowClose(WindowCloseEvent& e);
 
 		std::unique_ptr<Window> m_Window;

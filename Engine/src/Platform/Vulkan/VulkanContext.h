@@ -158,8 +158,9 @@ namespace Engine {
 
         virtual void Init() override;
         virtual void SwapBuffers() override;
+        void OnWindowResized(int width, int height);
 
-        static void onWindowResized(GLFWwindow* window, int width, int height);
+
         VkCommandBuffer beginSingleTimeCommands();
         void endSingleTimeCommands(VkCommandBuffer commandBuffer);
 

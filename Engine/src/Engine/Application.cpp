@@ -1,6 +1,6 @@
 #include "pch.h"
 #include "Application.h"
-
+#include "Input.h"
 
 #include <GLFW/glfw3.h>
 namespace Engine {
@@ -35,6 +35,7 @@ namespace Engine {
 	void Application::OnEvent(Event& e)
 	{
 		EventDispatcher dispatcher(e);
+		dispatcher.Dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::OnWindowResize));
 		dispatcher.Dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
 
 		EG_CORE_TRACE("{0}", e.ToString());
@@ -84,11 +85,14 @@ namespace Engine {
 				layer->OnImGuiRender();
 
 			m_ImGuiLayer->End(); 
-
 			m_Window->OnUpdate();
-
-
 		}
+	}
+
+	bool Application::OnWindowResize(WindowResizeEvent& e)
+	{
+		((VulkanContext*)(m_Window->GetContext()))->OnWindowResized(e.GetWidth(), e.GetHeight());
+		return false;
 	}
 
 	bool Application::OnWindowClose(WindowCloseEvent& e)

@@ -73,9 +73,6 @@ namespace Engine {
 	{
 
 	}
-	void ImGuiLayer::OnEvent(Event& event)
-	{
-	}
     void ImGuiLayer::Begin()
     {
         ImGui_ImplVulkan_NewFrame(); // 告诉 Vulkan 后端：新的一帧
@@ -103,5 +100,73 @@ namespace Engine {
     ImGuiContext* ImGuiLayer::GetContext()
     {
         return ImGui::GetCurrentContext();
+    }
+    void ImGuiLayer::OnEvent(Event& event)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+
+        if (io.WantCaptureMouse)
+        {
+            if (event.IsInCategory(EventCategoryMouse) || event.IsInCategory(EventCategoryMouseButton))
+                event.Handled = true;
+        }
+
+        if (io.WantCaptureKeyboard)
+        {
+            if (event.IsInCategory(EventCategoryKeyboard) || event.IsInCategory(EventCategoryInput))
+                event.Handled = true;
+        }
+        /*若想手动控制glfw回调：
+        EventDispatcher dispatcher(event);
+        dispatcher.Dispatch<MouseButtonPressedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseButtonPressedEvent));
+        dispatcher.Dispatch<MouseButtonReleasedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseButtonReleasedEvent));
+        dispatcher.Dispatch<MouseMovedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseMovedEvent));
+        dispatcher.Dispatch<MouseScrolledEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseScrolledEvent));
+        dispatcher.Dispatch<KeyPressedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnKeyPressedEvent));
+        dispatcher.Dispatch<KeyReleasedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnKeyReleasedEvent));
+        dispatcher.Dispatch<KeyTypedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnKeyTypedEvent));
+        dispatcher.Dispatch<WindowResizeEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnWindowResizeEvent));
+        */
+    }
+
+    bool ImGuiLayer::OnMouseButtonPressedEvent(MouseButtonPressedEvent& e)
+    {
+        return false;
+    }
+    bool ImGuiLayer::OnMouseButtonReleasedEvent(MouseButtonReleasedEvent& e)
+    {
+        return false;
+
+    }
+    bool ImGuiLayer::OnMouseMovedEvent(MouseMovedEvent& e)
+    {
+        return false;
+
+    }
+    bool ImGuiLayer::OnMouseScrolledEvent(MouseScrolledEvent& e)
+    {
+        return false;
+
+    }
+    bool ImGuiLayer::OnKeyPressedEvent(KeyPressedEvent& e)
+    {
+        return false;
+
+    }
+    bool ImGuiLayer::OnKeyReleasedEvent(KeyReleasedEvent& e)
+    {
+        return false;
+
+    }
+    bool ImGuiLayer::OnKeyTypedEvent(KeyTypedEvent& e)
+    {
+        return false;
+
+    }
+
+    bool ImGuiLayer::OnWindowResizeEvent(WindowResizeEvent& e)
+    {
+        return false;
+
     }
 }

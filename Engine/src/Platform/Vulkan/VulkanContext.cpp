@@ -1540,11 +1540,10 @@ namespace Engine {
             vkQueuePresentKHR(presentQueue, &presentInfo);
         }
 
-    void VulkanContext::onWindowResized(GLFWwindow* window, int width, int height) {
+    void VulkanContext::OnWindowResized(int width, int height) {
         if (width == 0 || height == 0) return;
 
-        VulkanContext* app = reinterpret_cast<VulkanContext*>(glfwGetWindowUserPointer(window));
-        app->recreateSwapChain();
+        recreateSwapChain();
     }
 
 }
