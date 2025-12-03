@@ -11,9 +11,9 @@ namespace Engine {
 		virtual void Init() = 0;
 		virtual void BeginFrame() = 0;
 		virtual void DrawFrame() = 0;
-
-		// 负责把画好的帧显示到屏幕上 (Vulkan 的 Present)
 		virtual void EndFrame() = 0;
+
+		virtual void DrawModel(uint32_t indexCount) = 0;
 	};
 
 }

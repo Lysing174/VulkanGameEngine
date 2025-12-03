@@ -9,7 +9,7 @@ namespace Engine {
 	{
 	public:
 		VulkanVertexBuffer(uint32_t size);
-		VulkanVertexBuffer(float* vertices, uint32_t size);
+		VulkanVertexBuffer(std::vector<Vertex> vertices, uint32_t size);
 		virtual ~VulkanVertexBuffer();
 
 		virtual void Bind() const override;
@@ -22,8 +22,7 @@ namespace Engine {
 		VkBuffer GetVulkanBuffer() const { return m_Buffer; }
 
 	private:
-		void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+
 	private:
 		VkBuffer m_Buffer;
 		VkDeviceMemory m_BufferMemory;
@@ -35,7 +34,7 @@ namespace Engine {
 	class VulkanIndexBuffer : public IndexBuffer
 	{
 	public:
-		VulkanIndexBuffer(uint32_t* indices, uint32_t count);
+		VulkanIndexBuffer(std::vector<uint32_t> indices, uint32_t count);
 		virtual ~VulkanIndexBuffer();
 
 		virtual void Bind() const override;
@@ -45,8 +44,6 @@ namespace Engine {
 		VkBuffer GetVulkanBuffer() const { return m_Buffer; }
 
 	private:
-		void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 	private:
 		VkBuffer m_Buffer;
 		VkDeviceMemory m_BufferMemory;

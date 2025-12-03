@@ -1,5 +1,7 @@
 ﻿#pragma once
 #include "Engine/Renderer/GraphicsContext.h"
+#include "Engine/Renderer/RendererAPI.h"
+
 #define GLFW_INCLUDE_VULKAN
 
 #include <GLFW/glfw3.h>
@@ -32,46 +34,46 @@ const bool enableValidationLayers = false;
 
 
 namespace Engine {
-    struct Vertex {
-        glm::vec3 pos;
-        glm::vec3 color;
-        glm::vec2 texCoord;
+    //struct Vertex {
+    //    glm::vec3 pos;
+    //    glm::vec3 color;
+    ////    glm::vec2 texCoord;
 
-        static VkVertexInputBindingDescription getBindingDescription() {
-            VkVertexInputBindingDescription bindingDescription = {};
-            bindingDescription.binding = 0;
-            bindingDescription.stride = sizeof(Vertex);
-            bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    //    static VkVertexInputBindingDescription getBindingDescription() {
+    //        VkVertexInputBindingDescription bindingDescription = {};
+    //        bindingDescription.binding = 0;
+    //        bindingDescription.stride = sizeof(Vertex);
+    //        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-            return bindingDescription;
-        }
+    //        return bindingDescription;
+    //    }
 
-        static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
-            std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
+    //    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
+    //        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
 
-            attributeDescriptions[0].binding = 0;
-            attributeDescriptions[0].location = 0;
-            attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-            attributeDescriptions[0].offset = offsetof(Vertex, pos);
+    //        attributeDescriptions[0].binding = 0;
+    //        attributeDescriptions[0].location = 0;
+    //        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    //        attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
-            attributeDescriptions[1].binding = 0;
-            attributeDescriptions[1].location = 1;
-            attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-            attributeDescriptions[1].offset = offsetof(Vertex, color);
+    //        attributeDescriptions[1].binding = 0;
+    //        attributeDescriptions[1].location = 1;
+    //        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    //        attributeDescriptions[1].offset = offsetof(Vertex, color);
 
-            attributeDescriptions[2].binding = 0;
-            attributeDescriptions[2].location = 2;
-            attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-            attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+    //        attributeDescriptions[2].binding = 0;
+    //        attributeDescriptions[2].location = 2;
+    //        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    //        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
 
-            return attributeDescriptions;
-        }
+    //        return attributeDescriptions;
+    //    }
 
-        bool operator==(const Vertex& other) const {
-            return pos == other.pos && color == other.color && texCoord == other.texCoord;
-        }
+    //    bool operator==(const Vertex& other) const {
+    //        return pos == other.pos && color == other.color && texCoord == other.texCoord;
+    //    }
 
-    };
+    //};
 }
 
 namespace std
@@ -160,11 +162,15 @@ namespace Engine {
         virtual void BeginFrame() override;
         virtual void DrawFrame() override;
         virtual void EndFrame() override;
+        virtual void DrawModel(uint32_t indexCount)override;
+
         void OnWindowResized(int width, int height);
 
-
-        VkCommandBuffer beginSingleTimeCommands();
-        void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+        void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+        void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+        uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+        VkCommandBuffer BeginSingleTimeCommands();
+        void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
 
 
         VkInstance GetInstance() { return instance; }
@@ -196,12 +202,12 @@ namespace Engine {
         VkDescriptorPool descriptorPool;
         VkDescriptorSet descriptorSet;
 
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
-        VkBuffer vertexBuffer;
-        VkDeviceMemory vertexBufferMemory;
-        VkBuffer indexBuffer;
-        VkDeviceMemory indexBufferMemory;
+        //std::vector<Vertex> vertices;
+        //std::vector<uint32_t> indices;
+        //VkBuffer vertexBuffer;
+        //VkDeviceMemory vertexBufferMemory;
+        //VkBuffer indexBuffer;
+        //VkDeviceMemory indexBufferMemory;
         VkBuffer uniformBuffer;
         VkDeviceMemory uniformBufferMemory;
         VkImage textureImage;
@@ -345,8 +351,8 @@ namespace Engine {
 
         void createDescriptorSetLayout();
 
-        static std::vector<char> readFile(const std::string& filename);
-        VkShaderModule createShaderModule(const std::vector<char>& code);
+        //static std::vector<char> readFile(const std::string& filename);
+        //VkShaderModule createShaderModule(const std::vector<char>& code);
         void createRenderPass();
 
         void createFramebuffers();
@@ -376,17 +382,11 @@ namespace Engine {
         /// </summary>
         void createTextureSampler();
 
-        void loadModel();
+        //void loadModel();
 
-        void createVertexBuffer();
-        void createIndexBuffer();
+        //void createVertexBuffer();
+        //void createIndexBuffer();
         void createUniformBuffer();
-        void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-
-        void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
-
-        uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-
         void createDescriptorPool();
 
         void createDescriptorSet();
