@@ -149,11 +149,6 @@ namespace Engine {
 		glfwDestroyWindow(m_Window);
 	}
 
-	void WindowsWindow::OnUpdate()
-	{
-		glfwPollEvents();
-		m_Context->SwapBuffers();
-	}
 
 	void WindowsWindow::SetVSync(bool enabled)
 	{

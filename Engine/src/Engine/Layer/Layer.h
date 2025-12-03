@@ -4,7 +4,7 @@
 
 namespace Engine {
 
-	class ENGINE_API Layer
+	class Layer
 	{
 	public:
 		Layer(const std::string& name = "Layer");
@@ -13,6 +13,7 @@ namespace Engine {
 		virtual void OnAttach() {}
 		virtual void OnDetach() {}
 		virtual void OnUpdate() {}
+		virtual void OnFixedUpdate() {}
 		virtual void OnImGuiRender() {}
 		virtual void OnEvent(Event& event) {}
 

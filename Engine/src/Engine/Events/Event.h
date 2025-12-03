@@ -3,7 +3,6 @@
 #include "Engine/Core.h"
 
 namespace Engine {
-	//目前是阻塞处理事件，之后需改进
 
 	enum class EventType
 	{
@@ -31,7 +30,7 @@ namespace Engine {
 
 #define EVENT_CLASS_CATEGORY(category) virtual int GetCategoryFlags() const override {return category;}
 
-	class ENGINE_API Event
+	class Event
 	{
 		friend class EventDispatcher;
 	public:

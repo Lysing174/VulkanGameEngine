@@ -21,14 +21,12 @@ namespace Engine {
 	};
 
 	// Interface representing a desktop system based Window
-	class ENGINE_API Window
+	class Window
 	{
 	public:
 		using EventCallbackFn = std::function<void(Event&)>;
 
 		virtual ~Window() = default;
-
-		virtual void OnUpdate() = 0;
 
 		virtual uint32_t GetWidth() const = 0;
 		virtual uint32_t GetHeight() const = 0;

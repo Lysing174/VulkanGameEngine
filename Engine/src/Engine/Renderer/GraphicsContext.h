@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 namespace Engine {
 
@@ -7,11 +7,13 @@ namespace Engine {
 	public:
 		virtual ~GraphicsContext() = default;
 
-		// ¸ºÔğ³õÊ¼»¯Í¼ĞÎ API (±ÈÈç´´½¨ Vulkan Instance, Device)
+		// è´Ÿè´£åˆå§‹åŒ–å›¾å½¢ API (æ¯”å¦‚åˆ›å»º Vulkan Instance, Device)
 		virtual void Init() = 0;
+		virtual void BeginFrame() = 0;
+		virtual void DrawFrame() = 0;
 
-		// ¸ºÔğ°Ñ»­ºÃµÄÖ¡ÏÔÊ¾µ½ÆÁÄ»ÉÏ (Vulkan µÄ Present)
-		virtual void SwapBuffers() = 0;
+		// è´Ÿè´£æŠŠç”»å¥½çš„å¸§æ˜¾ç¤ºåˆ°å±å¹•ä¸Š (Vulkan çš„ Present)
+		virtual void EndFrame() = 0;
 	};
 
 }

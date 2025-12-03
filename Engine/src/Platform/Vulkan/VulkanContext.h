@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "Engine/Renderer/GraphicsContext.h"
 #define GLFW_INCLUDE_VULKAN
 
@@ -100,10 +100,10 @@ namespace Engine {
 
 
         /// <summary>
-        /// ÃüÁî¶ÓÁĞ´Ø
+        /// å‘½ä»¤é˜Ÿåˆ—ç°‡
         /// </summary>
         struct QueueFamilyIndices {
-            int graphicsFamily = -1; //-1±íÊ¾Ã»ÕÒµ½
+            int graphicsFamily = -1; //-1è¡¨ç¤ºæ²¡æ‰¾åˆ°
             int presentFamily = -1;
 
             bool isComplete() {
@@ -111,7 +111,7 @@ namespace Engine {
             }
         };
         /// <summary>
-        /// ½»»»Á´
+        /// äº¤æ¢é“¾
         /// </summary>
         struct SwapChainSupportDetails {
             VkSurfaceCapabilitiesKHR capabilities;
@@ -120,7 +120,7 @@ namespace Engine {
         };
 
         /// <summary>
-        /// ´´½¨±àÒëĞÅÏ¢·¢ËÍÆ÷
+        /// åˆ›å»ºç¼–è¯‘ä¿¡æ¯å‘é€å™¨
         /// </summary>
         VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
             auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
@@ -134,7 +134,7 @@ namespace Engine {
             }
         }
         /// <summary>
-        /// Ïú»Ù±àÒëĞÅÏ¢·¢ËÍÆ÷
+        /// é”€æ¯ç¼–è¯‘ä¿¡æ¯å‘é€å™¨
         /// </summary>
         void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator) {
             auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
@@ -157,7 +157,9 @@ namespace Engine {
         ~VulkanContext();
 
         virtual void Init() override;
-        virtual void SwapBuffers() override;
+        virtual void BeginFrame() override;
+        virtual void DrawFrame() override;
+        virtual void EndFrame() override;
         void OnWindowResized(int width, int height);
 
 
@@ -169,10 +171,16 @@ namespace Engine {
         VkPhysicalDevice GetPhysicalDevice() { return physicalDevice; }
         VkDevice GetDevice() { return device; }
         VkQueue GetGraphicsQueue() { return graphicsQueue; }
-        VkDescriptorPool GetDescriptorPool() { return descriptorPool; } // ¸Õ¼ÓµÄ
-        uint32_t GetMinImageCount() { return 2; } // Í¨³£ÊÇ 2 »ò 3£¬¿´ÄãµÄ swapchain ÉèÖÃ
-        uint32_t GetImageCount() { return (uint32_t)swapChainImages.size(); } // Äã swapchain ÀïµÄÍ¼Æ¬ÊıÁ¿
-        VkRenderPass GetRenderPass() { return renderPass; } // ±ØĞë£¡ImGui ĞèÒªÖªµÀËüÔÚÄÄ¸ö RenderPass Àï»­
+        VkDescriptorPool GetDescriptorPool() { return descriptorPool; } // åˆšåŠ çš„
+        uint32_t GetMinImageCount() { return 2; } // é€šå¸¸æ˜¯ 2 æˆ– 3ï¼Œçœ‹ä½ çš„ swapchain è®¾ç½®
+        uint32_t GetImageCount() { return (uint32_t)swapChainImages.size(); } // ä½  swapchain é‡Œçš„å›¾ç‰‡æ•°é‡
+        VkRenderPass GetRenderPass() { return renderPass; } // å¿…é¡»ï¼ImGui éœ€è¦çŸ¥é“å®ƒåœ¨å“ªä¸ª RenderPass é‡Œç”»
+        VkCommandBuffer GetCurrentCommandBuffer() { return commandBuffers[currentImageIndex]; }
+        VkDescriptorSet GetDescriptorSet() { return descriptorSet; }
+        VkDescriptorSetLayout GetDescriptorSetLayout() { return descriptorSetLayout; }
+        VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
+
+        static VulkanContext* Get() { return s_Instance; }
 
     private:
         VkInstance instance;
@@ -183,9 +191,7 @@ namespace Engine {
         VkDevice device;
         VkSwapchainKHR swapChain;
         VkRenderPass renderPass;
-        VkPipelineLayout pipelineLayout;
         VkDescriptorSetLayout descriptorSetLayout;
-        VkPipeline graphicsPipeline;
         VkCommandPool commandPool;
         VkDescriptorPool descriptorPool;
         VkDescriptorSet descriptorSet;
@@ -216,6 +222,7 @@ namespace Engine {
         std::vector<VkCommandBuffer> commandBuffers;
         VkSemaphore imageAvailableSemaphore;
         VkSemaphore renderFinishedSemaphore;
+        uint32_t currentImageIndex = 0;
 
 
         const int WIDTH = 800;
@@ -224,9 +231,9 @@ namespace Engine {
         const std::string MODEL_PATH = "models/cottage_obj.obj";
         const std::string TEXTURE_PATH = "textures/cottage_diffuse.png";
 
-    private:
-        void initWindow();
+        static VulkanContext* s_Instance;
 
+    private:
         void initVulkan();
         void mainLoop();
 
@@ -237,45 +244,45 @@ namespace Engine {
         void cleanup();
 
         /// <summary>
-        /// ´´½¨vkÊµÀı
+        /// åˆ›å»ºvkå®ä¾‹
         /// </summary>
         void createInstance();
 
         /// <summary>
-    /// »ñÈ¡ĞèÒªµÄÀ©Õ¹ÁĞ±í
+    /// è·å–éœ€è¦çš„æ‰©å±•åˆ—è¡¨
     /// </summary>
     /// <returns></returns>
         std::vector<const char*> getRequiredExtensions();
 
         /// <summary>
-        /// Æô¶¯±àÒëĞÅÏ¢·¢ËÍÆ÷
+        /// å¯åŠ¨ç¼–è¯‘ä¿¡æ¯å‘é€å™¨
         /// </summary>
         void setupDebugMessenger();
 
         /// <summary>
-        /// ¼ì²éËùĞè²ã£¨validationLayers£©ÊÇ·ñÖ§³Ö
+        /// æ£€æŸ¥æ‰€éœ€å±‚ï¼ˆvalidationLayersï¼‰æ˜¯å¦æ”¯æŒ
         /// </summary>
-        /// <returns>·µ»ØÊÇ·ñÖ§³Ö</returns>
+        /// <returns>è¿”å›æ˜¯å¦æ”¯æŒ</returns>
         bool checkValidationLayerSupport();
 
         /// <summary>
-        /// Ìî³ä±àÒëĞÅÏ¢·¢ËÍÆ÷µÄ´´½¨½á¹¹Ìå
+        /// å¡«å……ç¼–è¯‘ä¿¡æ¯å‘é€å™¨çš„åˆ›å»ºç»“æ„ä½“
         /// </summary>
         void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);  
         static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
 
         /// <summary>
-        /// ´´½¨surface
+        /// åˆ›å»ºsurface
         /// </summary>
         void createSurface();
 
         /// <summary>
-        /// Ñ¡ÔñÎïÀíÉè±¸
+        /// é€‰æ‹©ç‰©ç†è®¾å¤‡
         /// </summary>
         void pickPhysicalDevice();
 
         /// <summary>
-        /// ¼ì²éÎïÀíÉè±¸ÊÇ·ñºÏÊÊ
+        /// æ£€æŸ¥ç‰©ç†è®¾å¤‡æ˜¯å¦åˆé€‚
         /// </summary>
         /// <param name="device"></param>
         /// <returns></returns>
@@ -283,52 +290,52 @@ namespace Engine {
 
 
         /// <summary>
-        /// ²éÕÒÃüÁî¶ÓÁĞ´Ø
+        /// æŸ¥æ‰¾å‘½ä»¤é˜Ÿåˆ—ç°‡
         /// </summary>
         /// <param name="device"></param>
         /// <returns></returns>
         QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 
         /// <summary>
-        /// ¼ì²éÎïÀíÉè±¸À©Õ¹ÊÇ·ñÖ§³Ö£¨´´½¨ÎïÀíÉè±¸Ê±£©
+        /// æ£€æŸ¥ç‰©ç†è®¾å¤‡æ‰©å±•æ˜¯å¦æ”¯æŒï¼ˆåˆ›å»ºç‰©ç†è®¾å¤‡æ—¶ï¼‰
         /// </summary>
         /// <param name="device"></param>
         /// <returns></returns>
         bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 
         /// <summary>
-        /// ²éÑ¯½»»»Á´ÊÇ·ñÖ§³Ö£¨´´½¨ÎïÀíÉè±¸Ê±¼ì²é£©
+        /// æŸ¥è¯¢äº¤æ¢é“¾æ˜¯å¦æ”¯æŒï¼ˆåˆ›å»ºç‰©ç†è®¾å¤‡æ—¶æ£€æŸ¥ï¼‰
         /// </summary>
         /// <param name="device"></param>
         /// <returns></returns>
         SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
 
         /// <summary>
-        /// ´´½¨Âß¼­Éè±¸
+        /// åˆ›å»ºé€»è¾‘è®¾å¤‡
         /// </summary>
         void createLogicalDevice();
 
         /// <summary>
-        /// ´´½¨½»»»Á´
+        /// åˆ›å»ºäº¤æ¢é“¾
         /// </summary>
         void createSwapChain();
 
         /// <summary>
-        /// Ñ¡Ôñsurface×îºÏÊÊµÄformats
+        /// é€‰æ‹©surfaceæœ€åˆé€‚çš„formats
         /// </summary>
         /// <param name="availableFormats"></param>
         /// <returns></returns>
         VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
 
         /// <summary>
-        /// Ñ¡Ôñsurface×îºÏÊÊµÄpresentMode
+        /// é€‰æ‹©surfaceæœ€åˆé€‚çš„presentMode
         /// </summary>
         /// <param name="availablePresentModes"></param>
         /// <returns></returns>
         VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> availablePresentModes);
 
         /// <summary>
-        /// Ñ¡Ôñsurface×îºÏÊÊµÄswapExtent
+        /// é€‰æ‹©surfaceæœ€åˆé€‚çš„swapExtent
         /// </summary>
         /// <param name="capabilities"></param>
         /// <returns></returns>
@@ -337,10 +344,6 @@ namespace Engine {
         void createImageViews();
 
         void createDescriptorSetLayout();
-
-
-        void createGraphicsPipeline();
-
 
         static std::vector<char> readFile(const std::string& filename);
         VkShaderModule createShaderModule(const std::vector<char>& code);
@@ -369,7 +372,7 @@ namespace Engine {
 
         VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
         /// <summary>
-        /// ÅäÖÃÎÆÀí²ÉÑùÆ÷
+        /// é…ç½®çº¹ç†é‡‡æ ·å™¨
         /// </summary>
         void createTextureSampler();
 

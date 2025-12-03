@@ -8,7 +8,7 @@
 #include "Platform/Vulkan/VulkanContext.h"
 #include "Window.h"
 namespace Engine {
-	class ENGINE_API Application
+	class Application
 	{
 	public:
 		Application();
@@ -25,6 +25,8 @@ namespace Engine {
 
 
 		inline Window& GetWindow() { return *m_Window; }
+		inline float GetTimeStep() { return m_TimeStep; }
+		inline float GetFixedTimeStep() { return m_FixedTimeStep; }
 
 		inline static Application& Get() { return *s_Instance; }
 	private:
@@ -36,6 +38,10 @@ namespace Engine {
 		bool m_Running = true;
 		LayerStack m_LayerStack;
 		ImGuiLayer* m_ImGuiLayer;
+		const float m_FixedTimeStep = 1.0f / 60.0f;
+		float m_TimeStep;
+		float m_LastFrameTime = 0.0f;
+		float m_Accumulator = 0.0f;//纯私有，不外用
 	};
 
 	Application* CreateApplication();

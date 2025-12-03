@@ -13,8 +13,6 @@ namespace Engine {
 		WindowsWindow(const WindowProps& props);
 		virtual ~WindowsWindow();
 
-		void OnUpdate() override;
-
 		unsigned int GetWidth() const override { return m_Data.Width; }
 		unsigned int GetHeight() const override { return m_Data.Height; }
 

@@ -17,8 +17,11 @@ include "vendor/bin/imgui"
 
 project "Engine"
 	location "Engine"
-	kind "SharedLib"
+	kind "StaticLib"
 	language "C++"
+	cppdialect "C++17"
+	-- staticruntime "On"
+
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -51,40 +54,37 @@ project "Engine"
 		"vulkan-1.lib"
     }
 	filter "system:windows"
-		cppdialect "C++17"
-		staticruntime "On"
 		systemversion "latest"
 
 		defines
 		{
 			"EG_PLATFORM_WINDOWS",
-			"EG_BUILD_DLL"
+			"GLFW_INCLUDE_NONE"
 		}
 
-		postbuildcommands
-		{
-			("{COPY} \"%{cfg.buildtarget.relpath}\" \"../bin/" .. outputdir .. "/SandBox/\"")
-		}
 
 	filter "configurations:Debug"
 		defines "EG_DEBUG"
 		buildoptions "/MDd"
-		symbols "On"
+		symbols "on"
 
 	filter "configurations:Release"
 		defines "EG_RELEASE"
 		buildoptions "/MD"
-		optimize "On"
+		optimize "on"
 
 	filter "configurations:Dist"
 		defines "EG_DIST"
 		buildoptions "/MD"
-		optimize "On"
+		optimize "on"
 
 project "SandBox"
 	location "SandBox"
 	kind "ConsoleApp"
 	language "C++"
+	cppdialect "C++17"
+	-- staticruntime "on"
+
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -116,8 +116,6 @@ project "SandBox"
 	}
 
 	filter "system:windows"
-		cppdialect "C++17"
-		staticruntime "On"
 		systemversion "latest"
 
 		defines
@@ -128,14 +126,14 @@ project "SandBox"
 	filter "configurations:Debug"
 		defines "EG_DEBUG"
 		buildoptions "/MDd"
-		symbols "On"
+		symbols "on"
 
 	filter "configurations:Release"
 		defines "EG_RELEASE"
 		buildoptions "/MD"
-		optimize "On"
+		optimize "on"
 
 	filter "configurations:Dist"
 		defines "EG_DIST"
 		buildoptions "/MD"
-		optimize "On"
+		optimize "on"

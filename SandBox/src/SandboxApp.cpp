@@ -1,5 +1,6 @@
 #include "pch.h"
 #include <Engine.h>
+#include <Engine/Renderer/Shader.h>
 
 class ExampleLayer :public Engine::Layer
 {
@@ -13,17 +14,23 @@ public:
 	{
 		ImGui::ShowDemoWindow();
 	}
+	void OnAttach() override
+	{
+		m_Shader=Engine::Shader::Create("shaders/vert.spv", "shaders/frag.spv");
+	}
 	void OnDetach() override
 	{
 
 	}
 	void OnUpdate() override
 	{
+		m_Shader->Bind();
 	}
 	void OnEvent(Engine::Event& event) override
 	{
-		EG_TRACE("{0}", event.ToString());
 	}
+private:
+	std::shared_ptr<Engine::Shader> m_Shader;
 };
 
 class SandBox : public Engine::Application

@@ -1,4 +1,4 @@
-#include "pch.h"
+ï»¿#include "pch.h"
 #include "Application.h"
 #include "Input.h"
 
@@ -15,12 +15,20 @@ namespace Engine {
 		m_Window = std::unique_ptr<Window>(Window::Create());
 		m_Window->SetEventCallback(BIND_EVENT_FN(Application::OnEvent));
 
+
 		m_ImGuiLayer = new ImGuiLayer();
 		PushOverlay(m_ImGuiLayer);
 
 	}
 	Application::~Application() 
 	{
+		if (m_Window) {
+			auto* context = static_cast<VulkanContext*>(m_Window->GetContext());
+			if (context) {
+				vkDeviceWaitIdle(context->GetDevice());
+			}
+		}
+
 		for (Layer* layer : m_LayerStack)
 		{
 			layer->OnDetach();
@@ -29,7 +37,7 @@ namespace Engine {
 	}
 	
 	/// <summary>
-	/// ËùÓÐÊÂ¼þ¶¼»á¼¤»î¸Ã»Øµ÷º¯Êý
+	/// æ‰€æœ‰äº‹ä»¶éƒ½ä¼šæ¿€æ´»è¯¥å›žè°ƒå‡½æ•°
 	/// </summary>
 	/// <param name="e"></param>
 	void Application::OnEvent(Event& e)
@@ -37,8 +45,6 @@ namespace Engine {
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::OnWindowResize));
 		dispatcher.Dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
-
-		EG_CORE_TRACE("{0}", e.ToString());
 
 		for (auto it = m_LayerStack.end(); it != m_LayerStack.begin();)
 		{
@@ -74,18 +80,45 @@ namespace Engine {
 	{
 		while (m_Running)
 		{
+			glfwPollEvents();
+
+			//è®¡ç®—æ—¶é—´
+			float time = (float)glfwGetTime();
+			m_TimeStep = time - m_LastFrameTime;
+			m_LastFrameTime = time;
+
+			if (m_TimeStep > 0.25f) m_TimeStep = 0.25f;
+
+			m_Accumulator += m_TimeStep;
+
+			//FixedUpdate
+			while (m_Accumulator >= m_FixedTimeStep)
+			{
+				for (Layer* layer : m_LayerStack)
+				{
+					layer->OnFixedUpdate(); 
+				}
+				m_Accumulator -= m_FixedTimeStep;
+			}
+
+			//Update
+			m_Window->GetContext()->BeginFrame();
+
 			for (Layer* layer : m_LayerStack)
 			{
 				layer->OnUpdate();
 			}
+			m_Window->GetContext()->DrawFrame();
 
-			m_ImGuiLayer->Begin(); 
+			m_ImGuiLayer->Begin();
 
 			for (Layer* layer : m_LayerStack)
 				layer->OnImGuiRender();
 
-			m_ImGuiLayer->End(); 
-			m_Window->OnUpdate();
+			m_ImGuiLayer->End();
+
+			m_Window->GetContext()->EndFrame();
+
 		}
 	}
 

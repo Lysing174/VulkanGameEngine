@@ -1,8 +1,8 @@
-#include "pch.h"
+ï»¿#include "pch.h"
 #include "ImGuiLayer.h"
 #include "imgui.h"
 #include "Engine/Application.h"
-#include "Platform/Vulkan/VulkanContext.h" // ±ØĞëÒıÓÃ
+#include "Platform/Vulkan/VulkanContext.h" 
 
 namespace Engine {
 	ImGuiLayer::ImGuiLayer()
@@ -23,21 +23,34 @@ namespace Engine {
         io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
         io.BackendFlags |= ImGuiBackendFlags_HasSetMousePos;
 
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;//å¼€å¯é”®ç›˜å¯¼èˆªï¼Œå…è®¸enteré”®ç­‰æ§åˆ¶ui
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;//å¼€å¯uiåœé ï¼Œå¯å¸é™„åˆ°è¾¹ç¼˜
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;//å¼€å¯å¤šè§†å£ï¼Œuiå¯æ‹–å‡ºå½¢æˆæ–°çš„çª—å£
+
+        ImGuiStyle& style = ImGui::GetStyle();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+        {
+            style.WindowRounding = 0.0f;
+            style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+        }
+
+        SetDarkThemeColors();
+
         Application& app = Application::Get();
         GLFWwindow* window = static_cast<GLFWwindow*>(app.GetWindow().GetNativeWindow());
 
-        // 1. ³õÊ¼»¯ GLFW ºó¶Ë (Vulkan Ä£Ê½)
+        // 1. åˆå§‹åŒ– GLFW åç«¯ (Vulkan æ¨¡å¼)
         ImGui_ImplGlfw_InitForVulkan(window, true);
 
-        // 2. »ñÈ¡ VulkanContext
+        // 2. è·å– VulkanContext
         auto* context = static_cast<VulkanContext*>(app.GetWindow().GetContext());
 
-        // 3. Ìî³ä³õÊ¼»¯½á¹¹Ìå (ÕâÊÇ×îÂé·³µÄÒ»²½)
+        // 3. å¡«å……åˆå§‹åŒ–ç»“æ„ä½“ (è¿™æ˜¯æœ€éº»çƒ¦çš„ä¸€æ­¥)
         ImGui_ImplVulkan_InitInfo init_info = {};
         init_info.Instance = context->GetInstance();
         init_info.PhysicalDevice = context->GetPhysicalDevice();
         init_info.Device = context->GetDevice();
-        init_info.QueueFamily = 0;//context->GetGraphicsQueueFamilyIndex(); // ÄãĞèÒªÈ·±£ÓĞÕâ¸öº¯Êı£¬»òÕßĞ´ËÀ 0
+        init_info.QueueFamily = 0;//context->GetGraphicsQueueFamilyIndex(); // ä½ éœ€è¦ç¡®ä¿æœ‰è¿™ä¸ªå‡½æ•°ï¼Œæˆ–è€…å†™æ­» 0
         init_info.Queue = context->GetGraphicsQueue();
         init_info.PipelineCache = VK_NULL_HANDLE;
         init_info.DescriptorPool = context->GetDescriptorPool();
@@ -49,15 +62,15 @@ namespace Engine {
         init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         init_info.PipelineInfoMain.Subpass = 0;
 
-        // 4. ³õÊ¼»¯ Vulkan ºó¶Ë
+        // 4. åˆå§‹åŒ– Vulkan åç«¯
         ImGui_ImplVulkan_Init(&init_info);
 
-        // 5. ÉÏ´«×ÖÌå (Vulkan ±ØĞëÊÖ¶¯×öÕâ²½£¬»¹ÒªÓÃ CommandBuffer)
-        // ¼òµ¥Æğ¼û£¬ÎÒÃÇ¿ÉÒÔ½èÓÃ context ÀïµÄ¸¨Öúº¯Êı£¬»òÕßÔÚÕâÀïÁÙÊ±¸ãÒ»¸ö
-        // ÕâÀïÎªÁË´úÂë¼ò½à£¬½¨ÒéÔÚ VulkanContext Àï¼ÓÒ»¸ö UploadFonts º¯Êı£¬»òÕßÔİÊ±²»Ğ´£¬×ÖÌå¿ÉÄÜ»á±À¡£
-        // Õı¹æĞ´·¨ĞèÒª begin command buffer -> create fonts texture -> end -> submit -> wait idle
+        // 5. ä¸Šä¼ å­—ä½“ (Vulkan å¿…é¡»æ‰‹åŠ¨åšè¿™æ­¥ï¼Œè¿˜è¦ç”¨ CommandBuffer)
+        // ç®€å•èµ·è§ï¼Œæˆ‘ä»¬å¯ä»¥å€Ÿç”¨ context é‡Œçš„è¾…åŠ©å‡½æ•°ï¼Œæˆ–è€…åœ¨è¿™é‡Œä¸´æ—¶æä¸€ä¸ª
+        // è¿™é‡Œä¸ºäº†ä»£ç ç®€æ´ï¼Œå»ºè®®åœ¨ VulkanContext é‡ŒåŠ ä¸€ä¸ª UploadFonts å‡½æ•°ï¼Œæˆ–è€…æš‚æ—¶ä¸å†™ï¼Œå­—ä½“å¯èƒ½ä¼šå´©ã€‚
+        // æ­£è§„å†™æ³•éœ€è¦ begin command buffer -> create fonts texture -> end -> submit -> wait idle
         {
-            //VkCommandBuffer command_buffer = context->beginSingleTimeCommands(); // Äã 1700 ĞĞ´úÂëÀïÓ¦¸ÃÓĞÕâ¸ö¸¨Öúº¯Êı
+            //VkCommandBuffer command_buffer = context->beginSingleTimeCommands(); // ä½  1700 è¡Œä»£ç é‡Œåº”è¯¥æœ‰è¿™ä¸ªè¾…åŠ©å‡½æ•°
             //ImGui_ImplVulkan_CreateFontsTexture(command_buffer);
             //context->endSingleTimeCommands(command_buffer);
             //ImGui_ImplVulkan_DestroyFontUploadObjects();
@@ -69,29 +82,24 @@ namespace Engine {
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 	}
-	void ImGuiLayer::OnUpdate()
-	{
-
-	}
     void ImGuiLayer::Begin()
     {
-        ImGui_ImplVulkan_NewFrame(); // ¸æËß Vulkan ºó¶Ë£ºĞÂµÄÒ»Ö¡
-        ImGui_ImplGlfw_NewFrame();   // ¸æËß GLFW ºó¶Ë£º¶ÁÈ¡ÊäÈë
-        ImGui::NewFrame();           // ¸æËß ImGui ºËĞÄ£º¿ªÊ¼Âß¼­¼ÆËã
+        ImGui_ImplVulkan_NewFrame(); // å‘Šè¯‰ Vulkan åç«¯ï¼šæ–°çš„ä¸€å¸§
+        ImGui_ImplGlfw_NewFrame();   // å‘Šè¯‰ GLFW åç«¯ï¼šè¯»å–è¾“å…¥
+        ImGui::NewFrame();           // å‘Šè¯‰ ImGui æ ¸å¿ƒï¼šå¼€å§‹é€»è¾‘è®¡ç®—
     }
     void ImGuiLayer::End()
     {
-        // 1. ¸ù¾İ ImGuiLayer::OnImGuiRender ÀïĞ´µÄÂß¼­£¬¼ÆËã¶¥µãÊı¾İ
+        // 1. æ ¹æ® ImGuiLayer::OnImGuiRender é‡Œå†™çš„é€»è¾‘ï¼Œè®¡ç®—é¡¶ç‚¹æ•°æ®
         ImGui::Render();
 
-        // ×¢Òâ£ºÕâÀï²»ÔÙµ÷ÓÃ RenderDrawData ÁË£¡
-        // »æÖÆ²Ù×÷ÍÆ³Ùµ½ÁË VulkanContext::SwapBuffers ÀïµÄ RenderPass ÄÚ²¿
+        // æ³¨æ„ï¼šè¿™é‡Œä¸å†è°ƒç”¨ RenderDrawData äº†ï¼
+        // ç»˜åˆ¶æ“ä½œæ¨è¿Ÿåˆ°äº† VulkanContext::SwapBuffers é‡Œçš„ RenderPass å†…éƒ¨
 
-        // 2. ´¦ÀíÍÏ³öÖ÷´°¿ÚµÄÄÇĞ©¸¡¶¯ UI (Docking/Viewports)
+        // 2. å¤„ç†æ‹–å‡ºä¸»çª—å£çš„é‚£äº›æµ®åŠ¨ UI (Docking/Viewports)
         ImGuiIO& io = ImGui::GetIO();
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
-            // ÕâÒ»²½ÊÇ±ØĞëµÄ£¬·ñÔò¸¡¶¯´°¿Ú»áºÚÆÁ»ò²»¸üĞÂ
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
         }
@@ -116,7 +124,7 @@ namespace Engine {
             if (event.IsInCategory(EventCategoryKeyboard) || event.IsInCategory(EventCategoryInput))
                 event.Handled = true;
         }
-        /*ÈôÏëÊÖ¶¯¿ØÖÆglfw»Øµ÷£º
+        /*è‹¥æƒ³æ‰‹åŠ¨æ§åˆ¶glfwå›è°ƒï¼š
         EventDispatcher dispatcher(event);
         dispatcher.Dispatch<MouseButtonPressedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseButtonPressedEvent));
         dispatcher.Dispatch<MouseButtonReleasedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseButtonReleasedEvent));
@@ -129,44 +137,36 @@ namespace Engine {
         */
     }
 
-    bool ImGuiLayer::OnMouseButtonPressedEvent(MouseButtonPressedEvent& e)
+    void ImGuiLayer::SetDarkThemeColors()
     {
-        return false;
-    }
-    bool ImGuiLayer::OnMouseButtonReleasedEvent(MouseButtonReleasedEvent& e)
-    {
-        return false;
+        auto& colors = ImGui::GetStyle().Colors;
+        colors[ImGuiCol_WindowBg] = ImVec4{ 0.1f, 0.105f, 0.11f, 1.0f };
 
-    }
-    bool ImGuiLayer::OnMouseMovedEvent(MouseMovedEvent& e)
-    {
-        return false;
+        // Headers
+        colors[ImGuiCol_Header] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
+        colors[ImGuiCol_HeaderHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
+        colors[ImGuiCol_HeaderActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
 
-    }
-    bool ImGuiLayer::OnMouseScrolledEvent(MouseScrolledEvent& e)
-    {
-        return false;
+        // Buttons
+        colors[ImGuiCol_Button] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
+        colors[ImGuiCol_ButtonHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
+        colors[ImGuiCol_ButtonActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
 
-    }
-    bool ImGuiLayer::OnKeyPressedEvent(KeyPressedEvent& e)
-    {
-        return false;
+        // Frame BG
+        colors[ImGuiCol_FrameBg] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
+        colors[ImGuiCol_FrameBgHovered] = ImVec4{ 0.3f, 0.305f, 0.31f, 1.0f };
+        colors[ImGuiCol_FrameBgActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
 
-    }
-    bool ImGuiLayer::OnKeyReleasedEvent(KeyReleasedEvent& e)
-    {
-        return false;
+        // Tabs
+        colors[ImGuiCol_Tab] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+        colors[ImGuiCol_TabHovered] = ImVec4{ 0.38f, 0.3805f, 0.381f, 1.0f };
+        colors[ImGuiCol_TabActive] = ImVec4{ 0.28f, 0.2805f, 0.281f, 1.0f };
+        colors[ImGuiCol_TabUnfocused] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+        colors[ImGuiCol_TabUnfocusedActive] = ImVec4{ 0.2f, 0.205f, 0.21f, 1.0f };
 
-    }
-    bool ImGuiLayer::OnKeyTypedEvent(KeyTypedEvent& e)
-    {
-        return false;
-
-    }
-
-    bool ImGuiLayer::OnWindowResizeEvent(WindowResizeEvent& e)
-    {
-        return false;
-
+        // Title
+        colors[ImGuiCol_TitleBg] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+        colors[ImGuiCol_TitleBgActive] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
+        colors[ImGuiCol_TitleBgCollapsed] = ImVec4{ 0.15f, 0.1505f, 0.151f, 1.0f };
     }
 }
