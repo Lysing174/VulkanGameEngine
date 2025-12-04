@@ -35,6 +35,7 @@ namespace Engine {
 
 		std::unique_ptr<Window> m_Window;
 		static Application* s_Instance;
+		Engine::EditorCamera m_Camera;
 		bool m_Running = true;
 		LayerStack m_LayerStack;
 		ImGuiLayer* m_ImGuiLayer;

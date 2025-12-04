@@ -1,7 +1,6 @@
 ﻿#pragma once
 #include "Engine/Renderer/GraphicsContext.h"
 #include "Engine/Renderer/RendererAPI.h"
-
 #define GLFW_INCLUDE_VULKAN
 
 #include <GLFW/glfw3.h>
@@ -102,7 +101,7 @@ namespace Engine {
         ~VulkanContext();
 
         virtual void Init() override;
-        virtual void BeginFrame() override;
+        virtual void BeginFrame(const EditorCamera& camera) override;
         virtual void DrawFrame() override;
         virtual void EndFrame() override;
         virtual void DrawModel(uint32_t indexCount)override;
@@ -125,7 +124,7 @@ namespace Engine {
         uint32_t GetImageCount() { return (uint32_t)swapChainImages.size(); } // 你 swapchain 里的图片数量
         VkRenderPass GetRenderPass() { return renderPass; } // 必须！ImGui 需要知道它在哪个 RenderPass 里画
         VkCommandBuffer GetCurrentCommandBuffer() { return commandBuffers[currentImageIndex]; }
-        VkDescriptorSet GetDescriptorSet() { return descriptorSet; }
+        VkDescriptorSet GetCurrentDescriptorSet() { return descriptorSets[currentImageIndex]; }
         VkDescriptorSetLayout GetDescriptorSetLayout() { return descriptorSetLayout; }
         VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
 
@@ -143,10 +142,10 @@ namespace Engine {
         VkDescriptorSetLayout descriptorSetLayout;
         VkCommandPool commandPool;
         VkDescriptorPool descriptorPool;
-        VkDescriptorSet descriptorSet;
+        std::vector<VkDescriptorSet> descriptorSets;
 
-        VkBuffer uniformBuffer;
-        VkDeviceMemory uniformBufferMemory;
+        std::vector<VkBuffer> uniformBuffers;
+        std::vector<VkDeviceMemory> uniformBuffersMemory;
         VkImage textureImage;
         VkDeviceMemory textureImageMemory;
         VkImageView textureImageView;
@@ -178,155 +177,52 @@ namespace Engine {
 
     private:
         void initVulkan();
-
         void cleanupSwapChain();
-
         void recreateSwapChain();
-
         void cleanup();
 
-        /// <summary>
-        /// 创建vk实例
-        /// </summary>
         void createInstance();
-
-        /// <summary>
-    /// 获取需要的扩展列表
-    /// </summary>
-    /// <returns></returns>
-        std::vector<const char*> getRequiredExtensions();
-
-        /// <summary>
-        /// 启动编译信息发送器
-        /// </summary>
         void setupDebugMessenger();
+        void createSurface();
+        void pickPhysicalDevice();
+        void createLogicalDevice();
+        void createSwapChain();
+        void createImageViews();
+        void createDescriptorSetLayout();
+        void createRenderPass();
+        void createFramebuffers();
+        void createCommandPool();
+        void createDepthResources();
+        void createTextureImage();
+        void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+        VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
+        void createTextureSampler();
+        void createUniformBuffer();
+        void createDescriptorPool();
+        void createDescriptorSets();
+        void createCommandBuffers();
+        void createSemaphores();
 
-        /// <summary>
-        /// 检查所需层（validationLayers）是否支持
-        /// </summary>
-        /// <returns>返回是否支持</returns>
+        std::vector<const char*> getRequiredExtensions();
         bool checkValidationLayerSupport();
-
-        /// <summary>
-        /// 填充编译信息发送器的创建结构体
-        /// </summary>
         void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);  
         static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
-
-        /// <summary>
-        /// 创建surface
-        /// </summary>
-        void createSurface();
-
-        /// <summary>
-        /// 选择物理设备
-        /// </summary>
-        void pickPhysicalDevice();
-
-        /// <summary>
-        /// 检查物理设备是否合适
-        /// </summary>
-        /// <param name="device"></param>
-        /// <returns></returns>
         bool isDeviceSuitable(VkPhysicalDevice device);
-
-
-        /// <summary>
-        /// 查找命令队列簇
-        /// </summary>
-        /// <param name="device"></param>
-        /// <returns></returns>
         QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
-
-        /// <summary>
-        /// 检查物理设备扩展是否支持（创建物理设备时）
-        /// </summary>
-        /// <param name="device"></param>
-        /// <returns></returns>
         bool checkDeviceExtensionSupport(VkPhysicalDevice device);
-
-        /// <summary>
-        /// 查询交换链是否支持（创建物理设备时检查）
-        /// </summary>
-        /// <param name="device"></param>
-        /// <returns></returns>
         SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
-
-        /// <summary>
-        /// 创建逻辑设备
-        /// </summary>
-        void createLogicalDevice();
-
-        /// <summary>
-        /// 创建交换链
-        /// </summary>
-        void createSwapChain();
-
-        /// <summary>
-        /// 选择surface最合适的formats
-        /// </summary>
-        /// <param name="availableFormats"></param>
-        /// <returns></returns>
         VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
-
-        /// <summary>
-        /// 选择surface最合适的presentMode
-        /// </summary>
-        /// <param name="availablePresentModes"></param>
-        /// <returns></returns>
         VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> availablePresentModes);
-
-        /// <summary>
-        /// 选择surface最合适的swapExtent
-        /// </summary>
-        /// <param name="capabilities"></param>
-        /// <returns></returns>
         VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
-
-        void createImageViews();
-
-        void createDescriptorSetLayout();
-
-        //static std::vector<char> readFile(const std::string& filename);
-        //VkShaderModule createShaderModule(const std::vector<char>& code);
-        void createRenderPass();
-
-        void createFramebuffers();
-        
-
-        void createCommandPool();
-        
-
-        void createDepthResources();
         VkFormat findDepthFormat();
         VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
         bool hasStencilComponent(VkFormat format);
-
-        void createTextureImage();
-
-        void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
-
         void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
-
         void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
-
         void createTextureImageView();
 
-        VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
-        /// <summary>
-        /// 配置纹理采样器
-        /// </summary>
-        void createTextureSampler();
-
-        void createUniformBuffer();
-        void createDescriptorPool();
-
-        void createDescriptorSet();
-
-        void createCommandBuffers();
-        void createSemaphores();
         void updateUniformBuffer();
-
+        void updateGlobalUniforms(const EditorCamera& camera);
     };
 
 }

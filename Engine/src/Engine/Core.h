@@ -23,7 +23,7 @@
 
 #define EG_BIND_EVENT_FN(fn) std::bind(&fn,this,std::placeholders::_1)
 
-//buffer是cpu共享空间，需改成gpu独占
+//vkQueueWaitIdle改成fence
 
 
 //shader类实际对应vulkan的graphicpipeline

@@ -53,9 +53,9 @@ namespace Engine {
         scissor.extent = extent;
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        VkDescriptorSet descriptorSet = VulkanContext::Get()->GetDescriptorSet();
+        VkDescriptorSet currentDescriptorSet = VulkanContext::Get()->GetCurrentDescriptorSet();
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &currentDescriptorSet, 0, nullptr);
 	}
 
 	void VulkanShader::Unbind() const

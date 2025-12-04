@@ -2,6 +2,7 @@
 #include <Engine.h>
 #include <Engine/Renderer/Shader.h>
 #include <Engine/Renderer/Buffer.h>
+#include "Engine/Renderer/EditorCamera.h"
 
 const std::string MODEL_PATH = "models/cottage_obj.obj";
 const std::string TEXTURE_PATH = "textures/cottage_diffuse.png";

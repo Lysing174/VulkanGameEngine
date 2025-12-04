@@ -18,6 +18,8 @@ namespace Engine {
 
 		m_ImGuiLayer = new ImGuiLayer();
 		PushOverlay(m_ImGuiLayer);
+		EG_CORE_INFO("A");
+		m_Camera = EditorCamera(45.0f, 1.778f, 0.1f, 1000.0f);
 
 	}
 	Application::~Application() 
@@ -52,6 +54,7 @@ namespace Engine {
 			if (e.Handled)
 				break;
 		}
+		if (!e.Handled)m_Camera.OnEvent(e);
 	}
 	void Application::PushLayer(Layer* layer)
 	{
@@ -101,8 +104,11 @@ namespace Engine {
 				m_Accumulator -= m_FixedTimeStep;
 			}
 
+
 			//Update
-			m_Window->GetContext()->BeginFrame();
+			m_Camera.OnUpdate();
+
+			m_Window->GetContext()->BeginFrame(m_Camera);
 
 			for (Layer* layer : m_LayerStack)
 			{
@@ -125,6 +131,10 @@ namespace Engine {
 	bool Application::OnWindowResize(WindowResizeEvent& e)
 	{
 		((VulkanContext*)(m_Window->GetContext()))->OnWindowResized(e.GetWidth(), e.GetHeight());
+
+		auto& window = Engine::Application::Get().GetWindow();
+		m_Camera.SetViewportSize((float)window.GetWidth(), (float)window.GetHeight());
+
 		return false;
 	}
 
