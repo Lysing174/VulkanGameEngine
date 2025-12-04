@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #define FMT_HEADER_ONLY
 
 #ifdef EG_PLATFORM_WINDOWS
@@ -23,7 +23,7 @@
 
 #define EG_BIND_EVENT_FN(fn) std::bind(&fn,this,std::placeholders::_1)
 
-//bufferÊÇcpu¹²Ïí¿Õ¼ä£¬Ğè¸Ä³Égpu¶ÀÕ¼
+//bufferæ˜¯cpuå…±äº«ç©ºé—´ï¼Œéœ€æ”¹æˆgpuç‹¬å 
 
 
-//shaderÀàÊµ¼Ê¶ÔÓ¦vulkanµÄgraphicpipeline
+//shaderç±»å®é™…å¯¹åº”vulkançš„graphicpipeline

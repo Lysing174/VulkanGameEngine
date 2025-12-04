@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "Core.h"
 #include "Engine/Layer/LayerStack.h"
@@ -41,7 +41,7 @@ namespace Engine {
 		const float m_FixedTimeStep = 1.0f / 60.0f;
 		float m_TimeStep;
 		float m_LastFrameTime = 0.0f;
-		float m_Accumulator = 0.0f;//´¿Ë½ÓĞ£¬²»ÍâÓÃ
+		float m_Accumulator = 0.0f;//çº¯ç§æœ‰ï¼Œä¸å¤–ç”¨
 	};
 
 	Application* CreateApplication();

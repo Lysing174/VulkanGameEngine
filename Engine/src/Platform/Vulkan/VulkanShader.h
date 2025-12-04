@@ -1,6 +1,7 @@
-#pragma once
+ï»¿#pragma once
 
 #include <Engine/Renderer/Shader.h>
+#include <Platform/Vulkan/VulkanBuffer.h>
 #include <vulkan/vulkan.h>
 #include <string>
 #include <vector>
@@ -16,16 +17,16 @@ namespace Engine {
 		virtual void Bind() const override;
 		virtual void Unbind() const override;
 
-		// --- Vulkan ÌØÓĞ½Ó¿Ú ---
-		// Pipeline ´´½¨Ê±ĞèÒªÓÃµ½ÕâĞ© Module
+		virtual void CreatePipeline(const BufferLayout& layout) override;
+
 		VkShaderModule GetVertexShaderModule() const { return m_VertexShaderModule; }
 		VkShaderModule GetFragmentShaderModule() const { return m_FragmentShaderModule; }
 		VkPipeline GetPipeline() const { return m_GraphicsPipeline; }
 		VkPipelineLayout GetPipelineLayout() const { return m_PipelineLayout; }
 
-		// --- ÔİÊ±·ÏÆúµÄ OpenGL ½Ó¿Ú (Vulkan ²»ÕâÃ´×ö) ---
-		// ÔÚ Vulkan ÖĞ£¬ÕâĞ©²Ù×÷Í¨¹ı UniformBuffer ºÍ DescriptorSet Íê³É
-		// ÕâÀïÁô¿Õ»òÕßÊÇ´òÓ¡¾¯¸æ
+		// --- æš‚æ—¶åºŸå¼ƒçš„ OpenGL æ¥å£ (Vulkan ä¸è¿™ä¹ˆåš) ---
+		// åœ¨ Vulkan ä¸­ï¼Œè¿™äº›æ“ä½œé€šè¿‡ UniformBuffer å’Œ DescriptorSet å®Œæˆ
+		// è¿™é‡Œç•™ç©ºæˆ–è€…æ˜¯æ‰“å°è­¦å‘Š
 		virtual void SetInt(const std::string& name, int value) override {}
 		virtual void SetFloat3(const std::string& name, const glm::vec3& value) override {}
 		virtual void SetMat4(const std::string& name, const glm::mat4& value) override {}
@@ -33,11 +34,9 @@ namespace Engine {
 		virtual const std::string& GetName() const override { return m_Name; }
 
 	private:
-		// ¶ÁÈ¡¶ş½øÖÆÎÄ¼şµÄ¸¨Öúº¯Êı
 		static std::vector<char> ReadFile(const std::string& filename);
-
-		// ´´½¨ Shader Module µÄ¸¨Öúº¯Êı
 		VkShaderModule CreateShaderModule(const std::vector<char>& code);
+
 
 	private:
 		VkShaderModule m_VertexShaderModule;

@@ -2,7 +2,7 @@
 
 #include <string>
 #include <unordered_map>
-
+#include <Engine/Renderer/Buffer.h>
 #include <glm/glm.hpp>
 
 namespace Engine {
@@ -14,6 +14,8 @@ namespace Engine {
 
 		virtual void Bind() const = 0;
 		virtual void Unbind() const = 0;
+
+		virtual void CreatePipeline(const BufferLayout& layout) = 0;
 
 		virtual void SetInt(const std::string& name, int value) = 0;
 		virtual void SetFloat3(const std::string& name, const glm::vec3& value) = 0;

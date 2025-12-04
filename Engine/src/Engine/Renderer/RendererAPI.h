@@ -1,8 +1,12 @@
 #pragma once
 
 //#include "Hazel/Renderer/VertexArray.h"
+#include <unordered_map>
 
 #include <glm/glm.hpp>
+#include <glm/gtx/hash.hpp>
+
+#include <tiny_obj_loader.h>
 
 namespace Engine {
 	struct Vertex {
@@ -15,6 +19,21 @@ namespace Engine {
 		}
 
 	};
+}
+
+namespace std
+{
+	template<> struct hash<Engine::Vertex> {
+		size_t operator()(Engine::Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^
+				(hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+				(hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+	};
+}
+
+
+namespace Engine {
 	class RendererAPI
 	{
 	public:
@@ -35,11 +54,12 @@ namespace Engine {
 
 		virtual void SetLineWidth(float width) = 0;
 
+		static void LoadModel(std::string modelPath, std::vector<Engine::Vertex>& vertices, std::vector<uint32_t>& indices);
+
 		static API GetAPI() { return s_API; }
 		static RendererAPI* Create();
 	private:
 		static API s_API;
-
 
 	};
 

@@ -160,23 +160,12 @@ namespace Engine {
         createTextureImage();
         createTextureImageView();
         createTextureSampler();
-        //loadModel();
-        //createVertexBuffer();
-        //createIndexBuffer();
         createUniformBuffer();
         createDescriptorPool();
         createDescriptorSet();
         createCommandBuffers();
         createSemaphores();
     }
-    //void VulkanContext::mainLoop() {
-    //    while (!glfwWindowShouldClose(window)) {
-    //        glfwPollEvents();
-    //        updateUniformBuffer();
-    //        drawFrame();
-    //    }
-    //    vkDeviceWaitIdle(device);
-    //}
 
     void VulkanContext::cleanupSwapChain() {
         vkDestroyImageView(device, depthImageView, nullptr);
@@ -217,10 +206,6 @@ namespace Engine {
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
         vkDestroyBuffer(device, uniformBuffer, nullptr);
         vkFreeMemory(device, uniformBufferMemory, nullptr);
-        //vkDestroyBuffer(device, indexBuffer, nullptr);
-        //vkFreeMemory(device, indexBufferMemory, nullptr);
-        //vkDestroyBuffer(device, vertexBuffer, nullptr);
-        //vkFreeMemory(device, vertexBufferMemory, nullptr);
         vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
         vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
         vkDestroyCommandPool(device, commandPool, nullptr);
@@ -1067,88 +1052,6 @@ namespace Engine {
         }
     }
 
-    //void VulkanContext::loadModel() {
-    //    tinyobj::attrib_t attrib;
-    //    std::vector<tinyobj::shape_t> shapes;
-    //    std::vector<tinyobj::material_t> materials;
-    //    std::string warn, err;
-
-    //    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
-    //        throw std::runtime_error(err);
-    //    }
-    //    std::unordered_map<Vertex, uint32_t> uniqueVertices = {};
-
-    //    for (const auto& shape : shapes) {
-    //        for (const auto& index : shape.mesh.indices) {
-    //            Vertex vertex = {};
-
-    //            vertex.pos = {
-    //                attrib.vertices[3 * index.vertex_index + 0],
-    //                attrib.vertices[3 * index.vertex_index + 1],
-    //                attrib.vertices[3 * index.vertex_index + 2]
-    //            };
-
-    //            if (index.texcoord_index >= 0) {
-    //                vertex.texCoord = {
-    //                    attrib.texcoords[2 * index.texcoord_index + 0],
-    //                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-    //                };
-    //            }
-    //            else {
-    //                vertex.texCoord = { 0.0f, 0.0f };  // 使用默认纹理坐标
-    //            }
-
-    //            vertex.color = { 1.0f, 1.0f, 1.0f };
-
-    //            if (uniqueVertices.count(vertex) == 0) {
-    //                uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-    //                vertices.push_back(vertex);
-    //            }
-
-    //            indices.push_back(uniqueVertices[vertex]);
-    //        }
-    //    }
-
-    //}
-
-    //void VulkanContext::createVertexBuffer() {
-    //    VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-
-    //    VkBuffer stagingBuffer;
-    //    VkDeviceMemory stagingBufferMemory;
-    //    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-    //    void* data;
-    //    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    //    memcpy(data, vertices.data(), (size_t)bufferSize);
-    //    vkUnmapMemory(device, stagingBufferMemory);
-
-    //    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
-
-    //    CopyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-
-    //    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    //    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    //}
-    //void VulkanContext::createIndexBuffer() {
-    //    VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-    //    VkBuffer stagingBuffer;
-    //    VkDeviceMemory stagingBufferMemory;
-    //    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-    //    void* data;
-    //    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    //    memcpy(data, indices.data(), (size_t)bufferSize);
-    //    vkUnmapMemory(device, stagingBufferMemory);
-
-    //    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-    //    CopyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-    //    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    //    vkFreeMemory(device, stagingBufferMemory, nullptr);
-    //}
     void VulkanContext::createUniformBuffer() {
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
         CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffer, uniformBufferMemory);
@@ -1343,106 +1246,6 @@ namespace Engine {
         vkUnmapMemory(device, uniformBufferMemory);
 
     }
-
-    //void VulkanContext::drawFrame() {
-    //    //vkQueueWaitIdle(presentQueue);
-    //    //uint32_t imageIndex;
-    //    //vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
-
-    //    //vkResetCommandBuffer(commandBuffers[imageIndex], 0);//清空命令
-
-    //    //VkCommandBufferBeginInfo beginInfo = {};
-    //    //beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    //    //beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-    //    //beginInfo.pInheritanceInfo = nullptr; // Optional
-
-    //    ////录制命令
-    //    //vkBeginCommandBuffer(commandBuffers[imageIndex], &beginInfo);
-
-    //    //VkRenderPassBeginInfo renderPassInfo = {};
-    //    //renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    //    //renderPassInfo.renderPass = renderPass;
-    //    //renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
-    //    //renderPassInfo.renderArea.offset = { 0, 0 };
-    //    //renderPassInfo.renderArea.extent = swapChainExtent;
-
-    //    //std::array<VkClearValue, 2> clearValues = {};
-    //    //clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    //    //clearValues[1].depthStencil = { 1.0f, 0 };
-    //    //renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    //    //renderPassInfo.pClearValues = clearValues.data();
-    //    //        
-    //    //vkCmdBeginRenderPass(commandBuffers[imageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    //    ////--------------------------------beginframe end-----------------------------------------
-
-    //    //vkCmdBindPipeline(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-    //    ////动态设置视口
-    //    //VkViewport viewport{};
-    //    //viewport.x = 0.0f;
-    //    //viewport.y = 0.0f;
-    //    //// 获取当前 Swapchain 的大小 (通过 Context 的 Get 函数，或者存下来的变量)
-    //    //auto extent = VulkanContext::Get()->GetSwapChainExtent();
-    //    //viewport.width = (float)extent.width;
-    //    //viewport.height = (float)extent.height;
-    //    //viewport.minDepth = 0.0f;
-    //    //viewport.maxDepth = 1.0f;
-    //    //vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-    //    //VkRect2D scissor{};
-    //    //scissor.offset = { 0, 0 };
-    //    //scissor.extent = extent;
-    //    //vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-    //    //// -----------------------
-    //    VkBuffer vertexBuffers[] = { vertexBuffer };
-    //    VkDeviceSize offsets[] = { 0 };
-    //    vkCmdBindVertexBuffers(commandBuffers[currentImageIndex], 0, 1, vertexBuffers, offsets);
-    //    vkCmdBindIndexBuffer(commandBuffers[currentImageIndex], indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-    //    //vkCmdBindDescriptorSets(commandBuffers[imageIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-    //    vkCmdDrawIndexed(commandBuffers[currentImageIndex], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
-
-    //    ////--------------------------------endframe begin-----------------------------------------
-    //    //ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[imageIndex]);
-
-    //    //vkCmdEndRenderPass(commandBuffers[imageIndex]);
-    //    //if (vkEndCommandBuffer(commandBuffers[imageIndex]) != VK_SUCCESS) {
-    //    //    throw std::runtime_error("failed to record command buffer!");
-    //    //}
-
-    //    ////提交命令
-    //    //VkSubmitInfo submitInfo = {};
-    //    //submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
-    //    //VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
-    //    //VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    //    //submitInfo.waitSemaphoreCount = 1;
-    //    //submitInfo.pWaitSemaphores = waitSemaphores;
-    //    //submitInfo.pWaitDstStageMask = waitStages;
-
-    //    //submitInfo.commandBufferCount = 1;
-    //    //submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
-
-    //    //VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
-    //    //submitInfo.signalSemaphoreCount = 1;
-    //    //submitInfo.pSignalSemaphores = signalSemaphores;
-
-    //    //if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
-    //    //    throw std::runtime_error("failed to submit draw command buffer!");
-    //    //}
-
-    //    //VkPresentInfoKHR presentInfo = {};
-    //    //presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-
-    //    //presentInfo.waitSemaphoreCount = 1;
-    //    //presentInfo.pWaitSemaphores = signalSemaphores;
-    //    //VkSwapchainKHR swapChains[] = { swapChain };
-    //    //presentInfo.swapchainCount = 1;
-    //    //presentInfo.pSwapchains = swapChains;
-    //    //presentInfo.pImageIndices = &imageIndex;
-    //    //presentInfo.pResults = nullptr; // Optional
-
-    //    //vkQueuePresentKHR(presentQueue, &presentInfo);
-    //}
 
     void VulkanContext::OnWindowResized(int width, int height) {
         if (width == 0 || height == 0) return;
