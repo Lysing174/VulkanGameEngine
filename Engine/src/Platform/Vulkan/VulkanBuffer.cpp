@@ -19,27 +19,28 @@ namespace Engine {
 			m_BufferMemory);
 	}
 
-	VulkanVertexBuffer::VulkanVertexBuffer(std::vector<Vertex> vertices, uint32_t size)
-		: m_Size(size)
-	{
-		VkDevice device = VulkanContext::Get()->GetDevice();
+    VulkanVertexBuffer::VulkanVertexBuffer(void* data, uint32_t size)
+    {
+        m_Size = size;
 
-		VkBuffer stagingBuffer;
-		VkDeviceMemory stagingBufferMemory;
-		VulkanContext::Get()->CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+        VkDevice device = VulkanContext::Get()->GetDevice();
 
-		void* data;
-		vkMapMemory(device, stagingBufferMemory, 0, size, 0, &data);
-		memcpy(data, vertices.data(), (size_t)size);
-		vkUnmapMemory(device, stagingBufferMemory);
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        VulkanContext::Get()->CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
-		VulkanContext::Get()->CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_Buffer, m_BufferMemory);
+        void* memoryData;
+        vkMapMemory(device, stagingBufferMemory, 0, size, 0, &memoryData);
+        memcpy(memoryData, data, (size_t)size);
+        vkUnmapMemory(device, stagingBufferMemory);
 
-		VulkanContext::Get()->CopyBuffer(stagingBuffer, m_Buffer, size);
+        VulkanContext::Get()->CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_Buffer, m_BufferMemory);
 
-		vkDestroyBuffer(device, stagingBuffer, nullptr);
-		vkFreeMemory(device, stagingBufferMemory, nullptr);
-	}
+        VulkanContext::Get()->CopyBuffer(stagingBuffer, m_Buffer, size);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
 
 	VulkanVertexBuffer::~VulkanVertexBuffer()
 	{

@@ -9,7 +9,8 @@ namespace Engine {
 	{
 	public:
 		VulkanVertexBuffer(uint32_t size);
-		VulkanVertexBuffer(std::vector<Vertex> vertices, uint32_t size);
+		VulkanVertexBuffer(void* data, uint32_t size);
+
 		virtual ~VulkanVertexBuffer();
 
 		virtual void Bind() const override;

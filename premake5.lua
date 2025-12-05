@@ -40,6 +40,7 @@ project "Engine"
 		"ThirdParty/Include",
 		"Engine/src",
 		"vendor/bin/imgui",
+		"vendor/bin/entt",
 		"D:/program/vulkanSDK1.4.304.1/Include",
 		"D:/program/vulkanSDK1.4.304.1/Third-Party/Include"
 	}
@@ -100,6 +101,7 @@ project "SandBox"
 		"ThirdParty/Include",
 		"Engine/src",
 		"vendor/bin/imgui",
+		"vendor/bin/entt",
 		"D:/program/vulkanSDK1.4.304.1/Include",
 		"D:/program/vulkanSDK1.4.304.1/Third-Party/Include"
 	}

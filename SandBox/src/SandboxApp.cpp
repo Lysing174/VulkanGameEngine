@@ -1,7 +1,8 @@
 #include "pch.h"
 #include <Engine.h>
 #include <Engine/Renderer/Shader.h>
-#include <Engine/Renderer/Buffer.h>
+#include <Engine/Renderer/Material.h>
+#include <Engine/Renderer/Mesh.h>
 #include "Engine/Renderer/EditorCamera.h"
 
 const std::string MODEL_PATH = "models/cottage_obj.obj";
@@ -21,22 +22,17 @@ public:
 	}
 	void OnAttach() override
 	{
-		m_Shader=Engine::Shader::Create("shaders/vert.spv", "shaders/frag.spv");
+		m_Shader=Engine::Shader::Create("shaders/Mesh.vert.spv", "shaders/Mesh.frag.spv");
+		m_Material = Engine::Material(m_Shader);
 
-        std::vector<Engine::Vertex> vertices;
+        std::vector<Engine::MeshVertex> vertices;
         std::vector<uint32_t> indices;
 
 		Engine::RendererAPI::LoadModel(MODEL_PATH, vertices, indices);
 
-        Engine::BufferLayout layout = {
-			{ Engine::ShaderDataType::Float3, "a_Position" },
-			{ Engine::ShaderDataType::Float3, "a_Color" },
-			{Engine::ShaderDataType::Float2,"a_Texcoord"}
-        };
-		m_VertexBuffer = Engine::VertexBuffer::Create(vertices, sizeof(vertices[0]) * vertices.size());
-        m_IndexBuffer = Engine::IndexBuffer::Create(indices, indices.size());
+		m_Mesh = Engine::Mesh::CreateCube();
 
-		m_Shader->CreatePipeline(layout);
+		m_Shader->CreatePipeline(m_Mesh.GetVertexBuffer()->GetLayout());
 
 	}
 	void OnDetach() override
@@ -45,20 +41,18 @@ public:
 	}
 	void OnUpdate() override
 	{
-		m_Shader->Bind();
+		m_Material.Bind();
+		m_Mesh.Bind();
 
-        m_VertexBuffer->Bind();
-        m_IndexBuffer->Bind();
-
-        Engine::Application::Get().GetWindow().GetContext()->DrawModel(m_IndexBuffer->GetCount());
+        Engine::Application::Get().GetWindow().GetContext()->DrawModel(m_Mesh.GetIndexCount());
 	}
 	void OnEvent(Engine::Event& event) override
 	{
 	}
 private:
 	std::shared_ptr<Engine::Shader> m_Shader;
-	std::shared_ptr<Engine::VertexBuffer> m_VertexBuffer;
-    std::shared_ptr<Engine::IndexBuffer> m_IndexBuffer;
+	Engine::Mesh m_Mesh;
+	Engine::Material m_Material;
 
 };
 

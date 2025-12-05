@@ -18,9 +18,7 @@ namespace Engine {
 
 		m_ImGuiLayer = new ImGuiLayer();
 		PushOverlay(m_ImGuiLayer);
-		EG_CORE_INFO("A");
 		m_Camera = EditorCamera(45.0f, 1.778f, 0.1f, 1000.0f);
-
 	}
 	Application::~Application() 
 	{

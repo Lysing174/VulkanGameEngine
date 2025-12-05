@@ -166,6 +166,11 @@ namespace Engine {
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
+        //往shader推送数据
+        VkPushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushConstantRange.offset = 0;
+        pushConstantRange.size = sizeof(glm::vec4);
 
         //渲染管道布局
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
@@ -173,8 +178,8 @@ namespace Engine {
         pipelineLayoutInfo.setLayoutCount = 1; // Optional
         VkDescriptorSetLayout descriptorSetLayout = VulkanContext::Get()->GetDescriptorSetLayout();
         pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout; // Optional
-        pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
-        pipelineLayoutInfo.pPushConstantRanges = 0; // Optional
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
         if (vkCreatePipelineLayout(VulkanContext::Get()->GetDevice(), &pipelineLayoutInfo, nullptr, &m_PipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create pipeline layout!");
