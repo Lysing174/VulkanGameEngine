@@ -1,8 +1,8 @@
 #pragma once
 #include "imgui.h"
 #include "Engine/ImGui/ImGuiLayer.h"
-#include "Engine/Application.h"
-#include "Engine/Log.h"
+#include "Engine/Core/Application.h"
+#include "Engine/Core/Log.h"
 
 #ifdef EG_PLATFORM_WINDOWS
 

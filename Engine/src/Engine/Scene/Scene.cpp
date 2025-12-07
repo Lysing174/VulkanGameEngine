@@ -40,96 +40,145 @@ namespace Engine {
 		m_EntityMap.erase(entity.GetUUID());
 		m_Registry.destroy(entity);
 	}
-	//void Scene::OnUpdateEditor(EditorCamera& camera)
-	//{
-	//	// 1. 开始场景渲染 (传入编辑器相机)
-	//	Renderer::BeginScene(camera);
 
-	//	// 2. 遍历所有带有 [Mesh] 和 [Transform] 的实体
-	//	// group 是一种优化遍历，比 view 更快
-	//	auto group = m_Registry.group<TransformComponent>(entt::get<MeshComponent>);
+	void Scene::OnUpdateRuntime()
+	{	
+		//Scripts****************************Need Add
 
-	//	for (auto entity : group)
-	//	{
-	//		// 获取组件引用
-	//		auto [transform, mesh] = group.get<TransformComponent, MeshComponent>(entity);
+		//Phisics****************************Need Add
 
-	//		// 3. 提交给 Vulkan 渲染器
-	//		// 这里的 mesh.Mesh 是你之前定义的 Mesh 指针
-	//		// transform.GetTransform() 返回 glm::mat4 模型矩阵
-	//		if (mesh.Mesh)
-	//		{
-	//			Renderer::Submit(mesh.Mesh->GetShader(), mesh.Mesh, transform.GetTransform());
-	//		}
-	//	}
+		// Render 
+		Camera* mainCamera = nullptr;
+		glm::mat4 cameraTransform;
+		{
+			auto view = m_Registry.view<TransformComponent, CameraComponent>();
+			for (auto entity : view)
+			{
+				auto [transform, camera] = view.get<TransformComponent, CameraComponent>(entity);
 
-	//	// 3. 结束场景
-	//	Renderer::EndScene();
-	//}
+				if (camera.Primary)
+				{
+					mainCamera = &camera.Camera;
+					cameraTransform = transform.GetTransform();
+					break;
+				}
+			}
+		}
 
-	//void Scene::OnUpdateRuntime(Timestep ts)
-	//{
-	//	// 1. 处理脚本/原生 C++ 脚本逻辑
-	//	{
-	//		// m_Registry.view<NativeScriptComponent>()...
-	//		// 后面教程会教这个
-	//	}
+		if (mainCamera)
+		{
 
-	//	// 2. 寻找主相机 (Primary Camera)
-	//	Camera* mainCamera = nullptr;
-	//	glm::mat4 cameraTransform;
+			// Draw meshes
+			auto view = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
+			for (auto entity : view)
+			{
+				auto [transform, renderer, filter] = view.get<TransformComponent, MeshRendererComponent, MeshFilterComponent>(entity);
+				if (filter.Mesh) // 稍微做个空指针检查，防止崩溃
+				{
+					Renderer::SubmitMesh(
+						transform.GetTransform(),
+						filter.Mesh,
+						renderer.Material,
+						(int)entity
+					);
+				}
+			}
 
-	//	auto view = m_Registry.view<TransformComponent, CameraComponent>();
-	//	for (auto entity : view)
-	//	{
-	//		auto [transform, camera] = view.get<TransformComponent, CameraComponent>(entity);
 
-	//		if (camera.Primary)
-	//		{
-	//			mainCamera = &camera.Camera;
-	//			cameraTransform = transform.GetTransform();
-	//			break; // 找到一个主相机就停
-	//		}
-	//	}
+		}
 
-	//	// 3. 渲染 (如果场景里有相机)
-	//	if (mainCamera)
-	//	{
-	//		// 游戏相机的 View 矩阵是 Transform 的逆矩阵
-	//		glm::mat4 viewProjection = mainCamera->GetProjection() * glm::inverse(cameraTransform);
+	}
 
-	//		Renderer::BeginScene(*mainCamera, glm::inverse(cameraTransform));
+	void Scene::OnUpdateSimulation(EditorCamera& camera)
+	{
+		//Phisics****************************Need Add
+		
 
-	//		// 像上面一样遍历 Mesh 渲染
-	//		auto group = m_Registry.group<TransformComponent>(entt::get<MeshComponent>);
-	//		for (auto entity : group)
-	//		{
-	//			auto [transform, mesh] = group.get<TransformComponent, MeshComponent>(entity);
-	//			if (mesh.Mesh)
-	//			{
-	//				Renderer::Submit(mesh.Mesh->GetShader(), mesh.Mesh, transform.GetTransform());
-	//			}
-	//		}
 
-	//		Renderer::EndScene();
-	//	}
-	//}
+		// Render
+		RenderScene(camera);
+	}
+
+	void Scene::OnUpdateEditor(EditorCamera& camera)
+	{
+		// Render
+		RenderScene(camera);
+	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)
 	{
+		if (m_ViewportWidth == width && m_ViewportHeight == height)
+			return;
+
 		m_ViewportWidth = width;
 		m_ViewportHeight = height;
 
-		// 当视口变化时，更新所有拥有相机的实体，调整它们的宽高比
+		// Resize our non-FixedAspectRatio cameras
 		auto view = m_Registry.view<CameraComponent>();
 		for (auto entity : view)
 		{
 			auto& cameraComponent = view.get<CameraComponent>(entity);
 			if (!cameraComponent.FixedAspectRatio)
-			{
 				cameraComponent.Camera.SetViewportSize(width, height);
-			}
 		}
 	}
 
+	void Scene::RenderScene(EditorCamera& camera)
+	{
+		auto view = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
+		for (auto entity : view)
+		{
+			auto [transform, renderer, filter] = view.get<TransformComponent, MeshRendererComponent, MeshFilterComponent>(entity);
+			if (filter.Mesh) // 稍微做个空指针检查，防止崩溃
+			{
+				Renderer::SubmitMesh(
+					transform.GetTransform(),
+					filter.Mesh,      
+					renderer.Material, 
+					(int)entity
+				);
+			}
+		}
+
+	}
+
+	template<typename T>
+	void Scene::OnComponentAdded(Entity entity, T& component)
+	{
+		// static_assert(false); // 如果你想强制每个组件都必须手动特化，可以取消注释这行
+	}
+
+	template<>
+	void Scene::OnComponentAdded<IDComponent>(Entity entity, IDComponent& component)
+	{
+	}
+
+	// 3. Tag (名字) 组件
+	template<>
+	void Scene::OnComponentAdded<TagComponent>(Entity entity, TagComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<TransformComponent>(Entity entity, TransformComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<MeshFilterComponent>(Entity entity, MeshFilterComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<MeshRendererComponent>(Entity entity, MeshRendererComponent& component)
+	{
+	}
+
+	// 注意：这里通常需要处理视口大小初始化，防止相机宽高比不对
+	template<>
+	void Scene::OnComponentAdded<CameraComponent>(Entity entity, CameraComponent& component)
+	{
+		if (m_ViewportWidth > 0 && m_ViewportHeight > 0)
+			component.Camera.SetViewportSize(m_ViewportWidth, m_ViewportHeight);
+	}
 }

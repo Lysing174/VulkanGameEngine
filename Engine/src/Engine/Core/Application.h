@@ -2,9 +2,10 @@
 
 #include "Core.h"
 #include "Engine/Layer/LayerStack.h"
-#include "Events/Event.h"
-#include "Events/ApplicationEvent.h"
+#include "Engine/Events/Event.h"
+#include "Engine/Events/ApplicationEvent.h"
 #include "Engine/ImGui/ImGuiLayer.h"
+#include "Engine/Layer/EditorLayer.h"
 #include "Platform/Vulkan/VulkanContext.h"
 #include "Window.h"
 namespace Engine {
@@ -35,10 +36,10 @@ namespace Engine {
 
 		std::unique_ptr<Window> m_Window;
 		static Application* s_Instance;
-		Engine::EditorCamera m_Camera;
 		bool m_Running = true;
 		LayerStack m_LayerStack;
 		ImGuiLayer* m_ImGuiLayer;
+		EditorLayer* m_EditorLayer;
 		const float m_FixedTimeStep = 1.0f / 60.0f;
 		float m_TimeStep;
 		float m_LastFrameTime = 0.0f;

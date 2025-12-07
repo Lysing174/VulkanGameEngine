@@ -22,16 +22,15 @@ namespace Engine {
 		VkShaderModule GetVertexShaderModule() const { return m_VertexShaderModule; }
 		VkShaderModule GetFragmentShaderModule() const { return m_FragmentShaderModule; }
 		VkPipeline GetPipeline() const { return m_GraphicsPipeline; }
-		VkPipelineLayout GetPipelineLayout() const { return m_PipelineLayout; }
 
-		// --- 暂时废弃的 OpenGL 接口 (Vulkan 不这么做) ---
-		// 在 Vulkan 中，这些操作通过 UniformBuffer 和 DescriptorSet 完成
-		// 这里留空或者是打印警告
-		virtual void SetInt(const std::string& name, int value) override {}
-		virtual void SetFloat3(const std::string& name, const glm::vec3& value) override {}
-		virtual void SetMat4(const std::string& name, const glm::mat4& value) override {}
+		//virtual void SetInt(const std::string& name, int value) override {}
+		//virtual void SetFloat3(const std::string& name, const glm::vec3& value) override {}
+		//virtual void SetMat4(const std::string& name, const glm::mat4& value) override {}
 
 		virtual const std::string& GetName() const override { return m_Name; }
+		virtual uint32_t GetRendererID() const override { return m_RendererID; }
+		virtual const VkPipelineLayout GetPipelineLayout() const override { return m_PipelineLayout; }
+
 
 	private:
 		static std::vector<char> ReadFile(const std::string& filename);
@@ -42,8 +41,9 @@ namespace Engine {
 		VkShaderModule m_VertexShaderModule;
 		VkShaderModule m_FragmentShaderModule;
 		std::string m_Name;
-		VkPipeline m_GraphicsPipeline;
-		VkPipelineLayout m_PipelineLayout;
+		uint32_t m_RendererID = 0;
+		VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;;
+		VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;;
 	};
 
 }

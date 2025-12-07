@@ -1,6 +1,6 @@
 ﻿#include "pch.h"
 #include "VulkanShader.h"
-#include "Engine/Application.h"
+#include "Engine/Core/Application.h"
 #include "Platform/Vulkan/VulkanContext.h" 
 
 #include <fstream>
@@ -11,6 +11,8 @@ namespace Engine {
 	{
 		size_t found = vertexSrc.find_last_of("/\\");
 		m_Name = vertexSrc.substr(found + 1);
+        std::hash<std::string> hasher;
+        m_RendererID = (uint32_t)(hasher(vertexSrc) ^ (hasher(fragmentSrc) << 1));
 
 		auto vertCode = ReadFile(vertexSrc);
 		auto fragCode = ReadFile(fragmentSrc);
@@ -19,7 +21,6 @@ namespace Engine {
 		m_FragmentShaderModule = CreateShaderModule(fragCode);
 
 		EG_CORE_INFO("Created Vulkan Shader Modules from: {0} & {1}", vertexSrc, fragmentSrc);
-
 	}
 
 	VulkanShader::~VulkanShader()
@@ -52,10 +53,6 @@ namespace Engine {
         scissor.offset = { 0, 0 };
         scissor.extent = extent;
         vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        VkDescriptorSet currentDescriptorSet = VulkanContext::Get()->GetCurrentDescriptorSet();
-
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &currentDescriptorSet, 0, nullptr);
 	}
 
 	void VulkanShader::Unbind() const
@@ -166,20 +163,30 @@ namespace Engine {
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
-        //往shader推送数据
-        VkPushConstantRange pushConstantRange{};
-        pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(glm::vec4);
+        // pushConstant设置
+        std::vector<VkPushConstantRange> pushConstantRanges;
 
-        //渲染管道布局
+        // --- Range 1: 顶点着色器 (只放 Model 矩阵) ---
+        VkPushConstantRange vertexPushConstantRange{};
+        vertexPushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        vertexPushConstantRange.offset = 0; 
+        vertexPushConstantRange.size = sizeof(glm::mat4); 
+        pushConstantRanges.push_back(vertexPushConstantRange);
+
+        // --- Range 2: 片段着色器 (放 Color) ---
+        VkPushConstantRange fragPushConstantRange{};
+        fragPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragPushConstantRange.offset = sizeof(glm::mat4); 
+        fragPushConstantRange.size = sizeof(glm::vec4);   
+        pushConstantRanges.push_back(fragPushConstantRange);
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 1; // Optional
         VkDescriptorSetLayout descriptorSetLayout = VulkanContext::Get()->GetDescriptorSetLayout();
-        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout; // Optional
-        pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+        pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(pushConstantRanges.size());
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges.data();
 
         if (vkCreatePipelineLayout(VulkanContext::Get()->GetDevice(), &pipelineLayoutInfo, nullptr, &m_PipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create pipeline layout!");

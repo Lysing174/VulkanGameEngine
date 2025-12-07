@@ -53,12 +53,12 @@ namespace Engine {
     {
         initVulkan();
     }
-    void VulkanContext::BeginFrame(const EditorCamera& camera)
+    void VulkanContext::BeginFrame(glm::mat4 projView)
     {
         vkQueueWaitIdle(presentQueue);
         vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphore, VK_NULL_HANDLE, &currentImageIndex);
 
-        updateGlobalUniforms(camera);
+        updateGlobalUniforms(projView);
 
         vkResetCommandBuffer(commandBuffers[currentImageIndex], 0);//清空命令
 
@@ -86,13 +86,6 @@ namespace Engine {
         vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     }
 
-    void VulkanContext::DrawFrame()
-    {
-        //updateUniformBuffer();
-        //vkCmdDrawIndexed(commandBuffers[currentImageIndex], indexCount, 1, 0, 0, 0);
-
-        //drawFrame();
-    }
     void VulkanContext::EndFrame()
     {
 
@@ -138,11 +131,6 @@ namespace Engine {
         presentInfo.pResults = nullptr; // Optional
 
         vkQueuePresentKHR(presentQueue, &presentInfo);
-    }
-    void VulkanContext::DrawModel(uint32_t indexCount)
-    {
-        vkCmdDrawIndexed(commandBuffers[currentImageIndex], indexCount, 1, 0, 0, 0);
-
     }
 
     void VulkanContext::initVulkan() {
@@ -1271,16 +1259,11 @@ namespace Engine {
 
     //}
 
-    void VulkanContext::updateGlobalUniforms(const EditorCamera& camera)
+    void VulkanContext::updateGlobalUniforms(glm::mat4 projView)
     {
         UniformBufferObject ubo{};
 
-        // Model 矩阵在这里先设为单位矩阵 (或者不设，留给 PushConstant 处理)
-        ubo.model = glm::mat4(1.0f);
-
-        ubo.view = camera.GetViewMatrix();
-        ubo.proj = camera.GetProjection();
-        ubo.proj[1][1] *= -1; 
+        ubo.projView = projView;
 
         void* data;
         vkMapMemory(device, uniformBuffersMemory[currentImageIndex], 0, sizeof(ubo), 0, &data);

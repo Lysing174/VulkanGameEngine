@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <Engine/Renderer/Buffer.h>
 #include <glm/glm.hpp>
+#include <vulkan/vulkan.h>
 
 namespace Engine {
 
@@ -17,11 +18,13 @@ namespace Engine {
 
 		virtual void CreatePipeline(const BufferLayout& layout) = 0;
 
-		virtual void SetInt(const std::string& name, int value) = 0;
-		virtual void SetFloat3(const std::string& name, const glm::vec3& value) = 0;
-		virtual void SetMat4(const std::string& name, const glm::mat4& value) = 0;
+		//virtual void SetInt(const std::string& name, int value) = 0;
+		//virtual void SetFloat3(const std::string& name, const glm::vec3& value) = 0;
+		//virtual void SetMat4(const std::string& name, const glm::mat4& value) = 0;
 
 		virtual const std::string& GetName() const = 0;
+		virtual uint32_t GetRendererID() const = 0;
+		virtual const VkPipelineLayout GetPipelineLayout() const = 0;
 
 		static std::shared_ptr<Shader> Create(const std::string& vertexSrc, const std::string& fragmentSrc);
 

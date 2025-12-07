@@ -14,15 +14,19 @@ namespace Engine {
         virtual ~Material() = default;
 
         void Bind();
+        void PushColor(const glm::vec4& color);
 
         void SetColor(const glm::vec4& color) { m_Color = color; }
         glm::vec4 GetColor() const { return m_Color; }
 
+        virtual uint32_t GetRendererID() const { return m_RendererID; }
         std::shared_ptr<Shader> GetShader() const { return m_Shader; }
 
         // 以后这里可以加 SetTexture()
 
     private:
+        uint32_t m_RendererID = 0;
+
         std::shared_ptr<Shader> m_Shader;
 
         glm::vec4 m_Color = { 1.0f, 1.0f, 1.0f, 1.0f }; 

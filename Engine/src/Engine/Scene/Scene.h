@@ -2,7 +2,7 @@
 
 #include "Engine/Scene/UUID.h"
 #include "Engine/Renderer/EditorCamera.h"
-
+#include "Entity.h"
 #include "entt.hpp"
 
 class b2World;
@@ -17,36 +17,36 @@ namespace Engine {
 		Scene();
 		~Scene();
 
-		static Scene* Copy(Scene* other);
+		static Scene* Copy(Scene* other) {}
 
 		Entity CreateEntity(const std::string& name = std::string());
 		Entity CreateEntityWithUUID(UUID uuid, const std::string& name = std::string());
 		void DestroyEntity(Entity entity);
 
-		void OnRuntimeStart();
-		void OnRuntimeStop();
+		void OnRuntimeStart() {}
+		void OnRuntimeStop() {}
 
-		void OnSimulationStart();
-		void OnSimulationStop();
+		void OnSimulationStart() {}
+		void OnSimulationStop() {}
 
 		void OnUpdateRuntime();
 		void OnUpdateSimulation(EditorCamera& camera);
 		void OnUpdateEditor(EditorCamera& camera);
 		void OnViewportResize(uint32_t width, uint32_t height);
 
-		Entity DuplicateEntity(Entity entity);
+		Entity DuplicateEntity(Entity entity) {}
 
-		Entity FindEntityByName(std::string_view name);
-		Entity GetEntityByUUID(UUID uuid);
+		Entity FindEntityByName(std::string_view name) {}
+		Entity GetEntityByUUID(UUID uuid) {}
 
-		Entity GetPrimaryCameraEntity();
+		Entity GetPrimaryCameraEntity() {}
 
 		bool IsRunning() const { return m_IsRunning; }
 		bool IsPaused() const { return m_IsPaused; }
 
 		void SetPaused(bool paused) { m_IsPaused = paused; }
 
-		void Step(int frames = 1);
+		void Step(int frames = 1) {}
 
 		template<typename... Components>
 		auto GetAllEntitiesWith()
@@ -57,8 +57,8 @@ namespace Engine {
 		template<typename T>
 		void OnComponentAdded(Entity entity, T& component);
 
-		void OnPhysics2DStart();
-		void OnPhysics2DStop();
+		void OnPhysics2DStart() {}
+		void OnPhysics2DStop() {}
 
 		void RenderScene(EditorCamera& camera);
 	private:

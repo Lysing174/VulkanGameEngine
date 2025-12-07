@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "Application.h"
+#include "Engine/Renderer/Renderer.h"
 #include "Input.h"
 
 #include <GLFW/glfw3.h>
@@ -15,10 +16,11 @@ namespace Engine {
 		m_Window = std::unique_ptr<Window>(Window::Create());
 		m_Window->SetEventCallback(BIND_EVENT_FN(Application::OnEvent));
 
+		m_EditorLayer = new EditorLayer();
+		PushLayer(m_EditorLayer);
 
 		m_ImGuiLayer = new ImGuiLayer();
 		PushOverlay(m_ImGuiLayer);
-		m_Camera = EditorCamera(45.0f, 1.778f, 0.1f, 1000.0f);
 	}
 	Application::~Application() 
 	{
@@ -52,7 +54,6 @@ namespace Engine {
 			if (e.Handled)
 				break;
 		}
-		if (!e.Handled)m_Camera.OnEvent(e);
 	}
 	void Application::PushLayer(Layer* layer)
 	{
@@ -102,17 +103,13 @@ namespace Engine {
 				m_Accumulator -= m_FixedTimeStep;
 			}
 
-
 			//Update
-			m_Camera.OnUpdate();
-
-			m_Window->GetContext()->BeginFrame(m_Camera);
+			Renderer::BeginScene(m_EditorLayer->GetEditorCamera());
 
 			for (Layer* layer : m_LayerStack)
 			{
 				layer->OnUpdate();
 			}
-			m_Window->GetContext()->DrawFrame();
 
 			m_ImGuiLayer->Begin();
 
@@ -120,8 +117,7 @@ namespace Engine {
 				layer->OnImGuiRender();
 
 			m_ImGuiLayer->End();
-
-			m_Window->GetContext()->EndFrame();
+			Renderer::EndScene();
 
 		}
 	}
@@ -129,9 +125,6 @@ namespace Engine {
 	bool Application::OnWindowResize(WindowResizeEvent& e)
 	{
 		((VulkanContext*)(m_Window->GetContext()))->OnWindowResized(e.GetWidth(), e.GetHeight());
-
-		auto& window = Engine::Application::Get().GetWindow();
-		m_Camera.SetViewportSize((float)window.GetWidth(), (float)window.GetHeight());
 
 		return false;
 	}

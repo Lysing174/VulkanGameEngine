@@ -8,7 +8,7 @@ layout(location = 0) out vec4 outColor;
 layout(binding = 1) uniform sampler2D texSampler;
 
 layout(push_constant) uniform PushConstants {
-    vec4 inMaterialColor; 
+    layout(offset = 64)vec4 inMaterialColor; 
 } pc;
 
 void main() {

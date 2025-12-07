@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "Engine/Renderer/GraphicsContext.h"
-#include "Engine/Renderer/RendererAPI.h"
+//#include "Engine/Renderer/Renderer.h"
 #define GLFW_INCLUDE_VULKAN
 
 #include <GLFW/glfw3.h>
@@ -90,9 +90,7 @@ namespace Engine {
         }
 
         struct UniformBufferObject {
-            glm::mat4 model;
-            glm::mat4 view;
-            glm::mat4 proj;
+            glm::mat4 projView;
         };
 
 
@@ -101,10 +99,8 @@ namespace Engine {
         ~VulkanContext();
 
         virtual void Init() override;
-        virtual void BeginFrame(const EditorCamera& camera) override;
-        virtual void DrawFrame() override;
+        virtual void BeginFrame(glm::mat4 projView) override;
         virtual void EndFrame() override;
-        virtual void DrawModel(uint32_t indexCount)override;
 
         void OnWindowResized(int width, int height);
 
@@ -222,7 +218,7 @@ namespace Engine {
         void createTextureImageView();
 
         void updateUniformBuffer();
-        void updateGlobalUniforms(const EditorCamera& camera);
+        void updateGlobalUniforms(glm::mat4 projView);
     };
 
 }

@@ -1,13 +1,12 @@
 #pragma once
 
 #include "Engine/Scene/UUID.h"
-#include "Scene.h"
 #include "Components.h"
 
 #include "entt.hpp"
 
 namespace Engine {
-
+	class Scene;
 	class Entity
 	{
 	public:

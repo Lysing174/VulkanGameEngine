@@ -3,6 +3,7 @@
 #include "Engine/Scene/SceneCamera.h"
 #include "Engine/Renderer/Mesh.h" 
 #include "Engine/Renderer/Material.h"
+#include "Engine/Scene/UUID.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>

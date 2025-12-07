@@ -2,7 +2,7 @@
 
 #include "Core.h"
 #include "spdlog/spdlog.h"
-#include "Events/Event.h"
+#include "Engine/Events/Event.h"
 #include "spdlog/fmt/ostr.h"
 
 namespace Engine {

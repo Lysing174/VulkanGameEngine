@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Engine/Window.h"
+#include "Engine/Core/Window.h"
 #include "Engine/Renderer/GraphicsContext.h"
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
