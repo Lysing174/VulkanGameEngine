@@ -6,8 +6,6 @@
 
 #include "Engine/Renderer/EditorCamera.h"
 
-const std::string MODEL_PATH = "models/cottage_obj.obj";
-const std::string TEXTURE_PATH = "textures/cottage_diffuse.png";
 
 class ExampleLayer :public Engine::Layer
 {

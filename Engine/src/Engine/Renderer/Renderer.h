@@ -11,6 +11,11 @@ namespace Engine {
 		std::shared_ptr<Mesh> Mesh;
 		std::shared_ptr<Material> Material; 
 		int EntityID; 
+
+		uint32_t SubmeshIndexCount;
+		uint32_t SubmeshFirstIndex;
+		uint32_t SubmeshFirstVertex;
+
 	};
 
 	class Renderer
@@ -31,13 +36,16 @@ namespace Engine {
 		static void BeginScene(const EditorCamera& camera);
 		static void EndScene();
 
-		static void DrawMesh(const std::shared_ptr<Mesh>& mesh, const glm::mat4& transform, const std::shared_ptr<Shader>& shader, int entityID = -1);
-		static void SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<Material>& material, int entityID = -1);
+		static void SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<MeshRendererComponent>& rendererComponent, int entityID = -1);
 		static void Flush();
 		//static void Submit(const Ref<Shader>& shader, const Ref<VertexArray>& vertexArray, const glm::mat4& transform = glm::mat4(1.0f));
 
 		static API GetAPI() { return s_API; }
 		static Renderer* Create();
+
+	private:
+		static void DrawMesh(RenderCommandRequest request);
+
 	private:
 		static API s_API;
 

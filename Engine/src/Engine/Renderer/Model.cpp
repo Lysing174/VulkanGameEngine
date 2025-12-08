@@ -43,8 +43,27 @@ namespace Engine {
         // 保存目录路径，例如 "assets/models/backpack/backpack.obj" -> "assets/models/backpack"
         m_Directory = path.substr(0, path.find_last_of('/'));
 
-        // 递归处理节点
+        // 预处理材质 (一次性加载所有材质)
+        if (scene->HasMaterials())
+        {
+            m_Materials.resize(scene->mNumMaterials);
+            for (uint32_t i = 0; i < scene->mNumMaterials; i++)
+            {
+                aiMaterial* aiMat = scene->mMaterials[i];
+                auto material = std::make_shared<Material>(m_BaseShader);
+
+                // TODO: 加载纹理逻辑
+                // auto texture = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE);
+                // material->SetTexture("u_AlbedoMap", texture);
+
+                material->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
+                m_Materials[i] = material;
+            }
+        }
+
         ProcessNode(scene->mRootNode, scene, glm::mat4(1.0f));
+
+        m_Mesh = std::make_shared<Mesh>(m_GlobalVertices, m_GlobalIndices,m_GlobalSubmeshes);
     }
 
     void Model::ProcessNode(aiNode* node, const aiScene* scene, const glm::mat4& parentTransform)
@@ -56,7 +75,7 @@ namespace Engine {
         for (uint32_t i = 0; i < node->mNumMeshes; i++)
         {
             aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
-            m_Submeshes.push_back(ProcessMesh(mesh, scene, transform));
+            ProcessMesh(mesh, scene, transform);
         }
 
         // 递归处理子节点
@@ -64,70 +83,52 @@ namespace Engine {
         {
             ProcessNode(node->mChildren[i], scene, transform);
         }
+
     }
 
-    Model::Submesh Model::ProcessMesh(aiMesh* mesh, const aiScene* scene, const glm::mat4& transform)
+    void Model::ProcessMesh(aiMesh* mesh, const aiScene* scene, const glm::mat4& transform)
     {
-        std::vector<MeshVertex> vertices;
-        std::vector<uint32_t> indices;
+        uint32_t firstVertex = (uint32_t)m_GlobalVertices.size();
+        uint32_t firstIndex = (uint32_t)m_GlobalIndices.size();
+        uint32_t indexCount = mesh->mNumFaces * 3;
 
         for (uint32_t i = 0; i < mesh->mNumVertices; i++)
         {
             MeshVertex vertex;
-
-            vertex.pos.x = mesh->mVertices[i].x;
-            vertex.pos.y = mesh->mVertices[i].y;
-            vertex.pos.z = mesh->mVertices[i].z;
+            vertex.pos = { mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z };
 
             if (mesh->HasNormals())
-            {
-                vertex.normal.x = mesh->mNormals[i].x;
-                vertex.normal.y = mesh->mNormals[i].y;
-                vertex.normal.z = mesh->mNormals[i].z;
-            }
+                vertex.normal = { mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z };
+            else
+                vertex.normal = { 0.0f, 0.0f, 0.0f };
 
             if (mesh->mTextureCoords[0])
-            {
-                vertex.texCoord.x = mesh->mTextureCoords[0][i].x;
-                vertex.texCoord.y = mesh->mTextureCoords[0][i].y;
-            }
+                vertex.texCoord = { mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y };
             else
-            {
-                vertex.texCoord = glm::vec2(0.0f, 0.0f);
-            }
+                vertex.texCoord = { 0.0f, 0.0f };
 
-            vertices.push_back(vertex);
+            m_GlobalVertices.push_back(vertex);
         }
 
         for (uint32_t i = 0; i < mesh->mNumFaces; i++)
         {
             aiFace face = mesh->mFaces[i];
             for (uint32_t j = 0; j < face.mNumIndices; j++)
-                indices.push_back(face.mIndices[j]);
+            {
+                // 索引不需要加 baseVertex，因为 DrawIndexed 的 baseVertex 参数会处理它
+                // 或者在这里加也行，取决于你 Renderer 怎么写。
+                // 推荐：存局部索引 (0, 1, 2...)，渲染时利用 vkCmdDrawIndexed 的 vertexOffset 参数。
+                m_GlobalIndices.push_back(face.mIndices[j]);
+            }
         }
 
-        auto material = std::make_shared<Material>(m_BaseShader);
+        Mesh::Submesh submesh;
+        submesh.FirstVertex = firstVertex;    
+        submesh.FirstIndex = firstIndex;      
+        submesh.IndexCount = indexCount;    
+        submesh.MaterialIndex = mesh->mMaterialIndex; 
+        submesh.Transform = transform;       
 
-        if (mesh->mMaterialIndex >= 0)
-        {
-            aiMaterial* aiMat = scene->mMaterials[mesh->mMaterialIndex];
-
-            // 这里我们只演示加载漫反射贴图 (Albedo)
-            // 真实的 PBR 需要加载 Normal, Roughness, Metallic 等
-            // TODO: 实现 LoadMaterialTexture
-            // auto texture = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE);
-            // material->SetTexture("u_AlbedoMap", texture);
-
-            // 简单起见，这里先随机个颜色或者白色
-            material->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
-        }
-
-        Submesh submesh;
-        submesh.Mesh = std::make_shared<Mesh>(vertices, indices); 
-        submesh.Material = material;
-        submesh.Transform = transform;
-        submesh.NodeName = mesh->mName.C_Str();
-
-        return submesh;
+        m_GlobalSubmeshes.push_back(submesh);
     }
 }

@@ -20,7 +20,7 @@ namespace Engine {
 		//virtual void SetClearColor(const glm::vec4& color) = 0;
 		//virtual void Clear() = 0;
 
-		static void DrawMesh(const std::shared_ptr<Mesh>& mesh, const glm::mat4& transform, const std::shared_ptr<Shader>& shader, int entityID = -1);
+		static void DrawMesh(RenderCommandRequest request);
 		//virtual void DrawIndexed(const VertexBuffer vertexArray, uint32_t indexCount = 0) = 0;
 		//virtual void DrawLines(const Ref<VertexArray>& vertexArray, uint32_t vertexCount) = 0;
 

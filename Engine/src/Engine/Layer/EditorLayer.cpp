@@ -2,6 +2,9 @@
 #include "EditorLayer.h"
 #include "Engine/Scene/Components.h" 
 #include "Engine/Events/ApplicationEvent.h"
+#include "Engine/Renderer/Model.h"
+const std::string MODEL_PATH = "models/cottage_obj.obj";
+const std::string TEXTURE_PATH = "textures/cottage_diffuse.png";
 
 namespace Engine {
 
@@ -26,8 +29,13 @@ namespace Engine {
         m_CubeEntity.AddComponent<MeshRendererComponent>(m_RedMaterial);
         shader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout());
         auto& transform = m_CubeEntity.GetComponent<TransformComponent>();
-        transform.Translation = { 0.0f, 0.0f, 0.0f };
+        transform.Translation = { 0.0f, 30.0f, 0.0f };
         transform.Scale = { 2.0f, 2.0f, 2.0f };
+
+        Entity houseEntity = m_ActiveScene->CreateEntity("House");
+        Model houseModel = Model(MODEL_PATH, shader);
+        houseEntity.AddComponent<MeshFilterComponent>(houseModel.GetMesh());
+        houseEntity.AddComponent<MeshRendererComponent>(houseModel.GetMaterials());
 
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();

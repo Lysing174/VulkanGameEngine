@@ -78,7 +78,7 @@ namespace Engine {
 					Renderer::SubmitMesh(
 						transform.GetTransform(),
 						filter.Mesh,
-						renderer.Material,
+						std::make_shared<MeshRendererComponent>(renderer),
 						(int)entity
 					);
 				}
@@ -134,7 +134,7 @@ namespace Engine {
 				Renderer::SubmitMesh(
 					transform.GetTransform(),
 					filter.Mesh,      
-					renderer.Material, 
+					std::make_shared<MeshRendererComponent>(renderer), 
 					(int)entity
 				);
 			}

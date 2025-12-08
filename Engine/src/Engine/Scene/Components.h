@@ -59,14 +59,24 @@ namespace Engine {
 
 	struct MeshRendererComponent
 	{
-		std::shared_ptr<Material> Material; 
+		std::vector<std::shared_ptr<Material>> Materials;
+
+		std::shared_ptr<Material> GetMaterial(uint32_t index = 0)
+		{
+			if (index < Materials.size()) return Materials[index];
+			return nullptr; 
+		}
 
 		bool CastShadows = true;    // 是否投射阴影
 		bool ReceiveShadows = true; // 是否接收阴影
 
 		MeshRendererComponent() = default;
-		MeshRendererComponent(const std::shared_ptr<Engine::Material>& material)
-			: Material(material) {}
+		MeshRendererComponent(const std::vector<std::shared_ptr<Material>>& materials)
+			: Materials(materials) {}
+		MeshRendererComponent(std::shared_ptr<Material> material)
+		{
+			Materials.push_back(material);
+		}
 	};
 	struct CameraComponent
 	{

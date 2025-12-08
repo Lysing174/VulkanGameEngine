@@ -48,21 +48,38 @@ namespace Engine {
 
 	}
 
-	void Renderer::DrawMesh(const std::shared_ptr<Mesh>& mesh, const glm::mat4& transform, const std::shared_ptr<Shader>& shader, int entityID)
+	void Renderer::DrawMesh(RenderCommandRequest request)
 	{
         switch (GetAPI())
         {
         case API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return;
-        case API::Vulkan:  VulkanRenderer::DrawMesh(mesh, transform, shader, entityID); return;
+        case API::Vulkan:  VulkanRenderer::DrawMesh(request); return;
         }
 
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
         return;
 
 	}
-    void Renderer::SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<Material>& material, int entityID)
+    void Renderer::SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<MeshRendererComponent>& rendererComponent, int entityID)
     {
-        s_RenderQueue.push_back({ transform, mesh, material, entityID });
+        for (const auto& submesh : mesh->GetSubmeshes())
+        {
+            std::shared_ptr<Material> material = rendererComponent->GetMaterial(submesh.MaterialIndex);
+            if (!material) { EG_CORE_WARN("Can't match material!"); continue; }
+
+            glm::mat4 finalTransform = transform * submesh.Transform;
+
+            RenderCommandRequest request;
+            request.Mesh = mesh;
+            request.Material = material;
+            request.Transform = finalTransform;
+            request.EntityID = entityID;
+            request.SubmeshIndexCount = submesh.IndexCount;
+            request.SubmeshFirstIndex = submesh.FirstIndex;
+            request.SubmeshFirstVertex = submesh.FirstVertex;
+
+            s_RenderQueue.push_back(request);
+        }
     }
 
     void Renderer::Flush()
@@ -99,7 +116,7 @@ namespace Engine {
                 lastMaterial->Bind(); 
             }
 
-            DrawMesh(command.Mesh, command.Transform, lastShader, command.EntityID);
+            DrawMesh(command);
         }
     }
 }

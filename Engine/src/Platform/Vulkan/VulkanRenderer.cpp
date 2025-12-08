@@ -1,4 +1,4 @@
-#include "pch.h"
+ï»¿#include "pch.h"
 #include "VulkanRenderer.h"
 #include "Platform/Vulkan/VulkanContext.h"
 #include "Platform/Vulkan/VulkanBuffer.h"
@@ -26,35 +26,34 @@ namespace Engine
 	{
 		VulkanContext::Get()->EndFrame();
 	}
-	void VulkanRenderer::DrawMesh(const std::shared_ptr<Mesh>& mesh, const glm::mat4& transform, const std::shared_ptr<Shader>& shader, int entityID)
+	void VulkanRenderer::DrawMesh(RenderCommandRequest request)
 	{
-		// 1. »ñÈ¡µ±Ç° CommandBuffer
 		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
 
-		mesh->Bind();
+		request.Mesh->Bind();
 
-		// 5. ÍÆËÍ Push Constants (ºËÐÄ²½Öè)
-		// ×¢Òâ£ºÕâÀï¼ÙÉèÄãµÄ Shader Àï PushConstant °üº¬ÁË Transform ºÍ EntityID
-		// Èç¹ûÄãµÄ Shader ÀïÖ»ÓÐ Transform£¬¾ÍÖ» Push Transform
+		// 5. æŽ¨é€ Push Constants (æ ¸å¿ƒæ­¥éª¤)
+		// æ³¨æ„ï¼šè¿™é‡Œå‡è®¾ä½ çš„ Shader é‡Œ PushConstant åŒ…å«äº† Transform å’Œ EntityID
+		// å¦‚æžœä½ çš„ Shader é‡Œåªæœ‰ Transformï¼Œå°±åª Push Transform
 
 		// Push Transform (Vertex Shader)
 		vkCmdPushConstants(
 			cmd,
-			shader->GetPipelineLayout(),
-			VK_SHADER_STAGE_VERTEX_BIT, // ¼ÙÉè Transform ÔÚ¶¥µã×ÅÉ«Æ÷
-			0,                          // Æ«ÒÆÁ¿ 0
-			sizeof(glm::mat4),          // ´óÐ¡
-			&transform
+			request.Material->GetShader()->GetPipelineLayout(),
+			VK_SHADER_STAGE_VERTEX_BIT, // å‡è®¾ Transform åœ¨é¡¶ç‚¹ç€è‰²å™¨
+			0,                          // åç§»é‡ 0
+			sizeof(glm::mat4),          // å¤§å°
+			&(request.Transform)
 		);
 
-		// (¿ÉÑ¡) Push EntityID (Fragment Shader / Vertex Shader)
-		if (entityID != -1)
+		// (å¯é€‰) Push EntityID (Fragment Shader / Vertex Shader)
+		if (request.EntityID != -1)
 		{
-			// ×¢Òâ£ºÄãÐèÒªÈ·±£ shader Àï¶¨ÒåÁË EntityID ÇÒ¼ÆËãºÃÁË offset
-			// ÕâÀïÎªÁË¼òµ¥£¬¼ÙÉèËü½ô¸úÔÚ mat4 ºóÃæ£¬»òÕßÄã×Ô¼º¹ÜÀí offset
+			// æ³¨æ„ï¼šä½ éœ€è¦ç¡®ä¿ shader é‡Œå®šä¹‰äº† EntityID ä¸”è®¡ç®—å¥½äº† offset
+			// è¿™é‡Œä¸ºäº†ç®€å•ï¼Œå‡è®¾å®ƒç´§è·Ÿåœ¨ mat4 åŽé¢ï¼Œæˆ–è€…ä½ è‡ªå·±ç®¡ç† offset
 			// vkCmdPushConstants(cmd, layout, stage, sizeof(glm::mat4), sizeof(int), &entityID);
 		}
 
-		vkCmdDrawIndexed(cmd, mesh->GetIndexCount(), 1, 0, 0, 0);
+		vkCmdDrawIndexed(cmd, request.SubmeshIndexCount, 1, request.SubmeshFirstIndex, request.SubmeshFirstVertex, 0);
 	}
 }
