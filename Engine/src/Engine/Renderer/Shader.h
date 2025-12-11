@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <string>
 #include <unordered_map>
@@ -25,6 +25,17 @@ namespace Engine {
 		virtual const std::string& GetName() const = 0;
 		virtual uint32_t GetRendererID() const = 0;
 		virtual const VkPipelineLayout GetPipelineLayout() const = 0;
+
+		uint32_t GetBinding(const std::string& name) const
+		{
+			// 临时硬编码示例 (对应你之前的 Shader)
+			if (name == "u_AlbedoMap") return 0;
+			if (name == "u_NormalMap") return 1;
+			if (name == "u_MetalRoughAO") return 2;
+
+			EG_CORE_WARN("Shader resource not found: {0}", name);
+			return -1;
+		}
 
 		static std::shared_ptr<Shader> Create(const std::string& vertexSrc, const std::string& fragmentSrc);
 

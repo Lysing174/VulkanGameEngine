@@ -53,10 +53,9 @@ namespace Engine {
                 auto material = std::make_shared<Material>(m_BaseShader);
 
                 // TODO: 加载纹理逻辑
-                // auto texture = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE);
-                // material->SetTexture("u_AlbedoMap", texture);
+                //auto texture = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE);
+                //material->SetTexture("u_AlbedoMap", texture);
 
-                material->SetColor({ 1.0f, 1.0f, 1.0f, 1.0f });
                 m_Materials[i] = material;
             }
         }

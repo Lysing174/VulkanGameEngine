@@ -23,7 +23,7 @@ namespace Engine {
         m_CubeMesh = std::make_shared<Mesh>(Mesh::CreateCube());
         auto shader = Renderer::GetShaderLibrary()->Get("Mesh.vert.spv");
         m_RedMaterial = std::make_shared<Material>(shader);
-        m_RedMaterial->SetColor(glm::vec4(0, 1, 1, 1));
+        m_RedMaterial->SetAlbedoColor(glm::vec4(0, 1, 1, 1));
 
         m_ActiveScene = std::make_shared<Scene>();
 
@@ -35,10 +35,12 @@ namespace Engine {
         transform.Translation = { 0.0f, 30.0f, 0.0f };
         transform.Scale = { 2.0f, 2.0f, 2.0f };
 
+		std::shared_ptr<Material> houseMat = std::make_shared<Material>(shader);
+		houseMat->SetTexture("u_AlbedoMap", Texture2D::Create(TEXTURE_PATH));
         Entity houseEntity = m_ActiveScene->CreateEntity("House");
         Model houseModel = Model(MODEL_PATH, shader);
         houseEntity.AddComponent<MeshFilterComponent>(houseModel.GetMesh());
-        houseEntity.AddComponent<MeshRendererComponent>(houseModel.GetMaterials());
+        houseEntity.AddComponent<MeshRendererComponent>(houseMat);
 
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();

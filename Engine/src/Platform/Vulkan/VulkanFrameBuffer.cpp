@@ -8,6 +8,6 @@ namespace Engine {
     {
         // 这里将 VkDescriptorSet 句柄转换成 uint64_t
         // 注意：你必须保证 m_DescriptorSet 是有效的
-        return (uint64_t)m_DescriptorSet;
+        return (uint64_t)m_MaterialDescriptorSet;
     }
 }

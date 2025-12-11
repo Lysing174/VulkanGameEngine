@@ -19,7 +19,7 @@ namespace Engine {
 
 		m_VertexShaderModule = CreateShaderModule(vertCode);
 		m_FragmentShaderModule = CreateShaderModule(fragCode);
-
+        CreateDescriptorSetLayout();
 		EG_CORE_INFO("Created Vulkan Shader Modules from: {0} & {1}", vertexSrc, fragmentSrc);
 	}
 
@@ -30,6 +30,9 @@ namespace Engine {
 
 		vkDestroyShaderModule(VulkanContext::Get()->GetDevice(), m_VertexShaderModule, nullptr);
 		vkDestroyShaderModule(VulkanContext::Get()->GetDevice(), m_FragmentShaderModule, nullptr);
+
+        vkDestroyDescriptorSetLayout(VulkanContext::Get()->GetDevice(), m_MaterialDescriptorSetLayout, nullptr);
+
 	}
 
 	void VulkanShader::Bind() const {
@@ -58,6 +61,61 @@ namespace Engine {
 	void VulkanShader::Unbind() const
 	{
 	}
+    void VulkanShader::CreateDescriptorSetLayout() {
+        // --- Binding 0: Albedo Map (纹理) ---
+        VkDescriptorSetLayoutBinding albedoLayoutBinding = {};
+        albedoLayoutBinding.binding = 0;
+        albedoLayoutBinding.descriptorCount = 1;
+        albedoLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        albedoLayoutBinding.pImmutableSamplers = nullptr;
+        // 材质纹理只在片段着色器(Fragment Shader)中使用
+        albedoLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // --- Binding 1: Normal Map (纹理) ---
+        VkDescriptorSetLayoutBinding normalLayoutBinding = {};
+        normalLayoutBinding.binding = 1;
+        normalLayoutBinding.descriptorCount = 1;
+        normalLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        normalLayoutBinding.pImmutableSamplers = nullptr;
+        normalLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // --- Binding 2: Metal/Roughness/AO Map (纹理) ---
+        VkDescriptorSetLayoutBinding ormLayoutBinding = {};
+        ormLayoutBinding.binding = 2;
+        ormLayoutBinding.descriptorCount = 1;
+        ormLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        ormLayoutBinding.pImmutableSamplers = nullptr;
+        ormLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // --- Binding 3: Material UBO (Uniform Buffer) ---
+        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+        uboLayoutBinding.binding = 3;
+        uboLayoutBinding.descriptorCount = 1; // 这是一个 UBO
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.pImmutableSamplers = nullptr;
+        // 材质参数(颜色、粗糙度)也是在片段着色器计算光照时读取
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // --- 组合所有 Bindings ---
+        std::array<VkDescriptorSetLayoutBinding, 4> bindings = {
+            albedoLayoutBinding,
+            normalLayoutBinding,
+            ormLayoutBinding,
+            uboLayoutBinding
+        };
+
+        // --- 创建 Layout ---
+        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+
+        // 注意这里初始化的是 m_MaterialDescriptorSetLayout
+        if (vkCreateDescriptorSetLayout(VulkanContext::Get()->GetDevice(), &layoutInfo, nullptr, &m_MaterialDescriptorSetLayout) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create material descriptor set layout!");
+        }
+
+    }
 
     void VulkanShader::CreatePipeline(const BufferLayout& layout)
     {
@@ -182,9 +240,11 @@ namespace Engine {
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        VkDescriptorSetLayout descriptorSetLayout = VulkanContext::Get()->GetDescriptorSetLayout();
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+        VkDescriptorSetLayout globalLayout = VulkanContext::Get()->GetGlobalDescriptorSetLayout();
+        VkDescriptorSetLayout setLayouts[] = { globalLayout, m_MaterialDescriptorSetLayout };
+
+        pipelineLayoutInfo.setLayoutCount = 2;
+        pipelineLayoutInfo.pSetLayouts = setLayouts;
         pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(pushConstantRanges.size());
         pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges.data();
 

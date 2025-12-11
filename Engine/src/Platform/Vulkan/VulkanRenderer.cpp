@@ -21,6 +21,9 @@ namespace Engine
 		glm::mat4 projView = projection * camera.GetViewMatrix();
 
 		VulkanContext::Get()->BeginFrame(projView);
+		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
+		VkDescriptorSet globalDescriptorSet = VulkanContext::Get()->GetCurrentDescriptorSet();
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Renderer::GetShaderLibrary()->Get("Mesh.vert.spv")->GetPipelineLayout(), 0, 1, &globalDescriptorSet, 0, nullptr);
 	}
 	void VulkanRenderer::EndScene()
 	{

@@ -58,7 +58,6 @@ namespace Engine {
 					 Entity boxEntity = m_Context->CreateEntity("Box Entity");
 					 auto shader = Renderer::GetShaderLibrary()->Get("Mesh.vert.spv");
 					 std::shared_ptr material = std::make_shared<Material>(shader);
-					 material->SetColor(glm::vec4(1, 1, 1, 1));
 
 					 boxEntity.AddComponent<MeshFilterComponent>(std::make_shared<Mesh>(Mesh::CreateCube()));
 					 boxEntity.AddComponent<MeshRendererComponent>(material);

@@ -30,11 +30,14 @@ namespace Engine {
 		virtual const std::string& GetName() const override { return m_Name; }
 		virtual uint32_t GetRendererID() const override { return m_RendererID; }
 		virtual const VkPipelineLayout GetPipelineLayout() const override { return m_PipelineLayout; }
+		// 获取 DescriptorSetLayout (创建 Material 时需要)
+		VkDescriptorSetLayout GetMaterialDescriptorSetLayout() const { return m_MaterialDescriptorSetLayout; }
 
 
 	private:
 		static std::vector<char> ReadFile(const std::string& filename);
 		VkShaderModule CreateShaderModule(const std::vector<char>& code);
+		void CreateDescriptorSetLayout();
 
 
 	private:
@@ -42,8 +45,9 @@ namespace Engine {
 		VkShaderModule m_FragmentShaderModule;
 		std::string m_Name;
 		uint32_t m_RendererID = 0;
-		VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;;
-		VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;;
+		VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;
+		VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
+		VkDescriptorSetLayout m_MaterialDescriptorSetLayout;
 	};
 
 }

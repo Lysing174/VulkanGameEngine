@@ -107,6 +107,10 @@ namespace Engine {
         void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
         void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
         uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+        void CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+        void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+        void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+        VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
         VkCommandBuffer BeginSingleTimeCommands();
         void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
 
@@ -121,7 +125,7 @@ namespace Engine {
         VkRenderPass GetRenderPass() { return renderPass; } // 必须！ImGui 需要知道它在哪个 RenderPass 里画
         VkCommandBuffer GetCurrentCommandBuffer() { return commandBuffers[currentImageIndex]; }
         VkDescriptorSet GetCurrentDescriptorSet() { return descriptorSets[currentImageIndex]; }
-        VkDescriptorSetLayout GetDescriptorSetLayout() { return descriptorSetLayout; }
+        VkDescriptorSetLayout GetGlobalDescriptorSetLayout() { return descriptorSetLayout; }
         VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
 
         static VulkanContext* Get() { return s_Instance; }
@@ -142,10 +146,6 @@ namespace Engine {
 
         std::vector<VkBuffer> uniformBuffers;
         std::vector<VkDeviceMemory> uniformBuffersMemory;
-        VkImage textureImage;
-        VkDeviceMemory textureImageMemory;
-        VkImageView textureImageView;
-        VkSampler textureSampler;
         VkImage depthImage;
         VkDeviceMemory depthImageMemory;
         VkImageView depthImageView;
@@ -189,10 +189,6 @@ namespace Engine {
         void createFramebuffers();
         void createCommandPool();
         void createDepthResources();
-        void createTextureImage();
-        void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
-        VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
-        void createTextureSampler();
         void createUniformBuffer();
         void createDescriptorPool();
         void createDescriptorSets();
@@ -213,11 +209,7 @@ namespace Engine {
         VkFormat findDepthFormat();
         VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
         bool hasStencilComponent(VkFormat format);
-        void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
-        void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
-        void createTextureImageView();
 
-        void updateUniformBuffer();
         void updateGlobalUniforms(glm::mat4 projView);
     };
 

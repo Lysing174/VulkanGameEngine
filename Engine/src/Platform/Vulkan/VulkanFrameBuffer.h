@@ -45,7 +45,7 @@ namespace Engine {
 
         // 【核心】供 ImGui 使用的 Descriptor Set
         // 每一帧都会用这个 Descriptor Set 来画 Image
-        VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
+        VkDescriptorSet m_MaterialDescriptorSet = VK_NULL_HANDLE;
     };
 
 }
