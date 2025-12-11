@@ -28,7 +28,7 @@ namespace Engine {
 		entity.AddComponent<IDComponent>(uuid);
 		entity.AddComponent<TransformComponent>();
 		auto& tag = entity.AddComponent<TagComponent>();
-		tag.Tag = "None";
+		tag.Tag = name;
 
 		m_EntityMap[uuid] = entity;
 

@@ -3,6 +3,7 @@
 #include <map>
 #include <Engine/Renderer/EditorCamera.h>
 #include <Engine/Scene/Components.h>
+#include <Engine/Renderer/Shader.h>
 
 namespace Engine {
 	struct RenderCommandRequest
@@ -41,6 +42,8 @@ namespace Engine {
 		//static void Submit(const Ref<Shader>& shader, const Ref<VertexArray>& vertexArray, const glm::mat4& transform = glm::mat4(1.0f));
 
 		static API GetAPI() { return s_API; }
+		static std::shared_ptr<ShaderLibrary> GetShaderLibrary() { return s_ShaderLibrary; }
+
 		static Renderer* Create();
 
 	private:
@@ -54,6 +57,7 @@ namespace Engine {
 			glm::mat4 ViewProjectionMatrix;
 		};
 		static std::vector<RenderCommandRequest> s_RenderQueue;
+		static std::shared_ptr<ShaderLibrary> s_ShaderLibrary;
 		//static Scope<SceneData> s_SceneData;
 	};
 }

@@ -5,6 +5,13 @@
 namespace Engine {
     Renderer::API Renderer::s_API = Renderer::API::Vulkan;
 	std::vector<RenderCommandRequest> Renderer::s_RenderQueue;
+    std::shared_ptr<ShaderLibrary> Renderer::s_ShaderLibrary = std::make_shared<ShaderLibrary>();
+
+    void Renderer::Init()
+    {
+        // 可以在初始化时加载一些基础 Shader
+        s_ShaderLibrary->Load("shaders/Mesh.vert.spv", "shaders/Mesh.frag.spv");
+    }
 
 	void Renderer::BeginScene(const Camera& camera, const glm::mat4& transform)
 	{

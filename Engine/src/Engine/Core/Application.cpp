@@ -16,6 +16,8 @@ namespace Engine {
 		m_Window = std::unique_ptr<Window>(Window::Create());
 		m_Window->SetEventCallback(BIND_EVENT_FN(Application::OnEvent));
 
+		Renderer::Init();
+
 		m_EditorLayer = new EditorLayer();
 		PushLayer(m_EditorLayer);
 
@@ -124,6 +126,7 @@ namespace Engine {
 
 	bool Application::OnWindowResize(WindowResizeEvent& e)
 	{
+		if (e.GetWidth() <= 0 || e.GetHeight() <= 0)return false;
 		((VulkanContext*)(m_Window->GetContext()))->OnWindowResized(e.GetWidth(), e.GetHeight());
 
 		return false;

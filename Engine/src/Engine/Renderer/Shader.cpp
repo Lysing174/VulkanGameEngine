@@ -24,4 +24,31 @@ namespace Engine {
 	void Shader::Unbind() const
 	{
 	}
+
+
+	void ShaderLibrary::Add(const std::shared_ptr<Shader>& shader)
+	{
+		auto& name = shader->GetName();
+		EG_CORE_ASSERT(!Exists(name), "Shader already exists!");
+		m_Shaders[name] = shader;
+	}
+
+	std::shared_ptr<Shader> ShaderLibrary::Load(const std::string& vertexSrc, const std::string& fragmentSrc)
+	{
+		auto shader = Shader::Create(vertexSrc,fragmentSrc);
+		Add(shader);
+		return shader;
+	}
+
+
+	std::shared_ptr<Shader> ShaderLibrary::Get(const std::string& name)
+	{
+		EG_CORE_ASSERT(Exists(name), "Shader not found!");
+		return m_Shaders[name];
+	}
+
+	bool ShaderLibrary::Exists(const std::string& name) const
+	{
+		return m_Shaders.find(name) != m_Shaders.end();
+	}
 }

@@ -63,7 +63,26 @@ namespace Engine {
 
 	void EditorCamera::OnUpdate()
 	{
-		const glm::vec2& mouse{ Input::GetMouseX(), Input::GetMouseY() };
+	}
+
+	void EditorCamera::OnEvent(Event& e)
+	{
+		EventDispatcher dispatcher(e);
+		dispatcher.Dispatch<MouseScrolledEvent>(EG_BIND_EVENT_FN(EditorCamera::OnMouseScroll));
+		dispatcher.Dispatch<MouseMovedEvent>(EG_BIND_EVENT_FN(EditorCamera::OnMouseMove));
+
+	}
+
+	bool EditorCamera::OnMouseScroll(MouseScrolledEvent& e)
+	{
+		float delta = e.GetYOffset() * 0.1f;
+		MouseZoom(delta);
+		UpdateView();
+		return false;
+	}
+	bool EditorCamera::OnMouseMove(MouseMovedEvent& e)
+	{
+		const glm::vec2& mouse{ e.GetX(),e.GetY()};
 		glm::vec2 delta = (mouse - m_InitialMousePosition) * 0.003f;
 		m_InitialMousePosition = mouse;
 
@@ -72,19 +91,6 @@ namespace Engine {
 		else if (Input::IsMouseButtonPressed(Mouse::ButtonRight))
 			MouseRotate(delta);
 
-		UpdateView();
-	}
-
-	void EditorCamera::OnEvent(Event& e)
-	{
-		EventDispatcher dispatcher(e);
-		dispatcher.Dispatch<MouseScrolledEvent>(EG_BIND_EVENT_FN(EditorCamera::OnMouseScroll));
-	}
-
-	bool EditorCamera::OnMouseScroll(MouseScrolledEvent& e)
-	{
-		float delta = e.GetYOffset() * 0.1f;
-		MouseZoom(delta);
 		UpdateView();
 		return false;
 	}
