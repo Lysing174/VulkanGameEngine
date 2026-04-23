@@ -27,13 +27,20 @@ layout(location = 0) out vec4 outColor;
 void main() {
     // 1. 采样基础颜色
     vec4 albedo = texture(u_AlbedoMap, fragTexCoord);
+
+    // 2. Alpha discard (支持 MTL 的 d=0 透明度)
+    if (u_Material.AlbedoColor.a < 0.01) {
+        discard;
+    }
     
-    // 2. 采样混合纹理
-    vec4 mra = texture(u_MetalRoughAO, fragTexCoord);
-    
-    // 3. 拆分通道 (根据你的打包顺序，这里假设是 ORM: R=AO, G=Rough, B=Metal)
-    float ao        = mra.r; 
-    float roughness = mra.g;
-    float metallic  = mra.b;
-    outColor = texture(u_AlbedoMap, fragTexCoord) * u_Material.AlbedoColor;
+    // 3. 采样混合纹理
+        vec4 mra = texture(u_MetalRoughAO, fragTexCoord);
+        
+        // 4. 拆分通道 (根据你的打包顺序，这里假设是 ORM: R=AO, G=Rough, B=Metal)
+        float ao        = mra.r; 
+        float roughness = mra.g;
+        float metallic  = mra.b;
+
+    // 3. 最终输出
+    outColor = albedo * u_Material.AlbedoColor;
 }

@@ -1,6 +1,6 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "Model.h"
-//#include "Engine/Renderer/Texture.h"
+#include "Engine/Renderer/Texture.h"
 
 #include <glm/gtc/type_ptr.hpp> 
 
@@ -15,6 +15,37 @@ namespace Engine {
         to[0][2] = from.c1; to[1][2] = from.c2; to[2][2] = from.c3; to[3][2] = from.c4;
         to[0][3] = from.d1; to[1][3] = from.d2; to[2][3] = from.d3; to[3][3] = from.d4;
         return to;
+    }
+
+    // 辅助函数：加载材质纹理
+    static std::shared_ptr<Texture2D> LoadMaterialTexture(aiMaterial* mat, aiTextureType type, const std::string& directory)
+    {
+        if (mat->GetTextureCount(type) > 0)
+        {
+            aiString path;
+            if (mat->GetTexture(type, 0, &path) == AI_SUCCESS)
+            {
+                std::string texPath = directory + "/" + std::string(path.C_Str());
+                // 替换反斜杠为正斜杠
+                std::replace(texPath.begin(), texPath.end(), '\\', '/');
+                try {
+                    return Texture2D::Create(texPath);
+                }
+                catch (const std::exception& e) {
+                    EG_CORE_WARN("Failed to load texture {0}: {1}", texPath, e.what());
+                    // 尝试备用目录 textures/
+                    std::string fallbackTexPath = "textures/" + std::string(path.C_Str());
+                    try {
+                        EG_CORE_INFO("Trying fallback path: {0}", fallbackTexPath);
+                        return Texture2D::Create(fallbackTexPath);
+                    }
+                    catch (const std::exception&) {
+                        // 备用也失败，返回 nullptr
+                    }
+                }
+            }
+        }
+        return nullptr;
     }
 
     Model::Model(const std::string& path, const std::shared_ptr<Shader>& shader)
@@ -40,8 +71,9 @@ namespace Engine {
             return;
         }
 
-        // 保存目录路径，例如 "assets/models/backpack/backpack.obj" -> "assets/models/backpack"
-        m_Directory = path.substr(0, path.find_last_of('/'));
+        // 保存目录路径，例如 "models/cottage_obj.obj" -> "models"
+        size_t lastSlash = path.find_last_of('/');
+        m_Directory = (lastSlash != std::string::npos) ? path.substr(0, lastSlash) : "";
 
         // 预处理材质 (一次性加载所有材质)
         if (scene->HasMaterials())
@@ -52,9 +84,21 @@ namespace Engine {
                 aiMaterial* aiMat = scene->mMaterials[i];
                 auto material = std::make_shared<Material>(m_BaseShader);
 
-                // TODO: 加载纹理逻辑
-                //auto texture = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE);
-                //material->SetTexture("u_AlbedoMap", texture);
+                // 加载漫反射纹理 ( diffuse map_Kd )
+                auto diffuseTexture = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE, m_Directory);
+                if (diffuseTexture)
+                {
+                    material->SetTexture("u_AlbedoMap", diffuseTexture);
+                }
+
+                // 读取透明度 (MTL 的 d 值或 Tr 值)
+                float opacity = 1.0f;
+                if (AI_SUCCESS == aiMat->Get(AI_MATKEY_OPACITY, opacity))
+                {
+                    glm::vec4 color = material->GetColor();
+                    color.a = opacity;
+                    material->SetAlbedoColor(color);
+                }
 
                 m_Materials[i] = material;
             }
@@ -90,7 +134,7 @@ namespace Engine {
         uint32_t firstVertex = (uint32_t)m_GlobalVertices.size();
         uint32_t firstIndex = (uint32_t)m_GlobalIndices.size();
         uint32_t indexCount = mesh->mNumFaces * 3;
-
+        
         for (uint32_t i = 0; i < mesh->mNumVertices; i++)
         {
             MeshVertex vertex;

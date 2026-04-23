@@ -46,7 +46,7 @@ namespace Engine
         {
         case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return nullptr;
         case Renderer::API::Vulkan:
-            return std::make_shared<VulkanTexture2D>(VulkanTexture2D(path));
+            return std::make_shared<VulkanTexture2D>(path);
         }
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
         return nullptr;

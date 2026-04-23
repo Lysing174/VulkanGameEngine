@@ -10,12 +10,10 @@ namespace Engine {
     {
 		int width, height, channels;
 		//stbi_set_flip_vertically_on_load(1);
-		std::cout << "Loading Texture: " << path << std::endl;
 		stbi_uc* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
 		if (!pixels) {
-			throw std::runtime_error("Failed to load image from path: " + path);
 			EG_CORE_ERROR("Failed to load image: {0}", path);
-			//return; // 实际项目中应该放一个粉色默认图
+			throw std::runtime_error("Failed to load image from path: " + path);
 		}
 
 		m_Width = width;

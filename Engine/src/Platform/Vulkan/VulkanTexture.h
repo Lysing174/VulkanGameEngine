@@ -8,9 +8,12 @@ namespace Engine {
     {
     public:
         VulkanTexture2D(const std::string& path);
-        // 特殊构造函数：用于创建纯色默认贴图 (1x1像素)
         VulkanTexture2D(uint32_t width, uint32_t height, void* data);
         virtual ~VulkanTexture2D();
+
+        // 禁用拷贝构造函数和赋值运算符
+        VulkanTexture2D(const VulkanTexture2D&) = delete;
+        VulkanTexture2D& operator=(const VulkanTexture2D&) = delete;
 
         virtual void Bind(uint32_t slot = 0) const override {}
 

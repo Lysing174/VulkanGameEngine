@@ -21,6 +21,7 @@ namespace Engine {
 
         std::shared_ptr<Mesh> GetMesh() const { return m_Mesh; }
         const std::vector<std::shared_ptr<Material>>& GetMaterials() const { return m_Materials; }
+        uint32_t GetMaterialCount() const { return (uint32_t)m_Materials.size(); }
     private:
         void LoadModel(const std::string& path);
         void ProcessNode(aiNode* node, const aiScene* scene, const glm::mat4& parentTransform);
