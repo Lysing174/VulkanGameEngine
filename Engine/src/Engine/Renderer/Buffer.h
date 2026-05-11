@@ -114,15 +114,15 @@ namespace Engine
 
 		virtual void SetData(const void* data, uint32_t size) = 0;
 
-		virtual const BufferLayout& GetLayout() const = 0;
-		virtual void SetLayout(const BufferLayout& layout) = 0;
+		virtual const std::shared_ptr<BufferLayout> GetLayout() const = 0;
+		virtual void SetLayout(const std::shared_ptr<BufferLayout> layout) = 0;
 
-		static std::shared_ptr<VertexBuffer> Create(void* data, uint32_t size, const BufferLayout& layout = {});
+		static std::shared_ptr<VertexBuffer> Create(void* data, uint32_t size, const std::shared_ptr<BufferLayout>& layout = {});
 
 		template<typename T>
 		static std::shared_ptr<VertexBuffer> Create(const std::vector<T>& vertices)
 		{
-			BufferLayout layout = T::GetLayout();
+			std::shared_ptr<BufferLayout> layout = T::GetLayout();
 			uint32_t size = (uint32_t)(vertices.size() * sizeof(T));
 
 			return Create((void*)vertices.data(), size, layout);
@@ -145,13 +145,14 @@ namespace Engine
 }
 
 namespace Engine {
+	
 	struct PosColorVertex {
 		glm::vec3 pos;
 		glm::vec4 color;
+		static BufferLayout m_layout;
 
-		static BufferLayout GetLayout() {
-			return { { Engine::ShaderDataType::Float3, "a_Position" },
-			{ Engine::ShaderDataType::Float4, "a_Color" } };
+		static std::shared_ptr<BufferLayout> GetLayout() {
+			return std::make_shared<BufferLayout>(m_layout);
 		}
 
 		bool operator==(const PosColorVertex& other) const {
@@ -159,22 +160,37 @@ namespace Engine {
 		}
 
 	};
-
+	
 	struct MeshVertex {
 		glm::vec3 pos;
 		glm::vec3 normal;
 		glm::vec2 texCoord;
+		static BufferLayout m_layout;
 
-		static BufferLayout GetLayout() {
-			return { { Engine::ShaderDataType::Float3, "a_Position" },
-			{ Engine::ShaderDataType::Float3, "a_Normal" },
-			{Engine::ShaderDataType::Float2,"a_Texcoord"} };
+		static std::shared_ptr<BufferLayout>  GetLayout() {
+			return std::make_shared<BufferLayout>(m_layout);
 		}
 
 		bool operator==(const MeshVertex& other) const {
 			return pos == other.pos && normal == other.normal && texCoord == other.texCoord;
 		}
 
+	};
+	
+	struct GaussianVertex
+	{
+		//TODO: 
+		glm::vec3 pos;
+		static BufferLayout m_layout;
+
+		static std::shared_ptr<BufferLayout>  GetLayout() {
+			return std::make_shared<BufferLayout>(m_layout);
+		}
+
+		bool operator==(const MeshVertex& other) const {
+			return pos == other.pos;
+		}
+		
 	};
 }
 
@@ -192,6 +208,12 @@ namespace std
 			return ((hash<glm::vec3>()(vertex.pos) ^
 				(hash<glm::vec3>()(vertex.normal) << 1)) >> 1) ^
 				(hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+	};
+	
+	template<> struct hash<Engine::GaussianVertex> {
+		size_t operator()(Engine::GaussianVertex const& vertex) const {
+			return (hash<glm::vec3>()(vertex.pos));
 		}
 	};
 

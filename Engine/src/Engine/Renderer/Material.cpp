@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "Material.h"
 #include "Platform/Vulkan/VulkanContext.h"
 #include "Platform/Vulkan/VulkanShader.h"
@@ -10,23 +10,38 @@ namespace Engine {
     Material::Material(const std::shared_ptr<Shader>& shader)
         : m_Shader(shader)
     {
-        VkDeviceSize bufferSize = sizeof(MaterialUniformBuffer);
-        VulkanContext::Get()->CreateBuffer(
-                bufferSize,
-                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                m_UniformBuffer,
-                m_UniformBufferMemory
-            );
+        const ShaderConfig& config = shader->GetConfig();
 
-        //std::hash<std::string> hasher;
+        // 只在配置中存在 UBO binding 时才创建 UniformBuffer
+        auto uboBindings = config.GetBindingsByType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        if (!uboBindings.empty())
+        {
+            VkDeviceSize bufferSize = sizeof(MaterialUniformBuffer);
+            VulkanContext::Get()->CreateBuffer(
+                    bufferSize,
+                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    m_UniformBuffer,
+                    m_UniformBufferMemory
+                );
+        }
+
         m_RendererID = shader->GetRendererID();
         AllocateDescriptorSet();
-        m_Textures[0] = Texture2D::GetWhiteTexture();
-        m_Textures[1] = Texture2D::GetBlueTexture();
-        m_Textures[2] = Texture2D::GetWhiteTexture();
+
+        // 根据配置初始化默认纹理 (只对存在的 texture binding 赋值)
+        for (const auto& bindingInfo : config.MaterialBindings)
+        {
+            if (bindingInfo.Type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+            {
+                // 默认纹理: 白色
+                m_Textures[bindingInfo.Binding] = Texture2D::GetWhiteTexture();
+            }
+        }
+
         WriteTextureDescriptors();
         WriteUniformDescriptors();
+
         m_UniformData = { glm::vec4(1.0f,1.0f,1.0f,1.0f),   // 基础颜色 (RGBA)
 
         0.0f,         // 金属度系数
@@ -46,12 +61,22 @@ namespace Engine {
 
     Material::~Material()
     {
-        //vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-        //for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-        //    vkDestroyBuffer(device, uniformBuffers[i], nullptr);
-        //    vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
-        //}
+        auto device = VulkanContext::Get()->GetDevice();
 
+        // 释放 UniformBuffer
+        const ShaderConfig& config = m_Shader->GetConfig();
+        auto uboBindings = config.GetBindingsByType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        if (!uboBindings.empty())
+        {
+            vkDestroyBuffer(device, m_UniformBuffer, nullptr);
+            vkFreeMemory(device, m_UniformBufferMemory, nullptr);
+        }
+
+        // 释放 DescriptorSet
+        if (m_DescriptorSet != VK_NULL_HANDLE)
+        {
+            vkFreeDescriptorSets(device, VulkanContext::Get()->GetDescriptorPool(), 1, &m_DescriptorSet);
+        }
     }
 
     void Material::Bind()
@@ -61,74 +86,87 @@ namespace Engine {
         case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return;
         case Renderer::API::Vulkan:  
             VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Shader->GetPipelineLayout(), 1, 1,&m_DescriptorSet, 0, nullptr);
-            auto vkShader = std::static_pointer_cast<VulkanShader>(m_Shader);
+            const ShaderConfig& config = m_Shader->GetConfig();
 
-            vkCmdPushConstants(cmd, vkShader->GetPipelineLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 64, sizeof(glm::vec4), &m_UniformData.AlbedoColor);
+            // 只在配置中存在 MaterialBindings 时才绑定 DescriptorSet
+            if (!config.MaterialBindings.empty())
+            {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Shader->GetPipelineLayout(), 1, 1, &m_DescriptorSet, 0, nullptr);
+            }
+
+            // 只在配置中存在 fragment push constant range 时才推送颜色
+            for (const auto& pcRange : config.PushConstantRanges)
+            {
+                if (pcRange.StageFlags & VK_SHADER_STAGE_FRAGMENT_BIT && pcRange.Size == sizeof(glm::vec4))
+                {
+                    vkCmdPushConstants(cmd, m_Shader->GetPipelineLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, pcRange.Offset, sizeof(glm::vec4), &m_UniformData.AlbedoColor);
+                    break;
+                }
+            }
             return;
         }
 
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
         return;
     }
+
     void Material::PushColor(const glm::vec4& color)
     {
         m_UniformData.AlbedoColor = color;
-        auto vkShader = std::static_pointer_cast<VulkanShader>(m_Shader);
         VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
 
-        vkCmdPushConstants(cmd, vkShader->GetPipelineLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, 64, sizeof(glm::vec4), &m_UniformData.AlbedoColor);
-
+        const ShaderConfig& config = m_Shader->GetConfig();
+        for (const auto& pcRange : config.PushConstantRanges)
+        {
+            if (pcRange.StageFlags & VK_SHADER_STAGE_FRAGMENT_BIT && pcRange.Size == sizeof(glm::vec4))
+            {
+                vkCmdPushConstants(cmd, m_Shader->GetPipelineLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, pcRange.Offset, sizeof(glm::vec4), &m_UniformData.AlbedoColor);
+                break;
+            }
+        }
     }
+
     void Material::AllocateDescriptorSet()
     {
         auto vkShader = std::static_pointer_cast<VulkanShader>(m_Shader);
         auto device = VulkanContext::Get()->GetDevice();
 
-        // 1. 获取 Shader 的 Layout
         VkDescriptorSetLayout layout = vkShader->GetMaterialDescriptorSetLayout();
 
-        // 2. 配置分配信息
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        // 假设 VulkanContext 里有一个全局的 DescriptorPool (通常要有)
         allocInfo.descriptorPool = VulkanContext::Get()->GetDescriptorPool();
         allocInfo.descriptorSetCount = 1;
         allocInfo.pSetLayouts = &layout;
 
-        // 3. 分配 Set
         if (vkAllocateDescriptorSets(device, &allocInfo, &m_DescriptorSet) != VK_SUCCESS)
         {
             throw std::runtime_error("Failed to allocate material descriptor set!");
         }
-
     }
 
     void Material::UploadUniformBuffer()
     {
-        // 只有当 Buffer 存在时才上传
         if (m_UniformBuffer)
         {
             void* data;
             vkMapMemory(VulkanContext::Get()->GetDevice(), m_UniformBufferMemory, 0, sizeof(m_UniformData), 0, &data);
             memcpy(data, &m_UniformData, sizeof(m_UniformData));
             vkUnmapMemory(VulkanContext::Get()->GetDevice(), m_UniformBufferMemory);
-
         }
     }
-    void Material::SetTexture(const std::string& name, const std::shared_ptr<Texture2D> texture)
-    {
-        auto vkShader = std::static_pointer_cast<VulkanShader>(m_Shader);
-        uint32_t binding = vkShader->GetBinding(name);
 
-        if (binding == -1)
+    void Material::SetTexture(const std::string& textureTypeName, const std::shared_ptr<Texture2D> texture)
+    {
+        uint32_t binding = m_Shader->GetTextureBinding(textureTypeName);
+
+        if (binding == (uint32_t)-1)
         {
-            EG_CORE_ERROR("Can't find texture binding index!");
+            EG_CORE_ERROR("Can't find texture binding index for: {0}", textureTypeName);
             return;
         }
 
         m_Textures[binding] = texture;
-
         WriteTextureDescriptor(binding, texture);
     }
 
@@ -136,25 +174,33 @@ namespace Engine {
     {
         auto device = VulkanContext::Get()->GetDevice();
 
-        VkWriteDescriptorSet descriptorWrite = {};
+        // 确认配置中该 binding 确实存在
+        const ShaderConfig& config = m_Shader->GetConfig();
+        if (!config.HasBinding(binding))
+        {
+            EG_CORE_WARN("Material::WriteTextureDescriptor - Binding {0} not in shader config, skipping", binding);
+            return;
+        }
 
         auto vkTexture = std::static_pointer_cast<VulkanTexture2D>(texture);
         VkDescriptorImageInfo imageInfo = vkTexture->GetDescriptorImageInfo();
 
+        VkWriteDescriptorSet descriptorWrite = {};
         descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = m_DescriptorSet;   // 写入哪个 Set
-        descriptorWrite.dstBinding = binding;       // 写入哪个 Binding (0, 1, 2...)
+        descriptorWrite.dstSet = m_DescriptorSet;
+        descriptorWrite.dstBinding = binding;
         descriptorWrite.dstArrayElement = 0;
         descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptorWrite.descriptorCount = 1;
         descriptorWrite.pImageInfo = &imageInfo;
 
         vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
-
     }
+
     void Material::WriteTextureDescriptors()
     {
         auto device = VulkanContext::Get()->GetDevice();
+        const ShaderConfig& config = m_Shader->GetConfig();
 
         std::vector<VkWriteDescriptorSet> descriptorWrites;
         descriptorWrites.reserve(m_Textures.size());
@@ -166,32 +212,44 @@ namespace Engine {
         {
             if (!texture) continue;
 
-            auto vkTexture = std::static_pointer_cast<VulkanTexture2D>(texture);
+            // 跳过配置中不存在的 binding
+            if (!config.HasBinding(binding)) continue;
 
+            auto vkTexture = std::static_pointer_cast<VulkanTexture2D>(texture);
             imageInfos.push_back(vkTexture->GetDescriptorImageInfo());
 
             VkWriteDescriptorSet write = {};
             write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             write.dstSet = m_DescriptorSet;
-            write.dstBinding = binding; 
+            write.dstBinding = binding;
             write.dstArrayElement = 0;
             write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             write.descriptorCount = 1;
-
             write.pImageInfo = &imageInfos.back();
 
             descriptorWrites.push_back(write);
         }
-        vkUpdateDescriptorSets(
-            device,
-            static_cast<uint32_t>(descriptorWrites.size()),
-            descriptorWrites.data(),
-            0,
-            nullptr
-        );
+
+        if (!descriptorWrites.empty())
+        {
+            vkUpdateDescriptorSets(
+                device,
+                static_cast<uint32_t>(descriptorWrites.size()),
+                descriptorWrites.data(),
+                0,
+                nullptr
+            );
+        }
     }
+
     void Material::WriteUniformDescriptors()
     {
+        const ShaderConfig& config = m_Shader->GetConfig();
+
+        // 只写入配置中存在的 UBO binding
+        auto uboBindings = config.GetBindingsByType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        if (uboBindings.empty() || !m_UniformBuffer) return;
+
         auto device = VulkanContext::Get()->GetDevice();
 
         VkDescriptorBufferInfo bufferInfo{};
@@ -202,7 +260,7 @@ namespace Engine {
         VkWriteDescriptorSet descriptorWrite{};
         descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrite.dstSet = m_DescriptorSet;
-        descriptorWrite.dstBinding = 3; // 你的 UBO Binding
+        descriptorWrite.dstBinding = uboBindings[0]; // 第一个 UBO binding
         descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrite.descriptorCount = 1;
         descriptorWrite.pBufferInfo = &bufferInfo;

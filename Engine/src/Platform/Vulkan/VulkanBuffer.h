@@ -17,8 +17,8 @@ namespace Engine {
 		virtual void Unbind() const override;
 
 		virtual void SetData(const void* data, uint32_t size) override;
-		virtual const BufferLayout& GetLayout() const override { return m_Layout; }
-		virtual void SetLayout(const BufferLayout& layout) override { m_Layout = layout; }
+		virtual const std::shared_ptr<BufferLayout> GetLayout() const override { return m_Layout; }
+		virtual void SetLayout(const std::shared_ptr<BufferLayout> layout) override { m_Layout = layout; }
 
 		VkBuffer GetVulkanBuffer() const { return m_Buffer; }
 
@@ -34,7 +34,7 @@ namespace Engine {
 	private:
 		VkBuffer m_Buffer;
 		VkDeviceMemory m_BufferMemory;
-		BufferLayout m_Layout;
+		std::shared_ptr<BufferLayout> m_Layout;
 
 		uint32_t m_Size;
 	};

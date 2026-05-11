@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "VulkanTexture.h"
 #include "Platform/Vulkan/VulkanContext.h"
 #define STB_IMAGE_IMPLEMENTATION
@@ -109,6 +109,11 @@ namespace Engine {
 		vkDestroyImageView(device, m_ImageView, nullptr);
 		vkDestroyImage(device, m_Image, nullptr);
 		vkFreeMemory(device, m_ImageMemory, nullptr);
+
+		if (m_MaterialDescriptorSet != VK_NULL_HANDLE)
+		{
+			vkFreeDescriptorSets(device, VulkanContext::Get()->GetDescriptorPool(), 1, &m_MaterialDescriptorSet);
+		}
 	}
 	void VulkanTexture2D::CreateTextureImageView()
 	{

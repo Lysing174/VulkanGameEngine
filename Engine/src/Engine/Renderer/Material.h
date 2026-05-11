@@ -40,7 +40,7 @@ namespace Engine {
         void SetEmissive(float intensity, const glm::vec3& color); // 方便起见传入 vec3
         void SetAOStrength(float value);
         void SetUseNormalMap(bool use);
-        void SetTexture(const std::string& name, std::shared_ptr<Texture2D> texture);
+        void SetTexture(const std::string& textureTypeName, std::shared_ptr<Texture2D> texture);
 
         glm::vec4 GetColor() const { return m_UniformData.AlbedoColor; }
         virtual uint32_t GetRendererID() const { return m_RendererID; }

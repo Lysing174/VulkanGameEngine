@@ -72,7 +72,7 @@ namespace Engine {
         }
 
         // 保存目录路径，例如 "models/cottage_obj.obj" -> "models"
-        size_t lastSlash = path.find_last_of('/');
+        size_t lastSlash = path.find_last_of("/\\");
         m_Directory = (lastSlash != std::string::npos) ? path.substr(0, lastSlash) : "";
 
         // 预处理材质 (一次性加载所有材质)
@@ -89,6 +89,15 @@ namespace Engine {
                 if (diffuseTexture)
                 {
                     material->SetTexture("u_AlbedoMap", diffuseTexture);
+                }
+
+                // 加载法线/凹凸贴图 ( map_Bump → aiTextureType_HEIGHT )
+                auto normalTexture = LoadMaterialTexture(aiMat, aiTextureType_HEIGHT, m_Directory);
+                if (!normalTexture)
+                    normalTexture = LoadMaterialTexture(aiMat, aiTextureType_NORMALS, m_Directory);
+                if (normalTexture)
+                {
+                    material->SetTexture("u_NormalMap", normalTexture);
                 }
 
                 // 读取透明度 (MTL 的 d 值或 Tr 值)

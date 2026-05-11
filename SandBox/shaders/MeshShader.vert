@@ -10,6 +10,8 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord;
 
 layout(location = 0) out vec2 fragTexCoord;
+layout(location = 1) out vec3 fragNormal;
+layout(location = 2) out vec3 fragWorldPos;
 
 layout(push_constant) uniform PushConsts {
     mat4 model;
@@ -20,6 +22,9 @@ out gl_PerVertex {
 };
 
 void main() {
-    gl_Position = ubo.projView * pc.model * vec4(inPosition, 1.0);
+    vec4 worldPos = pc.model * vec4(inPosition, 1.0);
+    gl_Position = ubo.projView * worldPos;
     fragTexCoord = inTexCoord;
+    fragNormal = mat3(pc.model) * inNormal;
+    fragWorldPos = worldPos.xyz;
 }

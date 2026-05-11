@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Engine/Renderer/Texture.h"
 #include "vulkan/vulkan.h"
 

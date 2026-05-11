@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "ImGuiLayer.h"
 #include "imgui.h"
 #include "Engine/Core/Application.h"
@@ -58,23 +58,14 @@ namespace Engine {
         init_info.ImageCount = context->GetImageCount();
         init_info.Allocator = nullptr;
         init_info.CheckVkResultFn = nullptr;
-        init_info.PipelineInfoMain.RenderPass = context->GetRenderPass();
+        init_info.PipelineInfoMain.RenderPass = context->GetRenderPass("Gaussian")->GetVkRenderPass();
         init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         init_info.PipelineInfoMain.Subpass = 0;
 
         // 4. 初始化 Vulkan 后端
         ImGui_ImplVulkan_Init(&init_info);
 
-        // 5. 上传字体 (Vulkan 必须手动做这步，还要用 CommandBuffer)
-        // 简单起见，我们可以借用 context 里的辅助函数，或者在这里临时搞一个
-        // 这里为了代码简洁，建议在 VulkanContext 里加一个 UploadFonts 函数，或者暂时不写，字体可能会崩。
-        // 正规写法需要 begin command buffer -> create fonts texture -> end -> submit -> wait idle
-        {
-            //VkCommandBuffer command_buffer = context->beginSingleTimeCommands(); // 你 1700 行代码里应该有这个辅助函数
-            //ImGui_ImplVulkan_CreateFontsTexture(command_buffer);
-            //context->endSingleTimeCommands(command_buffer);
-            //ImGui_ImplVulkan_DestroyFontUploadObjects();
-        }
+        // 字体上传已由 ImGui_ImplVulkan_Init 内部自动完成 (新版 API)
     }
 	void ImGuiLayer::OnDetach()
 	{

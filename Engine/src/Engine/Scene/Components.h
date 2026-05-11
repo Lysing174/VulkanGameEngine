@@ -10,7 +10,10 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/quaternion.hpp>
+
 namespace Engine {
+	
+	class GaussianSplat;
 	struct IDComponent
 	{
 		UUID ID;
@@ -86,5 +89,17 @@ namespace Engine {
 
 		CameraComponent() = default;
 		CameraComponent(const CameraComponent&) = default;
+	};
+
+	struct GaussianSplatComponent
+	{
+		std::shared_ptr<GaussianSplat> Splat;
+
+		// 渲染控制参数
+		bool Visible = true;
+
+		GaussianSplatComponent() = default;
+		GaussianSplatComponent(const std::shared_ptr<GaussianSplat>& splat)
+			: Splat(splat) {}
 	};
 }

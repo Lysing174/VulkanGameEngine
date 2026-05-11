@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Engine/Renderer/GraphicsContext.h"
 //#include "Engine/Renderer/Renderer.h"
 #define GLFW_INCLUDE_VULKAN
@@ -20,6 +20,9 @@
 #include <functional>
 #include <fstream>
 #include <chrono>
+#include <entt.hpp>
+
+#include "VulkanRenderPass.h"
 
 #ifdef EG_DEBUG
 const bool enableValidationLayers = true;
@@ -101,6 +104,10 @@ namespace Engine {
         virtual void Init() override;
         virtual void BeginFrame(glm::mat4 projView) override;
         virtual void EndFrame() override;
+        void BeginMeshRenderPass();
+        void BeginGaussianRenderPass();
+        void EndRenderPass();
+        void DrawImGui();
 
         void OnWindowResized(int width, int height);
 
@@ -122,11 +129,22 @@ namespace Engine {
         VkDescriptorPool GetDescriptorPool() { return descriptorPool; } // 刚加的
         uint32_t GetMinImageCount() { return 2; } // 通常是 2 或 3，看你的 swapchain 设置
         uint32_t GetImageCount() { return (uint32_t)swapChainImages.size(); } // 你 swapchain 里的图片数量
-        VkRenderPass GetRenderPass() { return renderPass; } // 必须！ImGui 需要知道它在哪个 RenderPass 里画
+        std::shared_ptr<VulkanRenderPass> GetCurrentRenderPass() {
+            if (renderPassesMap.find(currentRenderPassName)==renderPassesMap.end())
+                return nullptr;
+            return renderPassesMap[currentRenderPassName];
+        }
+        std::shared_ptr<VulkanRenderPass> GetRenderPass(const std::string& renderPassName) {
+            if (renderPassesMap.find(renderPassName)==renderPassesMap.end())
+                return nullptr;
+            return renderPassesMap[renderPassName];
+        }
         VkCommandBuffer GetCurrentCommandBuffer() { return commandBuffers[currentImageIndex]; }
         VkDescriptorSet GetCurrentDescriptorSet() { return descriptorSets[currentImageIndex]; }
         VkDescriptorSetLayout GetGlobalDescriptorSetLayout() { return descriptorSetLayout; }
         VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
+        VkImageView GetDepthImageView() { return depthImageView; }
+        VkSampler GetDepthSampler() { return depthSampler; }
 
         static VulkanContext* Get() { return s_Instance; }
 
@@ -138,7 +156,7 @@ namespace Engine {
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
         VkDevice device;
         VkSwapchainKHR swapChain;
-        VkRenderPass renderPass;
+        std::unordered_map<std::string,std::shared_ptr<VulkanRenderPass>> renderPassesMap;
         VkDescriptorSetLayout descriptorSetLayout;
         VkCommandPool commandPool;
         VkDescriptorPool descriptorPool;
@@ -149,6 +167,8 @@ namespace Engine {
         VkImage depthImage;
         VkDeviceMemory depthImageMemory;
         VkImageView depthImageView;
+        VkFormat depthImageFormat;
+        VkSampler depthSampler;  // 深度纹理采样器 (Gaussian shader 用)
 
         VkQueue graphicsQueue;
         VkQueue presentQueue;
@@ -156,12 +176,13 @@ namespace Engine {
         std::vector<VkImageView> swapChainImageViews;
         VkFormat swapChainImageFormat;
         VkExtent2D swapChainExtent;
-        std::vector<VkFramebuffer> swapChainFramebuffers;
+        //std::vector<VkFramebuffer> swapChainFramebuffers;
         std::vector<VkCommandBuffer> commandBuffers;
         VkSemaphore imageAvailableSemaphore;
         VkSemaphore renderFinishedSemaphore;
         uint32_t currentImageIndex = 0;
 
+        std::string currentRenderPassName="";
 
         const int WIDTH = 800;
         const int HEIGHT = 600;
@@ -185,8 +206,6 @@ namespace Engine {
         void createSwapChain();
         void createImageViews();
         void createDescriptorSetLayout();
-        void createRenderPass();
-        void createFramebuffers();
         void createCommandPool();
         void createDepthResources();
         void createUniformBuffer();

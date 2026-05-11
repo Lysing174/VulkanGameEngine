@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "EditorLayer.h"
 #include "Engine/Renderer/Renderer.h"
 #include "Engine/Scene/Components.h" 
@@ -6,8 +6,9 @@
 #include "Engine/Renderer/Model.h"
 #include "imgui.h"
 
+//const std::string MODEL_PATH = "models/nanosuit/nanosuit.obj";
 const std::string MODEL_PATH = "models/cottage_obj.obj";
-const std::string TEXTURE_PATH = "models/cottage_diffuse.png";
+//const std::string TEXTURE_PATH = "models/cottage_diffuse.png";
 
 namespace Engine {
 
@@ -30,14 +31,14 @@ namespace Engine {
         m_CubeEntity = m_ActiveScene->CreateEntity("Red Cube");
         m_CubeEntity.AddComponent<MeshFilterComponent>(m_CubeMesh);
         m_CubeEntity.AddComponent<MeshRendererComponent>(m_RedMaterial);
-        shader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout());
+        shader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout(), "Mesh");
         auto& transform = m_CubeEntity.GetComponent<TransformComponent>();
         transform.Translation = { 0.0f, 30.0f, 0.0f };
         transform.Scale = { 2.0f, 2.0f, 2.0f };
 
 		// 创建带纹理的材质
-		std::shared_ptr<Material> houseMat = std::make_shared<Material>(shader);
-		houseMat->SetTexture("u_AlbedoMap", Texture2D::Create(TEXTURE_PATH));
+		//std::shared_ptr<Material> houseMat = std::make_shared<Material>(shader);
+		//houseMat->SetTexture("u_AlbedoMap", Texture2D::Create(TEXTURE_PATH));
 
         Entity houseEntity = m_ActiveScene->CreateEntity("House");
         Model houseModel = Model(MODEL_PATH, shader);
@@ -51,9 +52,15 @@ namespace Engine {
         }
         else
         {
-            houseEntity.AddComponent<MeshRendererComponent>(houseMat);
+        	EG_CORE_ERROR("Model has no materials");
+            //houseEntity.AddComponent<MeshRendererComponent>(houseMat);
         }
-
+    	
+    	auto gaussianShader=Renderer::GetShaderLibrary()->Get("Gaussian.vert.spv");
+    	gaussianShader->CreatePipeline(nullptr, "Gaussian");
+    	Entity gaussianEntity=m_ActiveScene->CreateEntity("Gaussian");
+    	gaussianEntity.AddComponent<GaussianSplatComponent>();
+    	
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();
         cameraEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 0.0f, 5.0f };

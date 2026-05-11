@@ -97,9 +97,9 @@ namespace Engine {
 
     // 核心转换逻辑
     VkPipelineVertexInputStateCreateInfo VulkanVertexBuffer::CreateVertexInputInfo(
-        const BufferLayout& layout,
-        std::vector<VkVertexInputBindingDescription>& bindings,
-        std::vector<VkVertexInputAttributeDescription>& attributes)
+	    const BufferLayout& layout,
+	    std::vector<VkVertexInputBindingDescription>& bindings,
+	    std::vector<VkVertexInputAttributeDescription>& attributes)
     {
         // 1. 设置 Binding (整个 Buffer 的信息)
         VkVertexInputBindingDescription bindingDesc{};

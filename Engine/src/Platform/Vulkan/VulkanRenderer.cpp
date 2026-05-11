@@ -6,14 +6,14 @@
 
 namespace Engine
 {
-	void VulkanRenderer::BeginScene(const Camera& camera, const glm::mat4& transform)
-	{
-		glm::mat4 projection = camera.GetProjection();
-		projection[1][1] *= -1;
-		glm::mat4 projView = projection * glm::inverse(transform);
-
-		VulkanContext::Get()->BeginFrame(projView);
-	}
+	// void VulkanRenderer::BeginScene(const Camera& camera, const glm::mat4& transform)
+	// {
+	// 	glm::mat4 projection = camera.GetProjection();
+	// 	projection[1][1] *= -1;
+	// 	glm::mat4 projView = projection * glm::inverse(transform);
+	//
+	// 	VulkanContext::Get()->BeginFrame(projView);
+	// }
 	void VulkanRenderer::BeginScene(const EditorCamera& camera)
 	{
 		glm::mat4 projection = camera.GetProjection();
@@ -29,7 +29,28 @@ namespace Engine
 	{
 		VulkanContext::Get()->EndFrame();
 	}
-	void VulkanRenderer::DrawMesh(RenderCommandRequest request)
+
+	void VulkanRenderer::BeginMeshRenderPass()
+	{
+		VulkanContext::Get()->BeginMeshRenderPass();
+	}
+	
+	void VulkanRenderer::BeginGaussianRenderPass()
+	{
+		VulkanContext::Get()->BeginGaussianRenderPass();
+	}
+	
+	void VulkanRenderer::EndRenderPass()
+	{
+		VulkanContext::Get()->EndRenderPass();
+	}
+	
+	void VulkanRenderer::DrawImGui()
+	{
+		VulkanContext::Get()->DrawImGui();
+	}
+	
+	void VulkanRenderer::DrawMesh(const MeshRenderCommandRequest& request)
 	{
 		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
 
@@ -58,5 +79,30 @@ namespace Engine
 		}
 
 		vkCmdDrawIndexed(cmd, request.SubmeshIndexCount, 1, request.SubmeshFirstIndex, request.SubmeshFirstVertex, 0);
+	}
+	void VulkanRenderer::DrawGaussian(const GaussianRenderCommandRequest& request)
+	{
+		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
+
+		// Push Constants: rectOffset + rectScale (16 字节, VS+FS)
+		struct DepthVisPushConstants {
+			glm::vec2 rectOffset;
+			glm::vec2 rectScale;
+		};
+		DepthVisPushConstants pushConstants;
+		pushConstants.rectOffset = request.RectOffset;
+		pushConstants.rectScale  = request.RectScale;
+
+		vkCmdPushConstants(
+			cmd,
+			Renderer::GetShaderLibrary()->Get("Gaussian.vert.spv")->GetPipelineLayout(),
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			0,
+			sizeof(DepthVisPushConstants),
+			&pushConstants
+		);
+
+		// 无 VBO/IBO，用 gl_VertexIndex 程序化生成顶点
+		vkCmdDraw(cmd, 6, 1, 0, 0);
 	}
 }

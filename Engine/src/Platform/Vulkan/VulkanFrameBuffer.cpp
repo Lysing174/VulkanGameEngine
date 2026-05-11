@@ -6,8 +6,8 @@ namespace Engine {
 
     uint64_t VulkanFramebuffer::GetColorAttachmentRendererID(uint32_t index) const
     {
-        // ÕâÀï½« VkDescriptorSet ¾ä±ú×ª»»³É uint64_t
-        // ×¢Òâ£ºÄã±ØĞë±£Ö¤ m_DescriptorSet ÊÇÓĞĞ§µÄ
+        // è¿™é‡Œå°† VkDescriptorSet å¥æŸ„è½¬æ¢æˆ uint64_t
+        // æ³¨æ„ï¼šä½ å¿…é¡»ä¿è¯ m_DescriptorSet æ˜¯æœ‰æ•ˆçš„
         return (uint64_t)m_MaterialDescriptorSet;
     }
 }

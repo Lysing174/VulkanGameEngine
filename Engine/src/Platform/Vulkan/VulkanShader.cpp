@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "VulkanShader.h"
 #include "Engine/Core/Application.h"
 #include "Platform/Vulkan/VulkanContext.h" 
@@ -7,7 +7,8 @@
 
 namespace Engine {
 
-	VulkanShader::VulkanShader(const std::string& vertexSrc, const std::string& fragmentSrc)
+	VulkanShader::VulkanShader(const std::string& vertexSrc, const std::string& fragmentSrc, const ShaderConfig& config)
+		: m_Config(config)
 	{
 		size_t found = vertexSrc.find_last_of("/\\");
 		m_Name = vertexSrc.substr(found + 1);
@@ -25,20 +26,35 @@ namespace Engine {
 
 	VulkanShader::~VulkanShader()
 	{
-        vkDestroyPipeline(VulkanContext::Get()->GetDevice(), m_GraphicsPipeline, nullptr);
-        vkDestroyPipelineLayout(VulkanContext::Get()->GetDevice(), m_PipelineLayout, nullptr);
+		auto device = VulkanContext::Get()->GetDevice();
 
-		vkDestroyShaderModule(VulkanContext::Get()->GetDevice(), m_VertexShaderModule, nullptr);
-		vkDestroyShaderModule(VulkanContext::Get()->GetDevice(), m_FragmentShaderModule, nullptr);
+		for (auto& [name, pipeline] : m_PipelineCache)
+			vkDestroyPipeline(device, pipeline, nullptr);
+		m_PipelineCache.clear();
 
-        vkDestroyDescriptorSetLayout(VulkanContext::Get()->GetDevice(), m_MaterialDescriptorSetLayout, nullptr);
-
+        vkDestroyPipelineLayout(device, m_PipelineLayout, nullptr);
+		vkDestroyShaderModule(device, m_VertexShaderModule, nullptr);
+		vkDestroyShaderModule(device, m_FragmentShaderModule, nullptr);
+        vkDestroyDescriptorSetLayout(device, m_MaterialDescriptorSetLayout, nullptr);
 	}
 
 	void VulkanShader::Bind() const {
 		auto cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_GraphicsPipeline);
+		// 使用当前 PipelineCache 中的第一个 pipeline (由 CreatePipeline 时设置)
+		// 实际上 Bind 时应该知道用哪个 pipeline，这里保留原逻辑
+		// 后续可以改为 Bind(const std::string& renderPassName)
+		VkPipeline pipeline = VK_NULL_HANDLE;
+		if (!m_PipelineCache.empty())
+			pipeline = m_PipelineCache.begin()->second;
+
+		if (pipeline == VK_NULL_HANDLE)
+		{
+			EG_CORE_ERROR("VulkanShader::Bind() - No pipeline available for shader: {0}", m_Name);
+			return;
+		}
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
         //动态设置视口
         VkViewport viewport{};
@@ -61,123 +77,139 @@ namespace Engine {
 	void VulkanShader::Unbind() const
 	{
 	}
-    void VulkanShader::CreateDescriptorSetLayout() {
-        // --- Binding 0: Albedo Map (纹理) ---
-        VkDescriptorSetLayoutBinding albedoLayoutBinding = {};
-        albedoLayoutBinding.binding = 0;
-        albedoLayoutBinding.descriptorCount = 1;
-        albedoLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        albedoLayoutBinding.pImmutableSamplers = nullptr;
-        // 材质纹理只在片段着色器(Fragment Shader)中使用
-        albedoLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        // --- Binding 1: Normal Map (纹理) ---
-        VkDescriptorSetLayoutBinding normalLayoutBinding = {};
-        normalLayoutBinding.binding = 1;
-        normalLayoutBinding.descriptorCount = 1;
-        normalLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        normalLayoutBinding.pImmutableSamplers = nullptr;
-        normalLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	VkPipeline VulkanShader::GetPipeline(const std::string& name) const
+	{
+		auto it = m_PipelineCache.find(name);
+		if (it != m_PipelineCache.end()) return it->second;
+		EG_CORE_WARN("Pipeline not found: {0}", name);
+		return VK_NULL_HANDLE;
+	}
 
-        // --- Binding 2: Metal/Roughness/AO Map (纹理) ---
-        VkDescriptorSetLayoutBinding ormLayoutBinding = {};
-        ormLayoutBinding.binding = 2;
-        ormLayoutBinding.descriptorCount = 1;
-        ormLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        ormLayoutBinding.pImmutableSamplers = nullptr;
-        ormLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	void VulkanShader::CreatePipeline(const std::shared_ptr<BufferLayout>& bufferLayout, std::string pipelineName)
+	{
+		VkRenderPass renderPass = VK_NULL_HANDLE;
+		auto rp = VulkanContext::Get()->GetRenderPass(pipelineName);
+		if (rp) renderPass = rp->GetVkRenderPass();
 
-        // --- Binding 3: Material UBO (Uniform Buffer) ---
-        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
-        uboLayoutBinding.binding = 3;
-        uboLayoutBinding.descriptorCount = 1; // 这是一个 UBO
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.pImmutableSamplers = nullptr;
-        // 材质参数(颜色、粗糙度)也是在片段着色器计算光照时读取
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		if (renderPass == VK_NULL_HANDLE)
+		{
+			EG_CORE_ERROR("VulkanShader::CreatePipeline - RenderPass not found: {0}", pipelineName);
+			throw std::runtime_error("RenderPass not found for pipeline creation");
+		}
 
-        // --- 组合所有 Bindings ---
-        std::array<VkDescriptorSetLayoutBinding, 4> bindings = {
-            albedoLayoutBinding,
-            normalLayoutBinding,
-            ormLayoutBinding,
-            uboLayoutBinding
-        };
+		VkPipeline pipeline = VulkanPipeline::Create(
+			m_PipelineLayout, *this, renderPass,
+			bufferLayout ? *bufferLayout : BufferLayout{},
+			m_MaterialDescriptorSetLayout
+		);
 
-        // --- 创建 Layout ---
-        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
+		m_PipelineCache[pipelineName] = pipeline;
+	}
 
-        // 注意这里初始化的是 m_MaterialDescriptorSetLayout
-        if (vkCreateDescriptorSetLayout(VulkanContext::Get()->GetDevice(), &layoutInfo, nullptr, &m_MaterialDescriptorSetLayout) != VK_SUCCESS) {
+	void VulkanShader::CreateDescriptorSetLayout() {
+		// 从 ShaderConfig 中的 MaterialBindings 构建 VkDescriptorSetLayoutBinding
+		std::vector<VkDescriptorSetLayoutBinding> bindings;
+		bindings.reserve(m_Config.MaterialBindings.size());
+
+		for (const auto& bindingInfo : m_Config.MaterialBindings)
+		{
+			VkDescriptorSetLayoutBinding layoutBinding = {};
+			layoutBinding.binding = bindingInfo.Binding;
+			layoutBinding.descriptorCount = bindingInfo.DescriptorCount;
+			layoutBinding.descriptorType = bindingInfo.Type;
+			layoutBinding.pImmutableSamplers = nullptr;
+			layoutBinding.stageFlags = bindingInfo.StageFlags;
+			bindings.push_back(layoutBinding);
+		}
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+		layoutInfo.pBindings = bindings.empty() ? nullptr : bindings.data();
+
+		if (vkCreateDescriptorSetLayout(VulkanContext::Get()->GetDevice(), &layoutInfo, nullptr, &m_MaterialDescriptorSetLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create material descriptor set layout!");
         }
-
     }
 
-    void VulkanShader::CreatePipeline(const BufferLayout& layout)
+    // ============================================================
+    // VulkanPipeline::Create — 由 ShaderConfig 驱动的通用实现
+    // ============================================================
+    VkPipeline VulkanPipeline::Create(VkPipelineLayout& out_pipelineLayout,
+                                      const VulkanShader& shader, const VkRenderPass& renderPass,
+                                      const BufferLayout& bufferLayout,
+                                      const VkDescriptorSetLayout& descriptorSetLayout)
     {
+		const ShaderConfig& config = shader.GetConfig();
+		const PipelineStateInfo& ps = config.PipelineState;
+
+		// --- Shader Stages ---
         VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
         vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-        vertShaderStageInfo.module = m_VertexShaderModule;
+        vertShaderStageInfo.module = shader.GetVertexShaderModule();
         vertShaderStageInfo.pName = "main";
 
         VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
         fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        fragShaderStageInfo.module = m_FragmentShaderModule;
+        fragShaderStageInfo.module = shader.GetFragmentShaderModule();
         fragShaderStageInfo.pName = "main";
 
         VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+		// --- Vertex Input (由配置决定) ---
         std::vector<VkVertexInputBindingDescription> bindingDescription = {};
         std::vector<VkVertexInputAttributeDescription> attributeDescriptions = {};
-        VkPipelineVertexInputStateCreateInfo vertexInputInfo = VulkanVertexBuffer::CreateVertexInputInfo(layout, bindingDescription, attributeDescriptions);
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
 
+		if (ps.HasVertexInput && !bufferLayout.GetElements().empty())
+		{
+			vertexInputInfo = VulkanVertexBuffer::CreateVertexInputInfo(bufferLayout, bindingDescription, attributeDescriptions);
+		}
+		else
+		{
+			// 无顶点输入 (procedural vertex shader)
+			vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+			vertexInputInfo.vertexBindingDescriptionCount = 0;
+			vertexInputInfo.vertexAttributeDescriptionCount = 0;
+		}
+
+		// --- Input Assembly ---
         VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        inputAssembly.topology = ps.Topology;
         inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-        //视口
+		// --- Viewport ---
         VkPipelineViewportStateCreateInfo viewportState = {};
         viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewportState.viewportCount = 1;
-        //viewportState.pViewports = &viewport;
         viewportState.scissorCount = 1;
-        //viewportState.pScissors = &scissor;
 
-        //光栅化
+		// --- Rasterizer ---
         VkPipelineRasterizationStateCreateInfo rasterizer = {};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterizer.depthClampEnable = VK_FALSE;
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterizer.cullMode = ps.CullMode;
+        rasterizer.frontFace = ps.FrontFace;
         rasterizer.depthBiasEnable = VK_FALSE;
-        rasterizer.depthBiasConstantFactor = 0.0f; // Optional
-        rasterizer.depthBiasClamp = 0.0f; // Optional
-        rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
 
-        //重采样
+		// --- Multisampling ---
         VkPipelineMultisampleStateCreateInfo multisampling = {};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         multisampling.sampleShadingEnable = VK_FALSE;
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        multisampling.minSampleShading = 1.0f; // Optional
-        multisampling.pSampleMask = nullptr; // Optional
-        multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
-        multisampling.alphaToOneEnable = VK_FALSE; // Optional
+        multisampling.minSampleShading = 1.0f;
 
-        //混色
+		// --- Color Blend ---
         VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
         colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_TRUE;
+        colorBlendAttachment.blendEnable = ps.BlendEnable ? VK_TRUE : VK_FALSE;
         colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
         colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
         colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
@@ -188,71 +220,62 @@ namespace Engine {
         VkPipelineColorBlendStateCreateInfo colorBlending = {};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlending.logicOpEnable = VK_FALSE;
-        colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
         colorBlending.attachmentCount = 1;
         colorBlending.pAttachments = &colorBlendAttachment;
-        colorBlending.blendConstants[0] = 0.0f; // Optional
-        colorBlending.blendConstants[1] = 0.0f; // Optional
-        colorBlending.blendConstants[2] = 0.0f; // Optional
-        colorBlending.blendConstants[3] = 0.0f; // Optional
 
-        //深度测试
+		// --- Depth Stencil (由配置决定) ---
         VkPipelineDepthStencilStateCreateInfo depthStencil = {};
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depthStencil.depthTestEnable = VK_TRUE;
-        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthTestEnable = ps.DepthTestEnable ? VK_TRUE : VK_FALSE;
+        depthStencil.depthWriteEnable = ps.DepthWriteEnable ? VK_TRUE : VK_FALSE;
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
         depthStencil.depthBoundsTestEnable = VK_FALSE;
-        depthStencil.minDepthBounds = 0.0f; // Optional
-        depthStencil.maxDepthBounds = 1.0f; // Optional
         depthStencil.stencilTestEnable = VK_FALSE;
-        depthStencil.front = {}; // Optional
-        depthStencil.back = {}; // Optional
 
-
-        //动态修改
+		// --- Dynamic State ---
         std::vector<VkDynamicState> dynamicStates = {
             VK_DYNAMIC_STATE_VIEWPORT,
             VK_DYNAMIC_STATE_SCISSOR
         };
-
         VkPipelineDynamicStateCreateInfo dynamicState{};
         dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
-        // pushConstant设置
-        std::vector<VkPushConstantRange> pushConstantRanges;
+		// --- Push Constants (从配置读取) ---
+		std::vector<VkPushConstantRange> pushConstantRanges;
+		pushConstantRanges.reserve(config.PushConstantRanges.size());
+		for (const auto& pcRange : config.PushConstantRanges)
+		{
+			VkPushConstantRange range = {};
+			range.stageFlags = pcRange.StageFlags;
+			range.offset = pcRange.Offset;
+			range.size = pcRange.Size;
+			pushConstantRanges.push_back(range);
+		}
 
-        // --- Range 1: 顶点着色器 (只放 Model 矩阵) ---
-        VkPushConstantRange vertexPushConstantRange{};
-        vertexPushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        vertexPushConstantRange.offset = 0; 
-        vertexPushConstantRange.size = sizeof(glm::mat4); 
-        pushConstantRanges.push_back(vertexPushConstantRange);
-
-        // --- Range 2: 片段着色器 (放 Color) ---
-        VkPushConstantRange fragPushConstantRange{};
-        fragPushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        fragPushConstantRange.offset = sizeof(glm::mat4); 
-        fragPushConstantRange.size = sizeof(glm::vec4);   
-        pushConstantRanges.push_back(fragPushConstantRange);
-
+		// --- Pipeline Layout ---
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         VkDescriptorSetLayout globalLayout = VulkanContext::Get()->GetGlobalDescriptorSetLayout();
-        VkDescriptorSetLayout setLayouts[] = { globalLayout, m_MaterialDescriptorSetLayout };
 
-        pipelineLayoutInfo.setLayoutCount = 2;
-        pipelineLayoutInfo.pSetLayouts = setLayouts;
+		// set=0: Global, set=1: Material
+		// 如果 MaterialBindings 为空, 只绑定 globalLayout
+		std::vector<VkDescriptorSetLayout> setLayouts;
+		setLayouts.push_back(globalLayout);
+		if (!config.MaterialBindings.empty())
+			setLayouts.push_back(descriptorSetLayout);
+
+        pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+        pipelineLayoutInfo.pSetLayouts = setLayouts.data();
         pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(pushConstantRanges.size());
-        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges.data();
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges.empty() ? nullptr : pushConstantRanges.data();
 
-        if (vkCreatePipelineLayout(VulkanContext::Get()->GetDevice(), &pipelineLayoutInfo, nullptr, &m_PipelineLayout) != VK_SUCCESS) {
+        if (vkCreatePipelineLayout(VulkanContext::Get()->GetDevice(), &pipelineLayoutInfo, nullptr, &out_pipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create pipeline layout!");
         }
 
-        //渲染管道
+		// --- Graphics Pipeline ---
         VkGraphicsPipelineCreateInfo pipelineInfo = {};
         pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         pipelineInfo.stageCount = 2;
@@ -265,19 +288,20 @@ namespace Engine {
         pipelineInfo.pDepthStencilState = &depthStencil;
         pipelineInfo.pColorBlendState = &colorBlending;
         pipelineInfo.pDynamicState = &dynamicState;
-        pipelineInfo.layout = m_PipelineLayout;
-        pipelineInfo.renderPass = VulkanContext::Get()->GetRenderPass();
+        pipelineInfo.layout = out_pipelineLayout;
+        pipelineInfo.renderPass = renderPass;
         pipelineInfo.subpass = 0;
-        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
-        pipelineInfo.basePipelineIndex = -1; // Optional
+        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+        pipelineInfo.basePipelineIndex = -1;
 
-        if (vkCreateGraphicsPipelines(VulkanContext::Get()->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_GraphicsPipeline) != VK_SUCCESS) {
+		VkPipeline pipeline;
+        if (vkCreateGraphicsPipelines(VulkanContext::Get()->GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS) {
             throw std::runtime_error("failed to create graphics pipeline!");
         }
-
+		return pipeline;
     }
 
-	std::vector<char> VulkanShader::ReadFile(const std::string& filename)
+    std::vector<char> VulkanShader::ReadFile(const std::string& filename)
 	{
 		std::ifstream file(filename, std::ios::ate | std::ios::binary);
 

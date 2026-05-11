@@ -12,14 +12,20 @@ set GLSLC=glslc
 echo Compiling Shaders...
 
 rem --- 编译 PosColor Shader ---
-echo [1/2] Compiling PosColor...
+echo [1/3] Compiling PosColor...
 %GLSLC% PosColorShader.vert -o PosColor.vert.spv
 %GLSLC% PosColorShader.frag -o PosColor.frag.spv
 
 rem --- 编译 Mesh Shader ---
-echo [2/2] Compiling Mesh...
+echo [2/3] Compiling Mesh...
 %GLSLC% MeshShader.vert -o Mesh.vert.spv
 %GLSLC% MeshShader.frag -o Mesh.frag.spv
+
+rem --- 编译 Gaussian Shader ---
+echo [3/3] Compiling Mesh...
+%GLSLC% GaussianShader.vert -o Gaussian.vert.spv
+%GLSLC% GaussianShader.frag -o Gaussian.frag.spv
+
 
 rem 检查是否有错误 (如果 glslc 返回非0，暂停看报错)
 if %errorlevel% neq 0 (

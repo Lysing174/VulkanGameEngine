@@ -41,53 +41,71 @@ namespace Engine {
 		m_Registry.destroy(entity);
 	}
 
-	void Scene::OnUpdateRuntime()
-	{	
-		//Scripts****************************Need Add
-
-		//Phisics****************************Need Add
-
-		// Render 
-		Camera* mainCamera = nullptr;
-		glm::mat4 cameraTransform;
-		{
-			auto view = m_Registry.view<TransformComponent, CameraComponent>();
-			for (auto entity : view)
-			{
-				auto [transform, camera] = view.get<TransformComponent, CameraComponent>(entity);
-
-				if (camera.Primary)
-				{
-					mainCamera = &camera.Camera;
-					cameraTransform = transform.GetTransform();
-					break;
-				}
-			}
-		}
-
-		if (mainCamera)
-		{
-
-			// Draw meshes
-			auto view = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
-			for (auto entity : view)
-			{
-				auto [transform, renderer, filter] = view.get<TransformComponent, MeshRendererComponent, MeshFilterComponent>(entity);
-				if (filter.Mesh) // 稍微做个空指针检查，防止崩溃
-				{
-					Renderer::SubmitMesh(
-						transform.GetTransform(),
-						filter.Mesh,
-						std::make_shared<MeshRendererComponent>(renderer),
-						(int)entity
-					);
-				}
-			}
-
-
-		}
-
-	}
+	// void Scene::OnUpdateRuntime()
+	// {	
+	// 	//Scripts****************************Need Add
+	//
+	// 	//Phisics****************************Need Add
+	//
+	// 	// Render 
+	// 	Camera* mainCamera = nullptr;
+	// 	glm::mat4 cameraTransform;
+	// 	{
+	// 		auto view = m_Registry.view<TransformComponent, CameraComponent>();
+	// 		for (auto entity : view)
+	// 		{
+	// 			auto [transform, camera] = view.get<TransformComponent, CameraComponent>(entity);
+	//
+	// 			if (camera.Primary)
+	// 			{
+	// 				mainCamera = &camera.Camera;
+	// 				cameraTransform = transform.GetTransform();
+	// 				break;
+	// 			}
+	// 		}
+	// 	}
+	//
+	// 	if (mainCamera)
+	// 	{
+	// 		Renderer::BeginScene(*mainCamera, cameraTransform);
+	//
+	// 		// Draw Meshes (Pass 1: 写颜色+深度)
+	// 		auto meshView = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
+	// 		for (auto entity : meshView)
+	// 		{
+	// 			auto [transform, renderer, filter] = meshView.get<TransformComponent, MeshRendererComponent, MeshFilterComponent>(entity);
+	// 			if (filter.Mesh)
+	// 			{
+	// 				Renderer::SubmitMesh(
+	// 					transform.GetTransform(),
+	// 					filter.Mesh,
+	// 					std::make_shared<MeshRendererComponent>(renderer),
+	// 					(int)entity
+	// 				);
+	// 			}
+	// 		}
+	//
+	// 		// Draw Gaussians (Pass 2: 读深度, 写颜色)
+	// 		auto gaussianView = m_Registry.view<TransformComponent, GaussianSplatComponent>();
+	// 		for (auto entity : gaussianView)
+	// 		{
+	// 			auto [transform, splatComp] = gaussianView.get<TransformComponent, GaussianSplatComponent>(entity);
+	// 			if (splatComp.Splat && splatComp.Visible)
+	// 			{
+	// 				Renderer::SubmitGaussian(
+	// 					transform.GetTransform(),
+	// 					splatComp.Splat,
+	// 					splatComp.GlobalOpacity,
+	// 					splatComp.ScaleModifier,
+	// 					(int)entity
+	// 				);
+	// 			}
+	// 		}
+	//
+	// 		Renderer::EndScene();
+	// 	}
+	//
+	// }
 
 	void Scene::OnUpdateSimulation(EditorCamera& camera)
 	{
@@ -96,13 +114,13 @@ namespace Engine {
 
 
 		// Render
-		RenderScene(camera);
+		RenderEditorScene(camera);
 	}
 
 	void Scene::OnUpdateEditor(EditorCamera& camera)
 	{
 		// Render
-		RenderScene(camera);
+		RenderEditorScene(camera);
 	}
 
 	void Scene::OnViewportResize(uint32_t width, uint32_t height)
@@ -123,13 +141,16 @@ namespace Engine {
 		}
 	}
 
-	void Scene::RenderScene(EditorCamera& camera)
+	void Scene::RenderEditorScene(EditorCamera& camera)
 	{
-		auto view = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
-		for (auto entity : view)
+		Renderer::BeginScene(camera);
+
+		// Draw Meshes (Pass 1: 写颜色+深度)
+		auto meshView = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
+		for (auto entity : meshView)
 		{
-			auto [transform, renderer, filter] = view.get<TransformComponent, MeshRendererComponent, MeshFilterComponent>(entity);
-			if (filter.Mesh) // 稍微做个空指针检查，防止崩溃
+			auto [transform, renderer, filter] = meshView.get<TransformComponent, MeshRendererComponent, MeshFilterComponent>(entity);
+			if (filter.Mesh)
 			{
 				Renderer::SubmitMesh(
 					transform.GetTransform(),
@@ -140,6 +161,25 @@ namespace Engine {
 			}
 		}
 
+		// Draw Gaussians (Pass 2: 深度可视化, 读取 Mesh Pass 的深度缓冲)
+		auto gaussianView = m_Registry.view<GaussianSplatComponent>();
+		for (auto entity : gaussianView)
+		{
+			auto& splatComp = gaussianView.get<GaussianSplatComponent>(entity);
+			if (splatComp.Visible)
+			{
+				glm::vec2 rectOffset(0.0f, 0.0f);
+				glm::vec2 rectScale(0.3f, 0.3f);
+
+				Renderer::SubmitGaussian(
+					rectOffset,
+					rectScale,
+					(int)entity
+				);
+			}
+		}
+
+		Renderer::EndScene();
 	}
 
 	template<typename T>
@@ -171,6 +211,11 @@ namespace Engine {
 
 	template<>
 	void Scene::OnComponentAdded<MeshRendererComponent>(Entity entity, MeshRendererComponent& component)
+	{
+	}
+
+	template<>
+	void Scene::OnComponentAdded<GaussianSplatComponent>(Entity entity, GaussianSplatComponent& component)
 	{
 	}
 

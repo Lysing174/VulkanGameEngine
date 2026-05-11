@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "Engine/Renderer/Framebuffer.h"
 #include <vulkan/vulkan.h>

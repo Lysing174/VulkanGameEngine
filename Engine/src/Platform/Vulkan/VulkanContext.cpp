@@ -1,9 +1,11 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "VulkanContext.h"
 #pragma once
 #include "Engine/Renderer/GraphicsContext.h"
+#include "Engine/Renderer/Renderer.h"
 #include "backends/imgui_impl_vulkan.h"
 #include "Platform/Vulkan/VulkanShader.h"
+
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -64,10 +66,19 @@ namespace Engine {
         //开始录制命令
         vkBeginCommandBuffer(commandBuffers[currentImageIndex], &beginInfo);
 
+    }
+
+    void VulkanContext::BeginMeshRenderPass()
+    {
+        // ========================================
+        // Mesh RenderPass: 清屏颜色+深度, 写入颜色和深度
+        // ========================================
+        currentRenderPassName = "Mesh";
+
         VkRenderPassBeginInfo renderPassInfo = {};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = swapChainFramebuffers[currentImageIndex];
+        renderPassInfo.renderPass = GetCurrentRenderPass()->GetVkRenderPass();
+        renderPassInfo.framebuffer = GetCurrentRenderPass()->GetFramebuffer(currentImageIndex);
         renderPassInfo.renderArea.offset = { 0, 0 };
         renderPassInfo.renderArea.extent = swapChainExtent;
 
@@ -78,21 +89,57 @@ namespace Engine {
         renderPassInfo.pClearValues = clearValues.data();
 
         vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
     }
 
-    void VulkanContext::EndFrame()
+    void VulkanContext::BeginGaussianRenderPass()
     {
+        // ========================================
+        // Gaussian RenderPass: 加载颜色+深度 (不清屏!)
+        //   颜色 LOAD → 保留 Mesh 画好的像素
+        //   深度 LOAD → 保留 Mesh 写入的 Z-Buffer, 用于遮挡剔除
+        // ========================================
+        currentRenderPassName = "Gaussian";
 
-        //把imgui画在最上面
+        VkRenderPassBeginInfo renderPassInfo = {};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPassesMap["Gaussian"]->GetVkRenderPass();
+        renderPassInfo.framebuffer = renderPassesMap["Gaussian"]->GetFramebuffer(currentImageIndex);
+        renderPassInfo.renderArea.offset = { 0, 0 };
+        renderPassInfo.renderArea.extent = swapChainExtent;
+
+        // Gaussian Pass 使用 LOAD_OP_LOAD, 不需要 clear
+        renderPassInfo.clearValueCount = 0;
+        renderPassInfo.pClearValues = nullptr;
+
+        vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    }
+    void VulkanContext::EndRenderPass()
+    {
+        VkCommandBuffer cmd = commandBuffers[currentImageIndex];
+
+        // 结束 Mesh RenderPass
+        vkCmdEndRenderPass(cmd);
+    }
+    void VulkanContext::DrawImGui()
+    {
+        // ImGui 绘制在当前 RenderPass (Gaussian 或 Mesh) 内
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[currentImageIndex]);
 
-        //结束renderpass
-        vkCmdEndRenderPass(commandBuffers[currentImageIndex]);
+    }
+    void VulkanContext::EndFrame()
+    {
         if (vkEndCommandBuffer(commandBuffers[currentImageIndex]) != VK_SUCCESS) {
             throw std::runtime_error("failed to record command buffer!");
         }
 
-        //提交命令
+        // ========================================
+        // 一次性提交! 一个 command buffer 包含了:
+        //   Mesh RenderPass    → 画 mesh (写颜色+深度)
+        //   Gaussian RenderPass → 画 gaussian (读深度, 写颜色)
+        //   ImGui              → UI 叠加
+        // 全部录制完毕后才提交, GPU 按顺序执行
+        // ========================================
         VkSubmitInfo submitInfo = {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -125,6 +172,9 @@ namespace Engine {
         presentInfo.pResults = nullptr; // Optional
 
         vkQueuePresentKHR(presentQueue, &presentInfo);
+
+        // 重置标记
+        currentRenderPassName = "";
     }
 
     void VulkanContext::initVulkan() {
@@ -134,12 +184,18 @@ namespace Engine {
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
+        depthImageFormat = findDepthFormat();
         createImageViews();
-        createRenderPass();
+        //createMeshRenderPass();
+        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
+        //createGaussianRenderPass();
+        renderPassesMap["Gaussian"]=std::make_shared<VulkanRenderPass>("Gaussian",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
+        
         createDescriptorSetLayout();
         createCommandPool();
         createDepthResources();
-        createFramebuffers();
+        renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView);
+        renderPassesMap["Gaussian"]->createFramebuffers(swapChainExtent, swapChainImageViews, VK_NULL_HANDLE);
         createUniformBuffer();
         createDescriptorPool();
         createDescriptorSets();
@@ -148,14 +204,16 @@ namespace Engine {
     }
 
     void VulkanContext::cleanupSwapChain() {
+        for (auto& renderPass : renderPassesMap) {
+            renderPass.second->cleanup();
+        }
+        
+        vkDestroySampler(device, depthSampler, nullptr);
         vkDestroyImageView(device, depthImageView, nullptr);
         vkDestroyImage(device, depthImage, nullptr);
         vkFreeMemory(device, depthImageMemory, nullptr);
-        for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
-            vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
-        }
+        
         vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
-        vkDestroyRenderPass(device, renderPass, nullptr);
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             vkDestroyImageView(device, swapChainImageViews[i], nullptr);
         }
@@ -169,17 +227,24 @@ namespace Engine {
 
         createSwapChain();
         createImageViews();
-        createRenderPass();
+        //createMeshRenderPass();
+        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
+        //createGaussianRenderPass();
+        renderPassesMap["Gaussian"]=std::make_shared<VulkanRenderPass>("Gaussian",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
+
         createDepthResources();
-        createFramebuffers();
+        renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView);
+        renderPassesMap["Gaussian"]->createFramebuffers(swapChainExtent, swapChainImageViews, VK_NULL_HANDLE);
         createCommandBuffers();
+
+        // 通知 Renderer 更新深度纹理 descriptor
+        Renderer::OnSwapchainRecreated();
     }
 
     void VulkanContext::cleanup() {
+        vkDeviceWaitIdle(device);
         cleanupSwapChain();
-
-        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+        
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             vkDestroyBuffer(device, uniformBuffers[i], nullptr);
             vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
@@ -187,6 +252,8 @@ namespace Engine {
         vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
         vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
         vkDestroyCommandPool(device, commandPool, nullptr);
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
         vkDestroyDevice(device, nullptr);
         if (enableValidationLayers) {
@@ -658,107 +725,6 @@ namespace Engine {
         std::cout << "\033[33mimage views created.\033[0m" << std::endl;
     }
 
-    void VulkanContext::createDescriptorSetLayout() {
-        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
-        uboLayoutBinding.binding = 0;
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
-
-        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-        std::array<VkDescriptorSetLayoutBinding, 1> bindings = { uboLayoutBinding };
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-
-        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-    }
-
-
-    void VulkanContext::createRenderPass() {
-        VkAttachmentDescription colorAttachment = {};
-        colorAttachment.format = swapChainImageFormat;
-        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-        VkAttachmentReference colorAttachmentRef = {};
-        colorAttachmentRef.attachment = 0;
-        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-        VkAttachmentDescription depthAttachment = {};
-        depthAttachment.format = findDepthFormat();
-        depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-        VkAttachmentReference depthAttachmentRef = {};
-        depthAttachmentRef.attachment = 1;
-        depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-        VkSubpassDescription subpass = {};
-        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &colorAttachmentRef;
-        subpass.pDepthStencilAttachment = &depthAttachmentRef;
-
-        VkSubpassDependency dependency = {};
-        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-        dependency.dstSubpass = 0;
-        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.srcAccessMask = 0;
-        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-        std::array<VkAttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
-        VkRenderPassCreateInfo renderPassInfo = {};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-        renderPassInfo.pAttachments = attachments.data();
-        renderPassInfo.subpassCount = 1;
-        renderPassInfo.pSubpasses = &subpass;
-        renderPassInfo.dependencyCount = 1;
-        renderPassInfo.pDependencies = &dependency;
-
-        if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create render pass!");
-        }
-
-    }
-
-    void VulkanContext::createFramebuffers() {
-        swapChainFramebuffers.resize(swapChainImageViews.size());
-
-        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-            std::array<VkImageView, 2> attachments = {
-                swapChainImageViews[i],
-                depthImageView
-            };
-
-            VkFramebufferCreateInfo framebufferInfo = {};
-            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebufferInfo.renderPass = renderPass;
-            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-            framebufferInfo.pAttachments = attachments.data();
-            framebufferInfo.width = swapChainExtent.width;
-            framebufferInfo.height = swapChainExtent.height;
-            framebufferInfo.layers = 1;
-
-            if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create framebuffer!");
-            }
-        }
-
-    }
 
     void VulkanContext::createCommandPool() {
         QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
@@ -774,36 +740,7 @@ namespace Engine {
 
     }
 
-    void VulkanContext::createDepthResources() {
-        VkFormat depthFormat = findDepthFormat();
-        CreateImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
-        depthImageView = CreateImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
-
-        TransitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-    }
-    VkFormat VulkanContext::findDepthFormat() {
-        return findSupportedFormat(
-            { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT },
-            VK_IMAGE_TILING_OPTIMAL,
-            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
-        );
-    }
-    VkFormat VulkanContext::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
-        for (VkFormat format : candidates) {
-            VkFormatProperties props;
-            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
-
-            if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
-                return format;
-            }
-            else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
-                return format;
-            }
-        }
-
-        throw std::runtime_error("failed to find supported format!");
-    }
+    
     bool VulkanContext::hasStencilComponent(VkFormat format) {
         return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
     }
@@ -941,7 +878,56 @@ namespace Engine {
 
         EndSingleTimeCommands(commandBuffer);
     }
+    void VulkanContext::createDepthResources() {
+        VkFormat depthFormat = findDepthFormat();
+        // 深度附件 + 可采样 (Gaussian shader 直接采样，无需额外 depthSampledImage)
+        CreateImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+        depthImageView = CreateImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+        TransitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
+        // 深度采样器
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.anisotropyEnable = VK_FALSE;
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerInfo.mipLodBias = 0.0f;
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 0.0f;
+        if (vkCreateSampler(device, &samplerInfo, nullptr, &depthSampler) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create depth sampler!");
+        }
+    }
+    VkFormat VulkanContext::findDepthFormat() {
+        return findSupportedFormat(
+            { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT },
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+        );
+    }
+    VkFormat VulkanContext::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
+        for (VkFormat format : candidates) {
+            VkFormatProperties props;
+            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+
+            if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+                return format;
+            }
+            else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
+                return format;
+            }
+        }
+
+        throw std::runtime_error("failed to find supported format!");
+    }
 
     VkImageView VulkanContext::CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) {
         VkImageViewCreateInfo viewInfo = {};
@@ -980,6 +966,81 @@ namespace Engine {
         }
     }
 
+    void VulkanContext::createDescriptorSetLayout() {
+        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+        std::array<VkDescriptorSetLayoutBinding, 1> bindings = { uboLayoutBinding };
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+    }
+
+    void VulkanContext::createDescriptorPool() {
+        std::array<VkDescriptorPoolSize, 2> poolSizes = {};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = 100;
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[1].descriptorCount = 100;
+
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
+        poolInfo.maxSets = 200;
+        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor pool!");
+        }
+    }
+
+    void VulkanContext::createDescriptorSets() {
+        size_t imageCount = swapChainImages.size();
+
+        std::vector<VkDescriptorSetLayout> layouts(imageCount, descriptorSetLayout);
+
+        VkDescriptorSetAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
+        allocInfo.pSetLayouts = layouts.data();
+
+        descriptorSets.resize(imageCount);
+        if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate descriptor set!");
+        }
+
+        for (size_t i = 0; i < imageCount; i++)
+        {
+            VkDescriptorBufferInfo bufferInfo = {};
+            bufferInfo.buffer = uniformBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UniformBufferObject);
+
+            VkWriteDescriptorSet descriptorWrites = {};
+
+            descriptorWrites.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites.dstSet = descriptorSets[i];
+            descriptorWrites.dstBinding = 0;
+            descriptorWrites.dstArrayElement = 0;
+            descriptorWrites.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites.descriptorCount = 1;
+            descriptorWrites.pBufferInfo = &bufferInfo;
+
+            vkUpdateDescriptorSets(device, 1, &descriptorWrites, 0, nullptr);
+        }
+    }
+    
     void VulkanContext::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
         VkBufferCreateInfo bufferInfo = {};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1066,64 +1127,8 @@ namespace Engine {
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
-    void VulkanContext::createDescriptorPool() {
-        std::array<VkDescriptorPoolSize, 2> poolSizes = {};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = 100;
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[1].descriptorCount = 100;
-
-        VkDescriptorPoolCreateInfo poolInfo = {};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-        poolInfo.pPoolSizes = poolSizes.data();
-        poolInfo.maxSets = 200;
-        poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-
-        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor pool!");
-        }
-    }
-
-    void VulkanContext::createDescriptorSets() {
-        size_t imageCount = swapChainImages.size();
-
-        std::vector<VkDescriptorSetLayout> layouts(imageCount, descriptorSetLayout);
-
-        VkDescriptorSetAllocateInfo allocInfo = {};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
-        allocInfo.pSetLayouts = layouts.data();
-
-        descriptorSets.resize(imageCount);
-        if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate descriptor set!");
-        }
-
-        for (size_t i = 0; i < imageCount; i++)
-        {
-            VkDescriptorBufferInfo bufferInfo = {};
-            bufferInfo.buffer = uniformBuffers[i];
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
-
-            VkWriteDescriptorSet descriptorWrites = {};
-
-            descriptorWrites.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites.dstSet = descriptorSets[i];
-            descriptorWrites.dstBinding = 0;
-            descriptorWrites.dstArrayElement = 0;
-            descriptorWrites.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites.descriptorCount = 1;
-            descriptorWrites.pBufferInfo = &bufferInfo;
-
-            vkUpdateDescriptorSets(device, 1, &descriptorWrites, 0, nullptr);
-        }
-    }
-
     void VulkanContext::createCommandBuffers() {
-        commandBuffers.resize(swapChainFramebuffers.size());
+        commandBuffers.resize(swapChainImageViews.size());
         VkCommandBufferAllocateInfo allocInfo = {};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = commandPool;

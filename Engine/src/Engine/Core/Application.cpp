@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "Application.h"
 #include "Engine/Renderer/Renderer.h"
 #include "Input.h"
@@ -106,8 +106,6 @@ namespace Engine {
 			}
 
 			//Update
-			Renderer::BeginScene(m_EditorLayer->GetEditorCamera());
-
 			for (Layer* layer : m_LayerStack)
 			{
 				layer->OnUpdate();
@@ -119,7 +117,9 @@ namespace Engine {
 				layer->OnImGuiRender();
 
 			m_ImGuiLayer->End();
-			Renderer::EndScene();
+
+			// ImGui::Render() 已生成 drawData，现在可以绘制 ImGui 并提交帧
+			Renderer::PresentFrame();
 
 		}
 	}

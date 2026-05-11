@@ -5,13 +5,13 @@
 #include "Platform/Vulkan/VulkanShader.h"
 
 namespace Engine {
-    std::shared_ptr<Shader> Shader::Create(const std::string& vertexSrc, const std::string& fragmentSrc)
+    std::shared_ptr<Shader> Shader::Create(const std::string& vertexSrc, const std::string& fragmentSrc, const ShaderConfig& config)
     {
         switch (Renderer::GetAPI())
         {
         case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return nullptr;
 
-        case Renderer::API::Vulkan:  return std::make_shared<VulkanShader>(vertexSrc, fragmentSrc);
+        case Renderer::API::Vulkan:  return std::make_shared<VulkanShader>(vertexSrc, fragmentSrc, config);
         }
 
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
@@ -33,9 +33,9 @@ namespace Engine {
 		m_Shaders[name] = shader;
 	}
 
-	std::shared_ptr<Shader> ShaderLibrary::Load(const std::string& vertexSrc, const std::string& fragmentSrc)
+	std::shared_ptr<Shader> ShaderLibrary::Load(const std::string& vertexSrc, const std::string& fragmentSrc, const ShaderConfig& config)
 	{
-		auto shader = Shader::Create(vertexSrc,fragmentSrc);
+		auto shader = Shader::Create(vertexSrc, fragmentSrc, config);
 		Add(shader);
 		return shader;
 	}
