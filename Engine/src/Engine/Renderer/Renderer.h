@@ -4,10 +4,9 @@
 #include <Engine/Renderer/EditorCamera.h>
 #include <Engine/Scene/Components.h>
 #include <Engine/Renderer/Shader.h>
+#include <Engine/Renderer/Buffer.h>
 
 namespace Engine {
-
-	class GaussianSplat;
 
 	struct MeshRenderCommandRequest
 	{
@@ -24,8 +23,8 @@ namespace Engine {
 
 	struct GaussianRenderCommandRequest
 	{
-		glm::vec2 RectOffset = {0.0f, 0.0f}; // 矩形起始偏移 (屏幕空间 [0,1])
-		glm::vec2 RectScale  = {0.3f, 0.3f}; // 矩形尺寸 (宽, 高)
+		glm::mat4 Transform;
+		std::shared_ptr<GaussianModel> Model;
 		int EntityID;
 	};
 
@@ -50,20 +49,22 @@ namespace Engine {
 		static void OnSwapchainRecreated(); // Swapchain 重建后更新深度纹理 descriptor
 
 		static void SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<MeshRendererComponent>& rendererComponent, int entityID = -1);
-		static void SubmitGaussian(const glm::vec2& rectOffset, const glm::vec2& rectScale, int entityID = -1);
-		// static void Flush();
-		//static void Submit(const Ref<Shader>& shader, const Ref<VertexArray>& vertexArray, const glm::mat4& transform = glm::mat4(1.0f));
+		static void SubmitGaussian(const glm::mat4& transform, const std::shared_ptr<GaussianModel>& model, int entityID = -1);
 
 		static API GetAPI() { return s_API; }
 		static std::shared_ptr<ShaderLibrary> GetShaderLibrary() { return s_ShaderLibrary; }
 
 		static Renderer* Create();
 
+		// Register a GaussianModel into the global SSBO (assigns offset)
+		static void RegisterGaussianModel(const std::shared_ptr<GaussianModel>& model);
+
 	private:
 		static void DrawMesh(const MeshRenderCommandRequest& request);
 		static void DrawGaussian(const GaussianRenderCommandRequest& request);
 		static void FlushMeshPass();
 		static void FlushGaussianPass();
+		static void RebuildGlobalGaussianSSBO();
 		static void CreateGaussianDescriptorSet();
 
 	private:
@@ -72,13 +73,21 @@ namespace Engine {
 		struct SceneData
 		{
 			glm::mat4 ViewProjectionMatrix;
+			glm::vec3 CameraPosition;
+			glm::vec3 CameraForward;
 		};
 		static std::vector<MeshRenderCommandRequest> s_MeshRenderQueue;
 		static std::vector<GaussianRenderCommandRequest> s_GaussianRenderQueue;
 		static std::shared_ptr<ShaderLibrary> s_ShaderLibrary;
+		static SceneData s_SceneData;
 
-		// Gaussian 深度纹理 DescriptorSet (直接绑定深度，不走 Material)
+		// Global Gaussian SSBO: all models' data in one buffer
+		static std::shared_ptr<ShaderStorageBuffer> s_GlobalGaussianSSBO;
+		static uint32_t s_TotalGaussianCount;
+		static bool s_GaussianSSBODirty;
+		static std::vector<std::shared_ptr<GaussianModel>> s_RegisteredGaussianModels;
+
+		// Gaussian DescriptorSet (depth texture + global SSBO, bind once per frame)
 		static VkDescriptorSet s_GaussianDescriptorSet;
-		//static Scope<SceneData> s_SceneData;
 	};
 }

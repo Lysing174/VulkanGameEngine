@@ -3,6 +3,7 @@
 #include "Engine/Scene/SceneCamera.h"
 #include "Engine/Renderer/Mesh.h" 
 #include "Engine/Renderer/Material.h"
+#include "Engine/Renderer/GaussianModel.h"
 #include "Engine/Scene/UUID.h"
 
 #include <glm/glm.hpp>
@@ -13,7 +14,6 @@
 
 namespace Engine {
 	
-	class GaussianSplat;
 	struct IDComponent
 	{
 		UUID ID;
@@ -91,15 +91,15 @@ namespace Engine {
 		CameraComponent(const CameraComponent&) = default;
 	};
 
-	struct GaussianSplatComponent
+	struct GaussianComponent
 	{
-		std::shared_ptr<GaussianSplat> Splat;
+		std::shared_ptr<GaussianModel> GaussianModel;
 
 		// 渲染控制参数
 		bool Visible = true;
 
-		GaussianSplatComponent() = default;
-		GaussianSplatComponent(const std::shared_ptr<GaussianSplat>& splat)
-			: Splat(splat) {}
+		GaussianComponent() = default;
+		GaussianComponent(const std::shared_ptr<Engine::GaussianModel>& gaussianModel)
+			: GaussianModel(gaussianModel) {}
 	};
 }

@@ -84,25 +84,21 @@ namespace Engine
 	{
 		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
 
-		// Push Constants: rectOffset + rectScale (16 字节, VS+FS)
-		struct DepthVisPushConstants {
-			glm::vec2 rectOffset;
-			glm::vec2 rectScale;
-		};
-		DepthVisPushConstants pushConstants;
-		pushConstants.rectOffset = request.RectOffset;
-		pushConstants.rectScale  = request.RectScale;
-
+		// Push Constants: Transform matrix (64 字节, VS)
 		vkCmdPushConstants(
 			cmd,
 			Renderer::GetShaderLibrary()->Get("Gaussian.vert.spv")->GetPipelineLayout(),
-			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			VK_SHADER_STAGE_VERTEX_BIT,
 			0,
-			sizeof(DepthVisPushConstants),
-			&pushConstants
+			sizeof(glm::mat4),
+			&(request.Transform)
 		);
 
-		// 无 VBO/IBO，用 gl_VertexIndex 程序化生成顶点
-		vkCmdDraw(cmd, 6, 1, 0, 0);
+		// POINT_LIST: 每个 Gaussian 中心绘制为一个点
+		// firstVertex = model 的全局偏移, gl_VertexIndex 自动从 offset 开始索引全局 SSBO
+		uint32_t vertexCount = request.Model ? request.Model->GetGaussianCount() : 0;
+		uint32_t firstVertex = request.Model ? request.Model->GetGlobalOffset() : 0;
+		if (vertexCount > 0)
+			vkCmdDraw(cmd, vertexCount, 1, firstVertex, 0);
 	}
 }

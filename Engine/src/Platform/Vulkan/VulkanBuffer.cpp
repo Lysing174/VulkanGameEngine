@@ -205,4 +205,72 @@ namespace Engine {
 	}
 	void VulkanIndexBuffer::Unbind() const {}
 
+	// ==============================================================================
+	// ShaderStorageBuffer 实现
+	// ==============================================================================
+
+	VulkanShaderStorageBuffer::VulkanShaderStorageBuffer(uint32_t size)
+		: m_Size(size)
+	{
+		VulkanContext::Get()->CreateBuffer(size,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			m_Buffer,
+			m_BufferMemory);
+	}
+
+	VulkanShaderStorageBuffer::VulkanShaderStorageBuffer(const void* data, uint32_t size)
+		: m_Size(size)
+	{
+		VkDevice device = VulkanContext::Get()->GetDevice();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		VulkanContext::Get()->CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer, stagingBufferMemory);
+
+		void* memoryData;
+		vkMapMemory(device, stagingBufferMemory, 0, size, 0, &memoryData);
+		memcpy(memoryData, data, (size_t)size);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		VulkanContext::Get()->CreateBuffer(size,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			m_Buffer, m_BufferMemory);
+
+		VulkanContext::Get()->CopyBuffer(stagingBuffer, m_Buffer, size);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	VulkanShaderStorageBuffer::~VulkanShaderStorageBuffer()
+	{
+		VkDevice device = VulkanContext::Get()->GetDevice();
+		vkDestroyBuffer(device, m_Buffer, nullptr);
+		vkFreeMemory(device, m_BufferMemory, nullptr);
+	}
+
+	void VulkanShaderStorageBuffer::Bind(uint32_t binding) const
+	{
+		VkDescriptorBufferInfo bufferInfo{};
+		bufferInfo.buffer = m_Buffer;
+		bufferInfo.offset = 0;
+		bufferInfo.range = m_Size;
+
+		// Note: descriptor set allocation should be handled at a higher level.
+		// This Bind is a convenience for dynamic descriptor updates during rendering.
+	}
+
+	void VulkanShaderStorageBuffer::SetData(const void* data, uint32_t size)
+	{
+		VkDevice device = VulkanContext::Get()->GetDevice();
+		void* mappedData;
+		vkMapMemory(device, m_BufferMemory, 0, size, 0, &mappedData);
+		memcpy(mappedData, data, size);
+		vkUnmapMemory(device, m_BufferMemory);
+	}
+
 }

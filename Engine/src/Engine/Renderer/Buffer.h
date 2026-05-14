@@ -142,6 +142,18 @@ namespace Engine
 		static std::shared_ptr<IndexBuffer> Create(std::vector<uint32_t> indices, uint32_t count);
 
 	};
+
+	class ShaderStorageBuffer
+	{
+	public:
+		virtual ~ShaderStorageBuffer() = default;
+
+		virtual void Bind(uint32_t binding) const = 0;
+		virtual void SetData(const void* data, uint32_t size) = 0;
+
+		static std::shared_ptr<ShaderStorageBuffer> Create(const void* data, uint32_t size);
+		static std::shared_ptr<ShaderStorageBuffer> Create(uint32_t size); // empty, for dynamic data
+	};
 }
 
 namespace Engine {

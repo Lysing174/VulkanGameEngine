@@ -33,6 +33,30 @@ namespace Engine {
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
         return nullptr;
     }
+
+    std::shared_ptr<ShaderStorageBuffer> ShaderStorageBuffer::Create(const void* data, uint32_t size)
+    {
+        switch (Renderer::GetAPI())
+        {
+        case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return nullptr;
+        case Renderer::API::Vulkan:  return std::make_shared<VulkanShaderStorageBuffer>(data, size);
+        }
+
+        EG_CORE_ASSERT(false, "Unknown RendererAPI!");
+        return nullptr;
+    }
+
+    std::shared_ptr<ShaderStorageBuffer> ShaderStorageBuffer::Create(uint32_t size)
+    {
+        switch (Renderer::GetAPI())
+        {
+        case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return nullptr;
+        case Renderer::API::Vulkan:  return std::make_shared<VulkanShaderStorageBuffer>(size);
+        }
+
+        EG_CORE_ASSERT(false, "Unknown RendererAPI!");
+        return nullptr;
+    }
 	
 	BufferLayout PosColorVertex::m_layout={ { Engine::ShaderDataType::Float3, "a_Position" },
 			{ Engine::ShaderDataType::Float4, "a_Color" } };

@@ -139,6 +139,25 @@ namespace Engine {
 			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
 			return config;
 		}
+
+		// 高斯点云: 深度纹理采样器 + GaussianData SSBO + Push Constants, POINT_LIST拓扑
+		static ShaderConfig GaussianPointCloud()
+		{
+			ShaderConfig config;
+			config.MaterialBindings = {
+				{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_DepthMap" },
+				{ 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1, "GaussianDataBuffer" },
+			};
+			config.PushConstantRanges = {
+				{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4) },
+			};
+			config.PipelineState.HasVertexInput = false;
+			config.PipelineState.DepthTestEnable = false;
+			config.PipelineState.DepthWriteEnable = false;
+			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
+			config.PipelineState.Topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+			return config;
+		}
 	};
 
 	// ============================================================

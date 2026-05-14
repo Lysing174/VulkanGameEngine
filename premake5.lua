@@ -42,6 +42,7 @@ project "Engine"
 		"vendor/bin/imgui",
 		"vendor/bin/entt",
 		"vendor/bin/assimp",
+		"vendor/bin/happly",
 		"D:/program/vulkanSDK1.4.304.1/Include",
 		"D:/program/vulkanSDK1.4.304.1/Third-Party/Include"
 	}
@@ -105,6 +106,7 @@ project "SandBox"
 		"Engine/src",
 		"vendor/bin/imgui",
 		"vendor/bin/entt",
+		"vendor/bin/happly",
 		"D:/program/vulkanSDK1.4.304.1/Include",
 		"D:/program/vulkanSDK1.4.304.1/Third-Party/Include"
 	}

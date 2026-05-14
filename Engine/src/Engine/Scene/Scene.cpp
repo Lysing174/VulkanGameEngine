@@ -162,18 +162,15 @@ namespace Engine {
 		}
 
 		// Draw Gaussians (Pass 2: 深度可视化, 读取 Mesh Pass 的深度缓冲)
-		auto gaussianView = m_Registry.view<GaussianSplatComponent>();
+		auto gaussianView = m_Registry.view<TransformComponent, GaussianComponent>();
 		for (auto entity : gaussianView)
 		{
-			auto& splatComp = gaussianView.get<GaussianSplatComponent>(entity);
+			auto [transform, splatComp] = gaussianView.get<TransformComponent, GaussianComponent>(entity);
 			if (splatComp.Visible)
 			{
-				glm::vec2 rectOffset(0.0f, 0.0f);
-				glm::vec2 rectScale(0.3f, 0.3f);
-
 				Renderer::SubmitGaussian(
-					rectOffset,
-					rectScale,
+					transform.GetTransform(),
+					splatComp.GaussianModel,
 					(int)entity
 				);
 			}
@@ -215,7 +212,7 @@ namespace Engine {
 	}
 
 	template<>
-	void Scene::OnComponentAdded<GaussianSplatComponent>(Entity entity, GaussianSplatComponent& component)
+	void Scene::OnComponentAdded<GaussianComponent>(Entity entity, GaussianComponent& component)
 	{
 	}
 

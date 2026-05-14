@@ -3,12 +3,20 @@
 #include "Platform/Vulkan/VulkanRenderer.h"
 #include "Platform/Vulkan/VulkanContext.h"
 #include "Platform/Vulkan/VulkanShader.h"
+#include "Platform/Vulkan/VulkanBuffer.h"
 
 namespace Engine {
     Renderer::API Renderer::s_API = Renderer::API::Vulkan;
 	std::vector<MeshRenderCommandRequest> Renderer::s_MeshRenderQueue;
 	std::vector<GaussianRenderCommandRequest> Renderer::s_GaussianRenderQueue;
     std::shared_ptr<ShaderLibrary> Renderer::s_ShaderLibrary = std::make_shared<ShaderLibrary>();
+    Renderer::SceneData Renderer::s_SceneData;
+
+    // Global Gaussian SSBO
+    std::shared_ptr<ShaderStorageBuffer> Renderer::s_GlobalGaussianSSBO;
+    uint32_t Renderer::s_TotalGaussianCount = 0;
+    bool Renderer::s_GaussianSSBODirty = false;
+    std::vector<std::shared_ptr<GaussianModel>> Renderer::s_RegisteredGaussianModels;
     VkDescriptorSet Renderer::s_GaussianDescriptorSet = VK_NULL_HANDLE;
 
     void Renderer::Init()
@@ -16,11 +24,56 @@ namespace Engine {
         // Mesh Shader: 使用默认 PBR 配置 (Albedo + Normal + ORM + MaterialUBO)
         s_ShaderLibrary->Load("shaders/Mesh.vert.spv", "shaders/Mesh.frag.spv", ShaderConfig::DefaultPBR());
 
-        // Gaussian Shader: 使用深度可视化配置 (仅 DepthMap 采样器 + Push Constants)
-        s_ShaderLibrary->Load("shaders/Gaussian.vert.spv", "shaders/Gaussian.frag.spv", ShaderConfig::DepthVisualizer());
+        // Gaussian Shader: 使用高斯点云配置 (深度采样器 + GaussianData SSBO + POINT_LIST)
+        s_ShaderLibrary->Load("shaders/Gaussian.vert.spv", "shaders/Gaussian.frag.spv", ShaderConfig::GaussianPointCloud());
+    }
 
-        // 创建 Gaussian 深度纹理 DescriptorSet
+    void Renderer::RegisterGaussianModel(const std::shared_ptr<GaussianModel>& model)
+    {
+        if (!model || model->IsRegistered()) return;
+
+        // Check if already in the list (by raw pointer)
+        for (const auto& registered : s_RegisteredGaussianModels)
+        {
+            if (registered.get() == model.get()) return;
+        }
+
+        // Assign offset and add to list
+        model->SetGlobalOffset(s_TotalGaussianCount);
+        s_TotalGaussianCount += model->GetGaussianCount();
+        s_RegisteredGaussianModels.push_back(model);
+        s_GaussianSSBODirty = true;
+
+        EG_CORE_INFO("Registered GaussianModel: offset={0}, count={1}, total={2}",
+            model->GetGlobalOffset(), model->GetGaussianCount(), s_TotalGaussianCount);
+    }
+
+    void Renderer::RebuildGlobalGaussianSSBO()
+    {
+        if (s_RegisteredGaussianModels.empty()) return;
+
+        auto context = VulkanContext::Get();
+
+        // Collect all GPU data from all registered models
+        std::vector<GaussianDataGPU> allData;
+        allData.reserve(s_TotalGaussianCount);
+        for (const auto& model : s_RegisteredGaussianModels)
+        {
+            auto gpuData = model->GetGPUData();
+            allData.insert(allData.end(), gpuData.begin(), gpuData.end());
+        }
+
+        // Create new SSBO with all data
+        s_GlobalGaussianSSBO = ShaderStorageBuffer::Create(
+            allData.data(), (uint32_t)(allData.size() * sizeof(GaussianDataGPU)));
+
+        // Update descriptor set with new SSBO + depth texture
         CreateGaussianDescriptorSet();
+
+        s_GaussianSSBODirty = false;
+
+        EG_CORE_INFO("Rebuilt global Gaussian SSBO: {0} gaussians, {1} bytes",
+            allData.size(), allData.size() * sizeof(GaussianDataGPU));
     }
 
     void Renderer::CreateGaussianDescriptorSet()
@@ -29,7 +82,7 @@ namespace Engine {
         auto vkShader = std::static_pointer_cast<VulkanShader>(gaussianShader);
         auto context = VulkanContext::Get();
 
-        // 如果已有旧的 descriptor set，先释放
+        // Free old descriptor set if exists
         if (s_GaussianDescriptorSet != VK_NULL_HANDLE) {
             vkFreeDescriptorSets(context->GetDevice(), context->GetDescriptorPool(), 1, &s_GaussianDescriptorSet);
             s_GaussianDescriptorSet = VK_NULL_HANDLE;
@@ -46,22 +99,45 @@ namespace Engine {
             throw std::runtime_error("Failed to allocate Gaussian descriptor set!");
         }
 
-        // 写入深度纹理
+        // Write depth texture (binding 0)
         VkDescriptorImageInfo imageInfo{};
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         imageInfo.imageView = context->GetDepthImageView();
         imageInfo.sampler = context->GetDepthSampler();
 
-        VkWriteDescriptorSet descriptorWrite{};
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = s_GaussianDescriptorSet;
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.pImageInfo = &imageInfo;
+        VkWriteDescriptorSet depthWrite{};
+        depthWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        depthWrite.dstSet = s_GaussianDescriptorSet;
+        depthWrite.dstBinding = 0;
+        depthWrite.dstArrayElement = 0;
+        depthWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        depthWrite.descriptorCount = 1;
+        depthWrite.pImageInfo = &imageInfo;
 
-        vkUpdateDescriptorSets(context->GetDevice(), 1, &descriptorWrite, 0, nullptr);
+        std::vector<VkWriteDescriptorSet> writes = { depthWrite };
+
+        // Write SSBO (binding 1) if it exists
+        VkDescriptorBufferInfo bufferInfo{};
+        VkWriteDescriptorSet ssboWrite{};
+        if (s_GlobalGaussianSSBO)
+        {
+            auto vkSSBO = std::static_pointer_cast<VulkanShaderStorageBuffer>(s_GlobalGaussianSSBO);
+            bufferInfo.buffer = vkSSBO->GetVulkanBuffer();
+            bufferInfo.offset = 0;
+            bufferInfo.range = s_TotalGaussianCount * sizeof(GaussianDataGPU);
+
+            ssboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ssboWrite.dstSet = s_GaussianDescriptorSet;
+            ssboWrite.dstBinding = 1;
+            ssboWrite.dstArrayElement = 0;
+            ssboWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            ssboWrite.descriptorCount = 1;
+            ssboWrite.pBufferInfo = &bufferInfo;
+
+            writes.push_back(ssboWrite);
+        }
+
+        vkUpdateDescriptorSets(context->GetDevice(), (uint32_t)writes.size(), writes.data(), 0, nullptr);
     }
 
     void Renderer::OnSwapchainRecreated()
@@ -73,6 +149,9 @@ namespace Engine {
 	{
         s_MeshRenderQueue.clear();
         s_GaussianRenderQueue.clear();
+
+        s_SceneData.CameraPosition = camera.GetPosition();
+        s_SceneData.CameraForward  = camera.GetForwardDirection();
 
         switch (Renderer::GetAPI())
         {
@@ -144,11 +223,11 @@ namespace Engine {
         }
     }
 
-    void Renderer::SubmitGaussian(const glm::vec2& rectOffset, const glm::vec2& rectScale, int entityID)
+    void Renderer::SubmitGaussian(const glm::mat4& transform, const std::shared_ptr<GaussianModel>& model, int entityID)
     {
         GaussianRenderCommandRequest request;
-        request.RectOffset = rectOffset;
-        request.RectScale = rectScale;
+        request.Transform = transform;
+        request.Model = model;
         request.EntityID = entityID;
 
         s_GaussianRenderQueue.push_back(request);
@@ -202,22 +281,31 @@ namespace Engine {
     {
         if (s_GaussianRenderQueue.empty()) return;
 
+        // Rebuild global SSBO if dirty (new model registered since last rebuild)
+        if (s_GaussianSSBODirty)
+            RebuildGlobalGaussianSSBO();
+
+        if (!s_GlobalGaussianSSBO) return;
+
         auto gaussianShader = s_ShaderLibrary->Get("Gaussian.vert.spv");
         gaussianShader->Bind();  // vkCmdBindPipeline
 
         VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
+        auto context = VulkanContext::Get();
 
-        // 绑定 Global DescriptorSet (set=0)
-        VkDescriptorSet globalDescriptorSet = VulkanContext::Get()->GetCurrentDescriptorSet();
+        // 绑定 Global DescriptorSet (set=0): projView UBO
+        VkDescriptorSet globalDescriptorSet = context->GetCurrentDescriptorSet();
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
             gaussianShader->GetPipelineLayout(), 0, 1, &globalDescriptorSet, 0, nullptr);
 
-        // 绑定深度纹理 DescriptorSet (set=1, 直接绑定，不走 Material)
+        // 绑定 Gaussian DescriptorSet (set=1): depth texture + global SSBO — 只需绑一次
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
             gaussianShader->GetPipelineLayout(), 1, 1, &s_GaussianDescriptorSet, 0, nullptr);
 
+        // 绘制每个 GaussianModel (各自 push transform + 用 offset 绘制)
         for (auto& command : s_GaussianRenderQueue)
         {
+            if (!command.Model) continue;
             DrawGaussian(command);
         }
     }

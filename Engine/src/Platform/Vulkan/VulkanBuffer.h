@@ -58,4 +58,23 @@ namespace Engine {
 		uint32_t m_Count;
 	};
 
+	class VulkanShaderStorageBuffer : public ShaderStorageBuffer
+	{
+	public:
+		VulkanShaderStorageBuffer(uint32_t size);
+		VulkanShaderStorageBuffer(const void* data, uint32_t size);
+
+		virtual ~VulkanShaderStorageBuffer();
+
+		virtual void Bind(uint32_t binding) const override;
+		virtual void SetData(const void* data, uint32_t size) override;
+
+		VkBuffer GetVulkanBuffer() const { return m_Buffer; }
+
+	private:
+		VkBuffer m_Buffer;
+		VkDeviceMemory m_BufferMemory;
+		uint32_t m_Size;
+	};
+
 }

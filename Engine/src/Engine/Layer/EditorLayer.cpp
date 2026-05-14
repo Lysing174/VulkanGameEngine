@@ -6,7 +6,7 @@
 #include "Engine/Renderer/Model.h"
 #include "imgui.h"
 
-//const std::string MODEL_PATH = "models/nanosuit/nanosuit.obj";
+const std::string NANOSUIT_PATH = "models/nanosuit/nanosuit.obj";
 const std::string MODEL_PATH = "models/cottage_obj.obj";
 //const std::string TEXTURE_PATH = "models/cottage_diffuse.png";
 
@@ -46,24 +46,32 @@ namespace Engine {
 
         // 使用 Model 加载的材质，如果模型没有材质则使用默认的 houseMat
         auto& modelMaterials = houseModel.GetMaterials();
-        if (!modelMaterials.empty())
-        {
-            houseEntity.AddComponent<MeshRendererComponent>(modelMaterials);
-        }
-        else
-        {
-        	EG_CORE_ERROR("Model has no materials");
-            //houseEntity.AddComponent<MeshRendererComponent>(houseMat);
-        }
+		houseEntity.AddComponent<MeshRendererComponent>(modelMaterials);
+    	
+    	Entity nanosuitEntity = m_ActiveScene->CreateEntity("Nanosuit");
+    	Model nanosuitModel = Model(NANOSUIT_PATH, shader);
+    	nanosuitEntity.AddComponent<MeshFilterComponent>(nanosuitModel.GetMesh());
+    	auto& nanosuitMaterials = nanosuitModel.GetMaterials();
+    	nanosuitEntity.AddComponent<MeshRendererComponent>(nanosuitMaterials);
+    	nanosuitEntity.GetComponent<TransformComponent>().Translation={-10.0f,0.0f,10.0f};
+
+
     	
     	auto gaussianShader=Renderer::GetShaderLibrary()->Get("Gaussian.vert.spv");
     	gaussianShader->CreatePipeline(nullptr, "Gaussian");
     	Entity gaussianEntity=m_ActiveScene->CreateEntity("Gaussian");
-    	gaussianEntity.AddComponent<GaussianSplatComponent>();
+    	auto gaussianModel=GaussianModel::Create("gaussians/plant.ply");
+    	gaussianEntity.AddComponent<GaussianComponent>(gaussianModel);
+    	gaussianEntity.GetComponent<TransformComponent>().Translation={0.0f,2.0f,10.0f};
+    	gaussianEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
+    	
+    	Entity gaussianEntity2=m_ActiveScene->CreateEntity("Gaussian2");
+    	gaussianEntity2.AddComponent<GaussianComponent>(gaussianModel);
+    	gaussianEntity2.GetComponent<TransformComponent>().Translation={10.0f,2.0f,10.0f};
     	
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();
-        cameraEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 0.0f, 5.0f };
+        cameraEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 2.0f, 5.0f };
 
         m_SceneHierarchyPanel = SceneHierarchyPanel(m_ActiveScene);
     }
