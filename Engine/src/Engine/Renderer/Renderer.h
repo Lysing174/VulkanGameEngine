@@ -28,6 +28,17 @@ namespace Engine {
 		int EntityID;
 	};
 
+	// Frame info for 3DGS splat rendering (std140 compatible)
+	struct GaussianFrameInfo
+	{
+		glm::mat4 viewMatrix           = glm::mat4(1.0f);
+		glm::mat4 projectionMatrix     = glm::mat4(1.0f);
+		glm::vec4 cameraPosAndScale    = glm::vec4(0.0f); // xyz = camera position, w = splatScale
+		glm::vec4 focal                = glm::vec4(0.0f); // xy = focal length, zw = unused
+		glm::vec4 viewportInfo         = glm::vec4(0.0f); // xy = viewport size, zw = basisViewport
+		glm::vec4 extraInfo            = glm::vec4(0.0f); // x = alphaCullThreshold, yzw = unused
+	};
+
 	class Renderer
 	{
 	public:
@@ -67,12 +78,21 @@ namespace Engine {
 		static void RebuildGlobalGaussianSSBO();
 		static void CreateGaussianDescriptorSet();
 
+		// 3DGS: GPU sorting
+		static void SortGaussiansOnGPU();
+		static void CreateGaussianSplatBuffers();
+		static void CreateGaussianSortPipelines();
+		static void CreateGaussianSortDescriptorSets();
+		static void DestroyGaussianSortResources();
+
 	private:
 		static API s_API;
 
 		struct SceneData
 		{
 			glm::mat4 ViewProjectionMatrix;
+			glm::mat4 ViewMatrix;
+			glm::mat4 ProjectionMatrix;
 			glm::vec3 CameraPosition;
 			glm::vec3 CameraForward;
 		};
@@ -89,5 +109,59 @@ namespace Engine {
 
 		// Gaussian DescriptorSet (depth texture + global SSBO, bind once per frame)
 		static VkDescriptorSet s_GaussianDescriptorSet;
-	};
+
+		// 3DGS Splat: FrameInfo UBO + sorted indices SSBO
+		static VkBuffer s_FrameInfoUBO;
+		static VkDeviceMemory s_FrameInfoUBOMemory;
+		static GaussianFrameInfo s_FrameInfoData;
+		static VkDescriptorSet s_GaussianSplatDescriptorSet;
+
+		// 3DGS GPU Sort: distance/keys + indices/values (ping-pong)
+		static VkBuffer s_DistancesBuffer[2];
+		static VkDeviceMemory s_DistancesBufferMemory[2];
+		static VkBuffer s_IndicesBuffer[2];
+		static VkDeviceMemory s_IndicesBufferMemory[2];
+
+		// 3DGS GPU Sort: histogram buffers
+		static VkBuffer s_GlobalHistogramBuffer;
+		static VkDeviceMemory s_GlobalHistogramBufferMemory;
+		static VkBuffer s_PartitionHistogramBuffer;
+		static VkDeviceMemory s_PartitionHistogramBufferMemory;
+
+		// 3DGS GPU Sort: compute pipelines + descriptor sets
+		static VkPipeline s_DistComputePipeline;
+		static VkPipelineLayout s_DistComputePipelineLayout;
+		static VkDescriptorSetLayout s_DistDescriptorSetLayout;
+		static VkDescriptorSet s_DistDescriptorSets[2]; // per frame in flight
+
+		static VkPipeline s_UpsweepPipeline;
+		static VkPipelineLayout s_UpsweepPipelineLayout;
+		static VkDescriptorSetLayout s_UpsweepDescriptorSetLayout;
+		static VkDescriptorSet s_UpsweepDescriptorSets[2]; // [0]=read buf0, [1]=read buf1
+
+		static VkPipeline s_SpinePipeline;
+		static VkPipelineLayout s_SpinePipelineLayout;
+		static VkDescriptorSetLayout s_SpineDescriptorSetLayout;
+		static VkDescriptorSet s_SpineDescriptorSet;
+
+		static VkPipeline s_DownsweepPipeline;
+		static VkPipelineLayout s_DownsweepPipelineLayout;
+		static VkDescriptorSetLayout s_DownsweepDescriptorSetLayout;
+		static VkDescriptorSet s_DownsweepDescriptorSets[2]; // [0]=in buf0 out buf1, [1]=in buf1 out buf0
+
+		// Sorted indices SSBO (for GaussianSplat.vert to read)
+		// After sorting, the "values" buffer contains the sorted indices
+		// We point the GaussianSplat descriptor to the correct indices buffer
+		static uint32_t s_CurrentSortBuffer; // 0 or 1 (ping-pong)
+
+        // Model transform SSBO: one mat4 per registered model, updated every frame
+        static VkBuffer s_ModelTransformSSBO;
+        static VkDeviceMemory s_ModelTransformSSBOMemory;
+
+        // Sort cache: skip re-sorting when nothing changed
+        static bool s_SortCacheValid;
+        static glm::mat4 s_PrevViewMatrix;
+        static glm::mat4 s_PrevProjectionMatrix;
+        static std::vector<glm::mat4> s_PrevModelTransforms;
+    };
 }

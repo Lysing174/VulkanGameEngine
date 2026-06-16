@@ -1,0 +1,67 @@
+#version 460
+
+// Radix Sort - Upsweep Phase
+// Each workgroup processes a partition of elements and builds:
+//   1. Local histogram (in shared memory)
+//   2. Partition histogram (in global memory)
+//   3. Adds to global histogram (atomic)
+
+layout(local_size_x = 512) in;
+
+layout(push_constant) uniform PushConstants
+{
+    uint passNum;       // 0, 1, 2, 3 (which 8-bit chunk of the key)
+    uint elementCount;
+    uint pad0;
+    uint pad1;
+};
+
+layout(set = 0, binding = 0, std430) readonly buffer KeysIn
+{
+    uint keysIn[];
+};
+
+layout(set = 0, binding = 1, std430) buffer GlobalHistogram
+{
+    uint globalHistogram[];  // [passNum * 256 + digit] = count
+};
+
+layout(set = 0, binding = 2, std430) buffer PartitionHistogram
+{
+    uint partitionHistogram[];  // [workgroupId * 256 + digit] = count
+};
+
+shared uint localHist[256];
+
+void main()
+{
+    uint localId = gl_LocalInvocationID.x;
+    uint workgroupId = gl_WorkGroupID.x;
+    uint partitionSize = 512; // matches local_size_x
+    uint baseIdx = workgroupId * partitionSize;
+
+    // Initialize local histogram
+    if (localId < 256)
+        localHist[localId] = 0;
+    barrier();
+
+    // Count elements in this partition
+    uint myIdx = baseIdx + localId;
+    if (myIdx < elementCount)
+    {
+        uint key = keysIn[myIdx];
+        uint digit = (key >> (passNum * 8u)) & 0xFFu;
+        atomicAdd(localHist[digit], 1u);
+    }
+    barrier();
+
+    // Write to partition histogram
+    if (localId < 256)
+    {
+        uint count = localHist[localId];
+        partitionHistogram[workgroupId * 256 + localId] = count;
+        // Atomically add to global histogram
+        if (count > 0u)
+            atomicAdd(globalHistogram[passNum * 256 + localId], count);
+    }
+}

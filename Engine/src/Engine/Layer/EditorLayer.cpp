@@ -15,10 +15,13 @@ namespace Engine {
     EditorLayer::EditorLayer()
         : Layer("EditorLayer")
     {
+        
     }
 
     void EditorLayer::OnAttach()
     {
+    	m_LastFrameTime = std::chrono::high_resolution_clock::now();
+    	
         m_EditorCamera = EditorCamera(45.0f, 1.778f, 0.1f, 1000.0f);
 
         m_CubeMesh = std::make_shared<Mesh>(Mesh::CreateCube());
@@ -48,27 +51,30 @@ namespace Engine {
         auto& modelMaterials = houseModel.GetMaterials();
 		houseEntity.AddComponent<MeshRendererComponent>(modelMaterials);
     	
-    	Entity nanosuitEntity = m_ActiveScene->CreateEntity("Nanosuit");
-    	Model nanosuitModel = Model(NANOSUIT_PATH, shader);
-    	nanosuitEntity.AddComponent<MeshFilterComponent>(nanosuitModel.GetMesh());
-    	auto& nanosuitMaterials = nanosuitModel.GetMaterials();
-    	nanosuitEntity.AddComponent<MeshRendererComponent>(nanosuitMaterials);
-    	nanosuitEntity.GetComponent<TransformComponent>().Translation={-10.0f,0.0f,10.0f};
+    	// Entity nanosuitEntity = m_ActiveScene->CreateEntity("Nanosuit");
+    	// Model nanosuitModel = Model(NANOSUIT_PATH, shader);
+    	// nanosuitEntity.AddComponent<MeshFilterComponent>(nanosuitModel.GetMesh());
+    	// auto& nanosuitMaterials = nanosuitModel.GetMaterials();
+    	// nanosuitEntity.AddComponent<MeshRendererComponent>(nanosuitMaterials);
+    	// nanosuitEntity.GetComponent<TransformComponent>().Translation={-10.0f,0.0f,10.0f};
 
 
     	
-    	auto gaussianShader=Renderer::GetShaderLibrary()->Get("Gaussian.vert.spv");
+    	auto gaussianShader=Renderer::GetShaderLibrary()->Get("GaussianSplat.vert.spv");
     	gaussianShader->CreatePipeline(nullptr, "Gaussian");
     	Entity gaussianEntity=m_ActiveScene->CreateEntity("Gaussian");
     	auto gaussianModel=GaussianModel::Create("gaussians/plant.ply");
     	gaussianEntity.AddComponent<GaussianComponent>(gaussianModel);
     	gaussianEntity.GetComponent<TransformComponent>().Translation={0.0f,2.0f,10.0f};
     	gaussianEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
+    	gaussianEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,3.1415926f};
+
     	
-    	Entity gaussianEntity2=m_ActiveScene->CreateEntity("Gaussian2");
-    	gaussianEntity2.AddComponent<GaussianComponent>(gaussianModel);
-    	gaussianEntity2.GetComponent<TransformComponent>().Translation={10.0f,2.0f,10.0f};
-    	
+    	// Entity gaussianEntity2=m_ActiveScene->CreateEntity("Gaussian2");
+    	// auto gaussianModel2=GaussianModel::Create("gaussians/car_street.ply");
+    	// gaussianEntity2.AddComponent<GaussianComponent>(gaussianModel2);
+    	// gaussianEntity2.GetComponent<TransformComponent>().Translation={10.0f,2.0f,10.0f};
+    	//
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();
         cameraEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 2.0f, 5.0f };
@@ -77,9 +83,26 @@ namespace Engine {
     }
 
     void EditorLayer::OnDetach() {}
-
+	void EditorLayer::OnFixedUpdate()
+    {
+    	
+    }
     void EditorLayer::OnUpdate()
     {
+    	auto now = std::chrono::high_resolution_clock::now();
+    	float dt = std::chrono::duration<float>(now - m_LastFrameTime).count();
+    	m_LastFrameTime = now;
+
+    	m_FrameTime = dt;
+    	m_FpsAccumulator += dt;
+    	m_FrameCount++;
+    	if (m_FpsAccumulator >= 0.5f)
+    	{
+    		m_Fps = m_FrameCount / m_FpsAccumulator;
+    		m_FrameCount = 0;
+    		m_FpsAccumulator = 0.0f;
+    	}
+
         // 1. 如果视口大小变了，通知 Scene (处理 ImGui 窗口缩放的情况)
         // if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && ...变了...) {
         //     m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
@@ -225,6 +248,9 @@ namespace Engine {
 #endif
 
 		//auto stats = Renderer2D::GetStats();
+		ImGui::Text("FPS: %.1f", m_Fps);
+		ImGui::Text("Frame Time: %.2f ms", m_FrameTime * 1000.0f);
+		ImGui::Separator();
 		ImGui::Text("Renderer Stats:( not ready yet)");
 		//ImGui::Text("Draw Calls: %d", stats.DrawCalls);
 		//ImGui::Text("Quads: %d", stats.QuadCount);

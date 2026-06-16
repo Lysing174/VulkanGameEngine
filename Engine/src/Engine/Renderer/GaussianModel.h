@@ -3,6 +3,7 @@
 #include "Engine/Renderer/Buffer.h"
 #include <happly.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <vector>
 #include <string>
@@ -24,14 +25,15 @@ namespace Engine {
         std::vector<float> shRest;
     };
 
-    // GPU-side data (fixed-size, std430 compatible)
+    // GPU-side data for 3DGS splat rendering (fixed-size, std430 compatible)
+    // Precomputed: color (from SH DC + sigmoid opacity), 3D covariance (from scale + rotation)
     struct GaussianDataGPU
     {
-        glm::vec3 position;  float _pad0;
-        glm::vec3 normal;    float _pad1;
-        glm::vec3 shDC;     float opacity;
-        glm::vec3 scale;    float _pad2;
-        glm::vec4 rotation; // w, x, y, z
+        glm::vec4 posAndOpacity;   // xyz = position, w = sigmoid(opacity)
+        glm::vec4 color;           // rgb = SH DC color, w = unused
+        float cov3d[6];            // symmetric 3x3 upper triangle: M00,M01,M02,M11,M12,M22
+        uint32_t modelIndex;       // index into model transform SSBO
+        float _pad1;               // padding to 64 bytes
     };
 
     class GaussianModel : public std::enable_shared_from_this<GaussianModel>
@@ -50,6 +52,10 @@ namespace Engine {
         void SetGlobalOffset(uint32_t offset) { m_GlobalOffset = offset; }
         bool IsRegistered() const { return m_GlobalOffset != UINT32_MAX; }
 
+        // Model index into the ModelTransform SSBO (assigned by Renderer)
+        uint32_t GetModelIndex() const { return m_ModelIndex; }
+        void SetModelIndex(uint32_t index) { m_ModelIndex = index; }
+
         // Get flattened GPU data for uploading to the global SSBO
         std::vector<GaussianDataGPU> GetGPUData() const;
 
@@ -60,6 +66,7 @@ namespace Engine {
     private:
         std::vector<GaussianData> m_Gaussians;
         uint32_t m_GlobalOffset = UINT32_MAX; // offset into global SSBO (element index)
+        uint32_t m_ModelIndex = 0;            // index into ModelTransform SSBO
     };
 
 }

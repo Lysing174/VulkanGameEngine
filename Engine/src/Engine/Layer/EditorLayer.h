@@ -5,6 +5,7 @@
 #include "Engine/Renderer/EditorCamera.h"
 #include "Engine/Renderer/FrameBuffer.h"
 #include "Editor/SceneHierarchyPanel.h"
+#include <chrono>
 
 namespace Engine {
 
@@ -17,6 +18,7 @@ namespace Engine {
         virtual void OnAttach() override; 
         virtual void OnDetach() override; 
         virtual void OnUpdate() override; 
+        virtual void OnFixedUpdate() override;
         virtual void OnEvent(Event& e) override; 
         virtual void OnImGuiRender() override;
 
@@ -38,6 +40,12 @@ namespace Engine {
 
         glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };
 
+        // FPS
+        std::chrono::time_point<std::chrono::high_resolution_clock> m_LastFrameTime;
+        float m_Fps = 0.0f;
+        float m_FrameTime = 0.0f;
+        float m_FpsAccumulator = 0.0f;
+        int m_FrameCount = 0;
 
         SceneHierarchyPanel m_SceneHierarchyPanel;
     };

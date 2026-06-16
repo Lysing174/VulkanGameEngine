@@ -3,6 +3,7 @@
 #include "Engine/Renderer/Renderer.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 
 namespace Engine {
@@ -129,18 +130,42 @@ namespace Engine {
     {
         uint32_t count = GetGaussianCount();
         std::vector<GaussianDataGPU> gpuData(count);
+
+        const float SH_C0 = 0.28209479177387814f;
+
         for (uint32_t i = 0; i < count; i++)
         {
             const GaussianData& g = m_Gaussians[i];
-            gpuData[i].position = g.position;
-            gpuData[i]._pad0    = 0.0f;
-            gpuData[i].normal   = g.normal;
-            gpuData[i]._pad1    = 0.0f;
-            gpuData[i].shDC     = g.shDC;
-            gpuData[i].opacity  = g.opacity;
-            gpuData[i].scale    = g.scale;
-            gpuData[i]._pad2    = 0.0f;
-            gpuData[i].rotation = g.rotation;
+
+            // Position + sigmoid opacity
+            gpuData[i].posAndOpacity = glm::vec4(g.position, 1.0f / (1.0f + std::exp(-g.opacity)));
+
+            // SH DC → color: C0 = 0.28209479177, color = 0.5 + C0 * shDC
+            gpuData[i].color = glm::vec4(
+                glm::clamp(0.5f + SH_C0 * g.shDC, 0.0f, 1.0f),
+                0.0f
+            );
+
+            // Precompute 3D covariance from scale + rotation
+            // scale needs exp(), rotation needs normalize
+            glm::vec3 scale = { std::exp(g.scale.x), std::exp(g.scale.y), std::exp(g.scale.z) };
+            glm::quat rotation = glm::normalize(glm::quat(g.rotation.x, g.rotation.y, g.rotation.z, g.rotation.w));
+            // S = diag(scale), R = mat3(rotation), M = R * S, cov3D = M * M^T
+            glm::mat3 S = glm::mat3(glm::scale(glm::mat4(1.0f), scale));
+            glm::mat3 R = glm::mat3_cast(rotation);
+            glm::mat3 M = R * S;
+            glm::mat3 cov = M * glm::transpose(M);
+
+            // Store upper triangle of symmetric 3x3 matrix
+            gpuData[i].cov3d[0] = cov[0][0]; // M00
+            gpuData[i].cov3d[1] = cov[0][1]; // M01
+            gpuData[i].cov3d[2] = cov[0][2]; // M02
+            gpuData[i].cov3d[3] = cov[1][1]; // M11
+            gpuData[i].cov3d[4] = cov[1][2]; // M12
+            gpuData[i].cov3d[5] = cov[2][2]; // M22
+
+            gpuData[i].modelIndex = m_ModelIndex;
+            gpuData[i]._pad1 = 0.0f;
         }
         return gpuData;
     }

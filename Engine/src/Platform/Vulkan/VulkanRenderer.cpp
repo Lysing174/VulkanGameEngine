@@ -82,23 +82,8 @@ namespace Engine
 	}
 	void VulkanRenderer::DrawGaussian(const GaussianRenderCommandRequest& request)
 	{
-		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
-
-		// Push Constants: Transform matrix (64 字节, VS)
-		vkCmdPushConstants(
-			cmd,
-			Renderer::GetShaderLibrary()->Get("Gaussian.vert.spv")->GetPipelineLayout(),
-			VK_SHADER_STAGE_VERTEX_BIT,
-			0,
-			sizeof(glm::mat4),
-			&(request.Transform)
-		);
-
-		// POINT_LIST: 每个 Gaussian 中心绘制为一个点
-		// firstVertex = model 的全局偏移, gl_VertexIndex 自动从 offset 开始索引全局 SSBO
-		uint32_t vertexCount = request.Model ? request.Model->GetGaussianCount() : 0;
-		uint32_t firstVertex = request.Model ? request.Model->GetGlobalOffset() : 0;
-		if (vertexCount > 0)
-			vkCmdDraw(cmd, vertexCount, 1, firstVertex, 0);
+		// Note: Gaussian drawing is now handled directly in Renderer::FlushGaussianPass()
+		// via instanced quad draw with transforms from ModelTransform SSBO.
+		// This function is kept for API compatibility but is not actively used.
 	}
 }
