@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Model.h"
 #include "Engine/Renderer/Texture.h"
+#include "Platform/Vulkan/VulkanTexture.h"
 
 #include <glm/gtc/type_ptr.hpp> 
 
@@ -17,33 +18,78 @@ namespace Engine {
         return to;
     }
 
-    // 辅助函数：加载材质纹理
-    static std::shared_ptr<Texture2D> LoadMaterialTexture(aiMaterial* mat, aiTextureType type, const std::string& directory)
+    // 辅助函数：加载材质纹理（支持多类型fallback + 嵌入纹理）
+    // sRGB: true 用于颜色贴图 (albedo/emissive), false 用于数据贴图 (normal/ORM)
+    static std::shared_ptr<Texture2D> LoadMaterialTexture(
+        aiMaterial* mat, aiTextureType type,
+        const std::string& directory, const aiScene* scene, bool sRGB)
     {
         if (mat->GetTextureCount(type) > 0)
         {
             aiString path;
             if (mat->GetTexture(type, 0, &path) == AI_SUCCESS)
             {
-                std::string texPath = directory + "/" + std::string(path.C_Str());
-                // 替换反斜杠为正斜杠
+                std::string pathStr = path.C_Str();
+
+                // 嵌入纹理 (glTF Embedded): Assimp 以 "*0", "*1" 等命名
+                if (!pathStr.empty() && pathStr[0] == '*')
+                {
+                    int index = std::atoi(pathStr.c_str() + 1);
+                    if (scene && index >= 0 && index < (int)scene->mNumTextures)
+                    {
+                        aiTexture* aiTex = scene->mTextures[index];
+                        VkFormat vkFormat = sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+                        // mHeight == 0 表示压缩格式 (PNG/JPG), mWidth 是数据大小
+                        if (aiTex->mHeight == 0)
+                        {
+                            try {
+                                return Texture2D::CreateFromMemory(
+                                    aiTex->pcData, (size_t)aiTex->mWidth, sRGB);
+                            }
+                            catch (const std::exception& e) {
+                                EG_CORE_WARN("Failed to load embedded texture {0}: {1}", pathStr, e.what());
+                            }
+                        }
+                        else
+                        {
+                            // 未压缩的原始 RGBA 像素
+                            try {
+                                return std::make_shared<VulkanTexture2D>(
+                                    aiTex->mWidth, aiTex->mHeight, aiTex->pcData, vkFormat);
+                            }
+                            catch (const std::exception& e) {
+                                EG_CORE_WARN("Failed to load embedded RGBA texture {0}: {1}", pathStr, e.what());
+                            }
+                        }
+                    }
+                    return nullptr;
+                }
+
+                // 外部文件纹理
+                std::string texPath = directory + "/" + pathStr;
                 std::replace(texPath.begin(), texPath.end(), '\\', '/');
                 try {
-                    return Texture2D::Create(texPath);
+                    return Texture2D::Create(texPath, sRGB);
                 }
                 catch (const std::exception& e) {
                     EG_CORE_WARN("Failed to load texture {0}: {1}", texPath, e.what());
-                    // 尝试备用目录 textures/
-                    std::string fallbackTexPath = "textures/" + std::string(path.C_Str());
-                    try {
-                        EG_CORE_INFO("Trying fallback path: {0}", fallbackTexPath);
-                        return Texture2D::Create(fallbackTexPath);
-                    }
-                    catch (const std::exception&) {
-                        // 备用也失败，返回 nullptr
-                    }
                 }
             }
+        }
+        return nullptr;
+    }
+
+    // 按优先级尝试多种纹理类型
+    static std::shared_ptr<Texture2D> LoadMaterialTexture(
+        aiMaterial* mat,
+        const std::vector<aiTextureType>& types,
+        const std::string& directory,
+        const aiScene* scene, bool sRGB)
+    {
+        for (aiTextureType type : types)
+        {
+            auto tex = LoadMaterialTexture(mat, type, directory, scene, sRGB);
+            if (tex) return tex;
         }
         return nullptr;
     }
@@ -75,7 +121,7 @@ namespace Engine {
         size_t lastSlash = path.find_last_of("/\\");
         m_Directory = (lastSlash != std::string::npos) ? path.substr(0, lastSlash) : "";
 
-        // 预处理材质 (一次性加载所有材质)
+        // 预处理材质 (一次性加载所有材质, 支持 OBJ/MTL 和 glTF PBR)
         if (scene->HasMaterials())
         {
             m_Materials.resize(scene->mNumMaterials);
@@ -84,30 +130,109 @@ namespace Engine {
                 aiMaterial* aiMat = scene->mMaterials[i];
                 auto material = std::make_shared<Material>(m_BaseShader);
 
-                // 加载漫反射纹理 ( diffuse map_Kd )
-                auto diffuseTexture = LoadMaterialTexture(aiMat, aiTextureType_DIFFUSE, m_Directory);
-                if (diffuseTexture)
+                material->BeginBatchUpdate();
+
+                // ----- Albedo / BaseColor -----
+                // glTF: aiTextureType_BASE_COLOR;  OBJ: aiTextureType_DIFFUSE
+                // sRGB=true: 颜色贴图需要硬件 sRGB→线性 转换
+                auto albedoTexture = LoadMaterialTexture(aiMat,
+                    { aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE }, m_Directory, scene, true);
+                if (albedoTexture)
                 {
-                    material->SetTexture("u_AlbedoMap", diffuseTexture);
+                    material->SetTexture("u_AlbedoMap", albedoTexture);
+                    material->SetHasAlbedoMap(true);
                 }
 
-                // 加载法线/凹凸贴图 ( map_Bump → aiTextureType_HEIGHT )
-                auto normalTexture = LoadMaterialTexture(aiMat, aiTextureType_HEIGHT, m_Directory);
-                if (!normalTexture)
-                    normalTexture = LoadMaterialTexture(aiMat, aiTextureType_NORMALS, m_Directory);
+                // ----- Normal Map -----
+                // glTF: aiTextureType_NORMAL_CAMERA;  OBJ: aiTextureType_NORMALS / HEIGHT
+                // sRGB=false: 法线贴图是向量数据，必须保持线性空间
+                auto normalTexture = LoadMaterialTexture(aiMat,
+                    { aiTextureType_NORMAL_CAMERA, aiTextureType_NORMALS, aiTextureType_HEIGHT }, m_Directory, scene, false);
                 if (normalTexture)
                 {
                     material->SetTexture("u_NormalMap", normalTexture);
+                    material->SetUseNormalMap(true);
                 }
 
-                // 读取透明度 (MTL 的 d 值或 Tr 值)
+                // ----- Metallic-Roughness (ORM packed: R=AO, G=Roughness, B=Metallic) -----
+                // glTF: metallicRoughnessTexture maps to aiTextureType_METALNESS or UNKNOWN
+                // sRGB=false: ORM 贴图存的是标量数据，必须保持线性空间
+                auto ormTexture = LoadMaterialTexture(aiMat,
+                    { aiTextureType_METALNESS, aiTextureType_DIFFUSE_ROUGHNESS }, m_Directory, scene, false);
+                if (ormTexture)
+                {
+                    material->SetTexture("u_MetalRoughAO", ormTexture);
+                    material->SetHasMetalRoughnessMap(true);
+                    material->SetAOStrength(1.0f); 
+                }
+                
+                // 独立 AO 图（glTF occlusionTexture）
+                // sRGB=false: AO 贴图是标量数据
+                auto aoTexture = LoadMaterialTexture(aiMat,
+                    { aiTextureType_LIGHTMAP }, m_Directory, scene, false);
+                if (aoTexture && !ormTexture)  // ORM 已包含 AO 时不重复设置
+                {
+                    material->SetTexture("u_AOMap", aoTexture);
+                    material->SetAOStrength(1.0f);
+                }
+
+                // Emissive texture
+                // sRGB=true: 自发光颜色贴图需要硬件 sRGB→线性 转换
+                auto emissiveTexture = LoadMaterialTexture(aiMat,
+                    { aiTextureType_EMISSIVE }, m_Directory, scene, true);
+                if (emissiveTexture)
+                {
+                    material->SetTexture("u_EmissiveMap", emissiveTexture);
+                    material->SetHasEmissiveMap(true);
+                }
+
+                // ----- PBR Material Factors (from glTF or MTL) -----
+
+                // Base Color Factor
+                aiColor4D baseColor;
+                if (AI_SUCCESS == aiMat->Get(AI_MATKEY_BASE_COLOR, baseColor))
+                {
+                    material->SetAlbedoColor(glm::vec4(baseColor.r, baseColor.g, baseColor.b, baseColor.a));
+                }
+                else if (AI_SUCCESS == aiMat->Get(AI_MATKEY_COLOR_DIFFUSE, baseColor))
+                {
+                    // OBJ/MTL fallback
+                    material->SetAlbedoColor(glm::vec4(baseColor.r, baseColor.g, baseColor.b, baseColor.a));
+                }
+
+                // Metallic Factor
+                float metallic = 0.0f;
+                if (AI_SUCCESS == aiMat->Get(AI_MATKEY_METALLIC_FACTOR, metallic))
+                {
+                    material->SetMetalness(metallic);
+                }
+
+                // Roughness Factor
+                float roughness = 0.5f;
+                if (AI_SUCCESS == aiMat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness))
+                {
+                    material->SetRoughness(roughness);
+                }
+
+                // Emissive Factor (glTF)
+                aiColor3D emissiveColor(0.0f, 0.0f, 0.0f);
+                if (AI_SUCCESS == aiMat->Get(AI_MATKEY_COLOR_EMISSIVE, emissiveColor))
+                {
+                    float emissiveIntensity = 1.0f;
+                    aiMat->Get(AI_MATKEY_EMISSIVE_INTENSITY, emissiveIntensity);
+                    material->SetEmissive(emissiveIntensity, glm::vec3(emissiveColor.r, emissiveColor.g, emissiveColor.b));
+                }
+
+                // Opacity
                 float opacity = 1.0f;
                 if (AI_SUCCESS == aiMat->Get(AI_MATKEY_OPACITY, opacity))
                 {
-                    glm::vec4 color = material->GetColor();
-                    color.a = opacity;
-                    material->SetAlbedoColor(color);
+                    glm::vec4 col = material->GetColor();
+                    col.a = opacity;
+                    material->SetAlbedoColor(col);
                 }
+
+                material->EndBatchUpdate();
 
                 m_Materials[i] = material;
             }
@@ -158,6 +283,13 @@ namespace Engine {
                 vertex.texCoord = { mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y };
             else
                 vertex.texCoord = { 0.0f, 0.0f };
+
+            // Read tangent from Assimp (aiProcess_CalcTangentSpace already computed it)
+            // Assimp stores handedness in mBitangents, not tangent.w; we cross-product reconstruct B later
+            if (mesh->HasTangentsAndBitangents())
+                vertex.tangent = { mesh->mTangents[i].x, mesh->mTangents[i].y, mesh->mTangents[i].z };
+            else
+                vertex.tangent = { 1.0f, 0.0f, 0.0f };
 
             m_GlobalVertices.push_back(vertex);
         }

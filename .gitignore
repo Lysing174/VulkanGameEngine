@@ -5,6 +5,9 @@
 *.vcxproj.user
 *.vcxproj.filters
 
+# 模型文件
+*.ply
+
 # 输出
 bin/
 bin-int/

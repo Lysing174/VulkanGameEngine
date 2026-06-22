@@ -147,13 +147,24 @@ namespace Engine {
 
     void Material::UploadUniformBuffer()
     {
-        if (m_UniformBuffer)
-        {
-            void* data;
-            vkMapMemory(VulkanContext::Get()->GetDevice(), m_UniformBufferMemory, 0, sizeof(m_UniformData), 0, &data);
-            memcpy(data, &m_UniformData, sizeof(m_UniformData));
-            vkUnmapMemory(VulkanContext::Get()->GetDevice(), m_UniformBufferMemory);
-        }
+        if (m_BatchUpdate || !m_UniformBuffer)
+            return;
+
+        void* data;
+        vkMapMemory(VulkanContext::Get()->GetDevice(), m_UniformBufferMemory, 0, sizeof(m_UniformData), 0, &data);
+        memcpy(data, &m_UniformData, sizeof(m_UniformData));
+        vkUnmapMemory(VulkanContext::Get()->GetDevice(), m_UniformBufferMemory);
+    }
+
+    void Material::BeginBatchUpdate()
+    {
+        m_BatchUpdate = true;
+    }
+
+    void Material::EndBatchUpdate()
+    {
+        m_BatchUpdate = false;
+        UploadUniformBuffer();
     }
 
     void Material::SetTexture(const std::string& textureTypeName, const std::shared_ptr<Texture2D> texture)
@@ -322,9 +333,39 @@ namespace Engine {
     void Material::SetUseNormalMap(bool use)
     {
         int useInt = use ? 1 : 0;
-        if (m_UniformData.UseNormalMap != useInt)
+        if (m_UniformData.HasNormalMap != useInt)
         {
-            m_UniformData.UseNormalMap = useInt;
+            m_UniformData.HasNormalMap = useInt;
+            UploadUniformBuffer();
+        }
+    }
+
+    void Material::SetHasAlbedoMap(bool has)
+    {
+        int hasInt = has ? 1 : 0;
+        if (m_UniformData.HasAlbedoMap != hasInt)
+        {
+            m_UniformData.HasAlbedoMap = hasInt;
+            UploadUniformBuffer();
+        }
+    }
+
+    void Material::SetHasMetalRoughnessMap(bool has)
+    {
+        int hasInt = has ? 1 : 0;
+        if (m_UniformData.HasMetalRoughnessMap != hasInt)
+        {
+            m_UniformData.HasMetalRoughnessMap = hasInt;
+            UploadUniformBuffer();
+        }
+    }
+    
+    void Material::SetHasEmissiveMap(bool has)
+    {
+        int hasInt = has ? 1 : 0;
+        if (m_UniformData.HasEmissiveMap != hasInt)
+        {
+            m_UniformData.HasEmissiveMap = hasInt;
             UploadUniformBuffer();
         }
     }

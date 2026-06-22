@@ -177,6 +177,7 @@ namespace Engine {
 		glm::vec3 pos;
 		glm::vec3 normal;
 		glm::vec2 texCoord;
+		glm::vec3 tangent;
 		static BufferLayout m_layout;
 
 		static std::shared_ptr<BufferLayout>  GetLayout() {
@@ -184,7 +185,7 @@ namespace Engine {
 		}
 
 		bool operator==(const MeshVertex& other) const {
-			return pos == other.pos && normal == other.normal && texCoord == other.texCoord;
+			return pos == other.pos && normal == other.normal && texCoord == other.texCoord && tangent == other.tangent;
 		}
 
 	};
@@ -219,7 +220,8 @@ namespace std
 		size_t operator()(Engine::MeshVertex const& vertex) const {
 			return ((hash<glm::vec3>()(vertex.pos) ^
 				(hash<glm::vec3>()(vertex.normal) << 1)) >> 1) ^
-				(hash<glm::vec2>()(vertex.texCoord) << 1);
+				(hash<glm::vec2>()(vertex.texCoord) << 1) ^
+				(hash<glm::vec3>()(vertex.tangent) << 2);
 		}
 	};
 	

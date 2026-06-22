@@ -4,10 +4,14 @@
 #include "Engine/Scene/Components.h" 
 #include "Engine/Events/ApplicationEvent.h"
 #include "Engine/Renderer/Model.h"
+#include "Platform/Vulkan/VulkanContext.h"
 #include "imgui.h"
 
-const std::string NANOSUIT_PATH = "models/nanosuit/nanosuit.obj";
-const std::string MODEL_PATH = "models/cottage_obj.obj";
+// glTF PBR model paths (replace with your own .gltf/.glb files)
+const std::string NANOSUIT_PATH = "models/nanosuit/nanosuit.gltf";
+const std::string MODEL_PATH = "models/pbr_porche/scene.gltf";
+
+//const std::string MODEL_PATH = "models/helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
 //const std::string TEXTURE_PATH = "models/cottage_diffuse.png";
 
 namespace Engine {
@@ -34,6 +38,9 @@ namespace Engine {
         m_CubeEntity = m_ActiveScene->CreateEntity("Red Cube");
         m_CubeEntity.AddComponent<MeshFilterComponent>(m_CubeMesh);
         m_CubeEntity.AddComponent<MeshRendererComponent>(m_RedMaterial);
+
+        // Set MSAA samples before creating pipeline (must match render pass sample count)
+        shader->SetSamples(VulkanContext::Get()->GetMSAASamples());
         shader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout(), "Mesh");
         auto& transform = m_CubeEntity.GetComponent<TransformComponent>();
         transform.Translation = { 0.0f, 30.0f, 0.0f };
@@ -78,6 +85,12 @@ namespace Engine {
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();
         cameraEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 2.0f, 5.0f };
+
+        // Create a point light entity
+        Entity pointLightEntity = m_ActiveScene->CreateEntity("Point Light");
+        pointLightEntity.AddComponent<PointLightComponent>(
+            glm::vec3(1.0f, 0.95f, 0.8f), 500.0f, 100.0f);
+        pointLightEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 0.0f, -5.0f };
 
         m_SceneHierarchyPanel = SceneHierarchyPanel(m_ActiveScene);
     }

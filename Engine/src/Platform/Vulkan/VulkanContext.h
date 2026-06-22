@@ -93,7 +93,10 @@ namespace Engine {
         }
 
         struct UniformBufferObject {
-            glm::mat4 projView;
+            glm::mat4 projView;             // offset 0,  64 bytes
+            glm::vec4 cameraPosition;        // offset 64, 16 bytes (xyz = camera world pos)
+            glm::vec4 lightPosition;         // offset 80, 16 bytes (xyz = light world pos)
+            glm::vec4 lightColor;            // offset 96, 16 bytes (rgb = color, a = intensity)
         };
 
 
@@ -109,12 +112,16 @@ namespace Engine {
         void EndRenderPass();
         void DrawImGui();
 
+        void UpdateGlobalLightUniforms(const glm::vec4& cameraPos, const glm::vec4& lightPos, const glm::vec4& lightColor);
+
         void OnWindowResized(int width, int height);
 
-        void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-        void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
-        uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-        void CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+		void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+		void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+		void CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+		void CreateImage(uint32_t width, uint32_t height, VkSampleCountFlagBits samples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+		VkSampleCountFlagBits GetMaxUsableSampleCount();
         void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
         void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
         VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
@@ -143,8 +150,10 @@ namespace Engine {
         VkDescriptorSet GetCurrentDescriptorSet() { return descriptorSets[currentImageIndex]; }
         VkDescriptorSetLayout GetGlobalDescriptorSetLayout() { return descriptorSetLayout; }
         VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
-        VkImageView GetDepthImageView() { return depthImageView; }
-        VkSampler GetDepthSampler() { return depthSampler; }
+		VkImageView GetDepthImageView() { return depthImageView; }
+		VkSampler GetDepthSampler() { return depthSampler; }
+		VkSampleCountFlagBits GetMSAASamples() const { return m_MSAASamples; }
+		void SetMSAASamples(VkSampleCountFlagBits samples) { m_MSAASamples = samples; }
 
         static VulkanContext* Get() { return s_Instance; }
 
@@ -164,11 +173,20 @@ namespace Engine {
 
         std::vector<VkBuffer> uniformBuffers;
         std::vector<VkDeviceMemory> uniformBuffersMemory;
-        VkImage depthImage;
-        VkDeviceMemory depthImageMemory;
-        VkImageView depthImageView;
-        VkFormat depthImageFormat;
-        VkSampler depthSampler;  // 深度纹理采样器 (Gaussian shader 用)
+		VkImage depthImage;
+		VkDeviceMemory depthImageMemory;
+		VkImageView depthImageView;
+		VkFormat depthImageFormat;
+		VkSampler depthSampler;  // 深度纹理采样器 (Gaussian shader 用)
+
+		// MSAA resources
+		VkSampleCountFlagBits m_MSAASamples = VK_SAMPLE_COUNT_4_BIT;
+		VkImage m_ColorImageMSAA = VK_NULL_HANDLE;
+		VkDeviceMemory m_ColorImageMemoryMSAA = VK_NULL_HANDLE;
+		VkImageView m_ColorImageViewMSAA = VK_NULL_HANDLE;
+		VkImage m_DepthImageMSAA = VK_NULL_HANDLE;
+		VkDeviceMemory m_DepthImageMemoryMSAA = VK_NULL_HANDLE;
+		VkImageView m_DepthImageViewMSAA = VK_NULL_HANDLE;
 
         VkQueue graphicsQueue;
         VkQueue presentQueue;
@@ -207,8 +225,9 @@ namespace Engine {
         void createImageViews();
         void createDescriptorSetLayout();
         void createCommandPool();
-        void createDepthResources();
-        void createUniformBuffer();
+		void createDepthResources();
+		void createMSAAResources();
+		void createUniformBuffer();
         void createDescriptorPool();
         void createDescriptorSets();
         void createCommandBuffers();

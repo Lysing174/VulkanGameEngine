@@ -870,6 +870,15 @@ namespace Engine {
 		case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return;
 		case Renderer::API::Vulkan:
 			{
+				// Update light uniforms before mesh pass
+				{
+					auto context = VulkanContext::Get();
+					glm::vec4 cameraPos(s_SceneData.CameraPosition, 0.0f);
+					glm::vec4 lightPos(s_SceneData.LightPosition, 0.0f);
+					glm::vec4 lightCol(s_SceneData.LightColor, s_SceneData.LightIntensity);
+					context->UpdateGlobalLightUniforms(cameraPos, lightPos, lightCol);
+				}
+
 				VulkanRenderer::BeginMeshRenderPass(); 
 				FlushMeshPass();
 				VulkanRenderer::EndRenderPass();
@@ -928,6 +937,13 @@ namespace Engine {
         request.EntityID = entityID;
 
         s_GaussianRenderQueue.push_back(request);
+    }
+
+    void Renderer::SetPointLightData(const glm::vec3& position, const glm::vec3& color, float intensity)
+    {
+        s_SceneData.LightPosition = position;
+        s_SceneData.LightColor = color;
+        s_SceneData.LightIntensity = intensity;
     }
 
     void Renderer::FlushMeshPass()

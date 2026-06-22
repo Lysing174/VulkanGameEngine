@@ -145,6 +145,15 @@ namespace Engine {
 	{
 		Renderer::BeginScene(camera);
 
+		// Collect point light data (use first PointLightComponent found)
+		auto lightView = m_Registry.view<TransformComponent, PointLightComponent>();
+		for (auto entity : lightView)
+		{
+			auto [transform, light] = lightView.get<TransformComponent, PointLightComponent>(entity);
+			Renderer::SetPointLightData(transform.Translation, light.Color, light.Intensity);
+			break; // only first light for now
+		}
+
 		// Draw Meshes (Pass 1: 写颜色+深度)
 		auto meshView = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
 		for (auto entity : meshView)
@@ -216,11 +225,18 @@ namespace Engine {
 	{
 	}
 
+
+
 	// 注意：这里通常需要处理视口大小初始化，防止相机宽高比不对
 	template<>
 	void Scene::OnComponentAdded<CameraComponent>(Entity entity, CameraComponent& component)
 	{
 		if (m_ViewportWidth > 0 && m_ViewportHeight > 0)
 			component.Camera.SetViewportSize(m_ViewportWidth, m_ViewportHeight);
+	}
+
+	template<>
+	void Scene::OnComponentAdded<PointLightComponent>(Entity entity, PointLightComponent& component)
+	{
 	}
 }

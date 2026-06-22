@@ -16,7 +16,7 @@ namespace Engine
             if (!s_WhiteTexture) 
             {
                 uint32_t data = 0xffffffff; // 纯白 RGBA
-                s_WhiteTexture = std::make_shared<VulkanTexture2D>(1, 1, &data);
+                s_WhiteTexture = std::make_shared<VulkanTexture2D>(1, 1, &data, VK_FORMAT_R8G8B8A8_UNORM);
             }
             return s_WhiteTexture;
         }
@@ -33,20 +33,38 @@ namespace Engine
             if (!s_BlueTexture)
             {
                 uint32_t data = 0xffff8080; 
-                s_BlueTexture = std::make_shared<VulkanTexture2D>(1, 1, &data);
+                s_BlueTexture = std::make_shared<VulkanTexture2D>(1, 1, &data, VK_FORMAT_R8G8B8A8_UNORM);
             }
             return s_BlueTexture;
         }
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
         return nullptr;
     }
-    std::shared_ptr<Texture2D> Texture2D::Create(const std::string& path)
+    std::shared_ptr<Texture2D> Texture2D::Create(const std::string& path, bool sRGB)
     {
         switch (Renderer::GetAPI())
         {
         case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return nullptr;
         case Renderer::API::Vulkan:
-            return std::make_shared<VulkanTexture2D>(path);
+        {
+            VkFormat format = sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+            return std::make_shared<VulkanTexture2D>(path, format);
+        }
+        }
+        EG_CORE_ASSERT(false, "Unknown RendererAPI!");
+        return nullptr;
+    }
+
+    std::shared_ptr<Texture2D> Texture2D::CreateFromMemory(const void* data, size_t size, bool sRGB)
+    {
+        switch (Renderer::GetAPI())
+        {
+        case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return nullptr;
+        case Renderer::API::Vulkan:
+        {
+            VkFormat format = sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+            return std::make_shared<VulkanTexture2D>(data, size, format);
+        }
         }
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
         return nullptr;

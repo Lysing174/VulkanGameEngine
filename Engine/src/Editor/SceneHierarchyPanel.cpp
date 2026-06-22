@@ -256,6 +256,7 @@ namespace Engine {
 			//DisplayAddComponentEntry<ScriptComponent>("Script");
 			DisplayAddComponentEntry<MeshRendererComponent>("Mesh Renderer");
 			DisplayAddComponentEntry<MeshFilterComponent>("Mesh Filter");
+			DisplayAddComponentEntry<PointLightComponent>("Point Light");
 			//DisplayAddComponentEntry<Rigidbody2DComponent>("Rigidbody 2D");
 			//DisplayAddComponentEntry<BoxCollider2DComponent>("Box Collider 2D");
 			//DisplayAddComponentEntry<CircleCollider2DComponent>("Circle Collider 2D");
@@ -443,6 +444,13 @@ namespace Engine {
 					}
 					ImGui::TreePop();
 				}
+			});
+
+		DrawComponent<PointLightComponent>("Point Light", entity, [](auto& component)
+			{
+				ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
+				ImGui::DragFloat("Intensity", &component.Intensity, 0.1f, 0.0f, 100.0f);
+				ImGui::DragFloat("Range", &component.Range, 0.1f, 0.0f, 1000.0f);
 			});
 	}
 

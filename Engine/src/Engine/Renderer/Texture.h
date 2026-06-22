@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <string>
 #include <memory>
 
@@ -25,7 +25,8 @@ namespace Engine {
     class Texture2D : public Texture
     {
     public:
-        static std::shared_ptr<Texture2D> Create(const std::string& path);
+        static std::shared_ptr<Texture2D> Create(const std::string& path, bool sRGB);
+        static std::shared_ptr<Texture2D> CreateFromMemory(const void* data, size_t size, bool sRGB);
         static std::shared_ptr<Texture2D> GetWhiteTexture();
         static std::shared_ptr<Texture2D> GetBlueTexture();
 

@@ -61,6 +61,7 @@ namespace Engine {
 
 		static void SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<MeshRendererComponent>& rendererComponent, int entityID = -1);
 		static void SubmitGaussian(const glm::mat4& transform, const std::shared_ptr<GaussianModel>& model, int entityID = -1);
+		static void SetPointLightData(const glm::vec3& position, const glm::vec3& color, float intensity);
 
 		static API GetAPI() { return s_API; }
 		static std::shared_ptr<ShaderLibrary> GetShaderLibrary() { return s_ShaderLibrary; }
@@ -95,6 +96,11 @@ namespace Engine {
 			glm::mat4 ProjectionMatrix;
 			glm::vec3 CameraPosition;
 			glm::vec3 CameraForward;
+
+			// Point light data (collected from PointLightComponent)
+			glm::vec3 LightPosition = glm::vec3(5.0f, 10.0f, 5.0f);
+			glm::vec3 LightColor = glm::vec3(1.0f, 1.0f, 1.0f);
+			float LightIntensity = 20.0f;
 		};
 		static std::vector<MeshRenderCommandRequest> s_MeshRenderQueue;
 		static std::vector<GaussianRenderCommandRequest> s_GaussianRenderQueue;

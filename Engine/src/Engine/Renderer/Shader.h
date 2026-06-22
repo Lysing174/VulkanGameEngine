@@ -42,6 +42,7 @@ namespace Engine {
 		VkCullModeFlags CullMode        = VK_CULL_MODE_BACK_BIT;
 		VkFrontFace FrontFace           = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		bool HasVertexInput             = true;  // false = 无 VBO, 用 gl_VertexIndex 生成顶点
+		VkSampleCountFlagBits Samples   = VK_SAMPLE_COUNT_1_BIT;  // MSAA, VK_SAMPLE_COUNT_4_BIT etc.
 	};
 
 	// Shader 完整配置
@@ -86,7 +87,8 @@ namespace Engine {
 				{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_AlbedoMap"     },
 				{ 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_NormalMap"     },
 				{ 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_MetalRoughAO"  },
-				{ 3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_Material"      },
+				{ 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_EmissiveMap"  },
+				{ 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_Material"      },
 			};
 			config.PushConstantRanges = {
 				{ VK_SHADER_STAGE_VERTEX_BIT,   0,              sizeof(glm::mat4) },
@@ -201,6 +203,9 @@ namespace Engine {
 
 		// 获取 Shader 的配置
 		virtual const ShaderConfig& GetConfig() const = 0;
+
+		// 设置 MSAA 采样数 (必须在 CreatePipeline 之前调用)
+		virtual void SetSamples(VkSampleCountFlagBits samples) = 0;
 
 		// 按语义名查找 texture binding (兼容旧接口)
 		uint32_t GetTextureBinding(const std::string& textureName) const

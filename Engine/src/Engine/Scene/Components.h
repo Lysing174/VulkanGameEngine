@@ -102,4 +102,15 @@ namespace Engine {
 		GaussianComponent(const std::shared_ptr<Engine::GaussianModel>& gaussianModel)
 			: GaussianModel(gaussianModel) {}
 	};
+
+	struct PointLightComponent
+	{
+		glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
+		float Intensity = 10.0f;
+		float Range = 20.0f;
+
+		PointLightComponent() = default;
+		PointLightComponent(const glm::vec3& color, float intensity, float range)
+			: Color(color), Intensity(intensity), Range(range) {}
+	};
 }

@@ -82,11 +82,26 @@ namespace Engine {
         renderPassInfo.renderArea.offset = { 0, 0 };
         renderPassInfo.renderArea.extent = swapChainExtent;
 
-        std::array<VkClearValue, 2> clearValues = {};
-        clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-        clearValues[1].depthStencil = { 1.0f, 0 };
-        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-        renderPassInfo.pClearValues = clearValues.data();
+        if (m_MSAASamples != VK_SAMPLE_COUNT_1_BIT)
+        {
+            // MSAA: [MSAA Color, Resolve Color, MSAA Depth, Resolve Depth(1x)] — 4 clear values
+            //   Resolve & Resolve Depth attachments have loadOp=DONT_CARE, clear values are ignored but must be present
+            std::array<VkClearValue, 4> clearValues = {};
+            clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };   // MSAA Color
+            clearValues[1].color = { 0.0f, 0.0f, 0.0f, 1.0f };   // Resolve Color (ignored, DONT_CARE)
+            clearValues[2].depthStencil = { 1.0f, 0 };             // MSAA Depth
+            clearValues[3].depthStencil = { 1.0f, 0 };             // Resolve Depth (ignored, DONT_CARE)
+            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+            renderPassInfo.pClearValues = clearValues.data();
+        }
+        else
+        {
+            std::array<VkClearValue, 2> clearValues = {};
+            clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+            clearValues[1].depthStencil = { 1.0f, 0 };
+            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+            renderPassInfo.pClearValues = clearValues.data();
+        }
 
         vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -186,15 +201,27 @@ namespace Engine {
         createSwapChain();
         depthImageFormat = findDepthFormat();
         createImageViews();
+
+        // Clamp MSAA to device maximum
+        VkSampleCountFlagBits maxSamples = GetMaxUsableSampleCount();
+        if (m_MSAASamples > maxSamples) m_MSAASamples = maxSamples;
+
         //createMeshRenderPass();
-        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
+        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), m_MSAASamples);
         //createGaussianRenderPass();
         renderPassesMap["Gaussian"]=std::make_shared<VulkanRenderPass>("Gaussian",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
         
         createDescriptorSetLayout();
         createCommandPool();
         createDepthResources();
-        renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView);
+        createMSAAResources();
+
+        if (m_MSAASamples != VK_SAMPLE_COUNT_1_BIT)
+            renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView,
+                                                        m_ColorImageViewMSAA, m_DepthImageViewMSAA);
+        else
+            renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView);
+
         renderPassesMap["Gaussian"]->createFramebuffers(swapChainExtent, swapChainImageViews, VK_NULL_HANDLE);
         createUniformBuffer();
         createDescriptorPool();
@@ -208,6 +235,14 @@ namespace Engine {
             renderPass.second->cleanup();
         }
         
+        // Destroy MSAA resources
+        if (m_ColorImageViewMSAA != VK_NULL_HANDLE) { vkDestroyImageView(device, m_ColorImageViewMSAA, nullptr); m_ColorImageViewMSAA = VK_NULL_HANDLE; }
+        if (m_ColorImageMSAA != VK_NULL_HANDLE)      { vkDestroyImage(device, m_ColorImageMSAA, nullptr); m_ColorImageMSAA = VK_NULL_HANDLE; }
+        if (m_ColorImageMemoryMSAA != VK_NULL_HANDLE) { vkFreeMemory(device, m_ColorImageMemoryMSAA, nullptr); m_ColorImageMemoryMSAA = VK_NULL_HANDLE; }
+        if (m_DepthImageViewMSAA != VK_NULL_HANDLE)   { vkDestroyImageView(device, m_DepthImageViewMSAA, nullptr); m_DepthImageViewMSAA = VK_NULL_HANDLE; }
+        if (m_DepthImageMSAA != VK_NULL_HANDLE)        { vkDestroyImage(device, m_DepthImageMSAA, nullptr); m_DepthImageMSAA = VK_NULL_HANDLE; }
+        if (m_DepthImageMemoryMSAA != VK_NULL_HANDLE)  { vkFreeMemory(device, m_DepthImageMemoryMSAA, nullptr); m_DepthImageMemoryMSAA = VK_NULL_HANDLE; }
+
         vkDestroySampler(device, depthSampler, nullptr);
         vkDestroyImageView(device, depthImageView, nullptr);
         vkDestroyImage(device, depthImage, nullptr);
@@ -228,12 +263,19 @@ namespace Engine {
         createSwapChain();
         createImageViews();
         //createMeshRenderPass();
-        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
+        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), m_MSAASamples);
         //createGaussianRenderPass();
         renderPassesMap["Gaussian"]=std::make_shared<VulkanRenderPass>("Gaussian",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device));
 
         createDepthResources();
-        renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView);
+        createMSAAResources();
+
+        if (m_MSAASamples != VK_SAMPLE_COUNT_1_BIT)
+            renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView,
+                                                        m_ColorImageViewMSAA, m_DepthImageViewMSAA);
+        else
+            renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView);
+
         renderPassesMap["Gaussian"]->createFramebuffers(swapChainExtent, swapChainImageViews, VK_NULL_HANDLE);
         createCommandBuffers();
 
@@ -284,7 +326,7 @@ namespace Engine {
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.apiVersion = VK_API_VERSION_1_2;
 
         //创建实例所需信息
         VkInstanceCreateInfo createInfo = {};
@@ -706,7 +748,7 @@ namespace Engine {
             glfwGetFramebufferSize(window, &width, &height);
             //glfwGetWindowSize(window, &width, &height);
 
-            VkExtent2D actualExtent = { width, height };
+            VkExtent2D actualExtent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
 
             actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
             actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
@@ -746,6 +788,10 @@ namespace Engine {
     }
 
     void VulkanContext::CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
+        CreateImage(width, height, VK_SAMPLE_COUNT_1_BIT, format, tiling, usage, properties, image, imageMemory);
+    }
+
+    void VulkanContext::CreateImage(uint32_t width, uint32_t height, VkSampleCountFlagBits samples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
         VkImageCreateInfo imageInfo = {};
         imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -758,7 +804,7 @@ namespace Engine {
         imageInfo.tiling = tiling;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.usage = usage;
-        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.samples = samples;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS) {
@@ -880,7 +926,7 @@ namespace Engine {
     }
     void VulkanContext::createDepthResources() {
         VkFormat depthFormat = findDepthFormat();
-        // 深度附件 + 可采样 (Gaussian shader 直接采样，无需额外 depthSampledImage)
+        // 深度附件 + 可采样 (MSAA depth resolve 目标, Gaussian shader 直接采样)
         CreateImage(swapChainExtent.width, swapChainExtent.height, depthFormat, VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
@@ -912,6 +958,97 @@ namespace Engine {
             VK_IMAGE_TILING_OPTIMAL,
             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
         );
+    }
+
+    VkSampleCountFlagBits VulkanContext::GetMaxUsableSampleCount() {
+        VkPhysicalDeviceProperties physicalDeviceProperties;
+        vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
+
+        VkSampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts &
+                                     physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+
+        if (counts & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
+        if (counts & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
+        if (counts & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
+        if (counts & VK_SAMPLE_COUNT_8_BIT)  { return VK_SAMPLE_COUNT_8_BIT;  }
+        if (counts & VK_SAMPLE_COUNT_4_BIT)  { return VK_SAMPLE_COUNT_4_BIT;  }
+        if (counts & VK_SAMPLE_COUNT_2_BIT)  { return VK_SAMPLE_COUNT_2_BIT;  }
+        return VK_SAMPLE_COUNT_1_BIT;
+    }
+
+    void VulkanContext::createMSAAResources() {
+        VkSampleCountFlagBits maxSamples = GetMaxUsableSampleCount();
+        if (m_MSAASamples > maxSamples) {
+            EG_CORE_WARN("Requested MSAA x{0} exceeds device max x{1}, clamping", (int)m_MSAASamples, (int)maxSamples);
+            m_MSAASamples = maxSamples;
+        }
+        if (m_MSAASamples == VK_SAMPLE_COUNT_1_BIT) {
+            return; // MSAA disabled
+        }
+
+        // MSAA Color Image
+        CreateImage(swapChainExtent.width, swapChainExtent.height, m_MSAASamples,
+            swapChainImageFormat, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_ColorImageMSAA, m_ColorImageMemoryMSAA);
+        m_ColorImageViewMSAA = CreateImageView(m_ColorImageMSAA, swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
+
+        // MSAA Depth Image (separate from 1x depth — resolves to 1x depth is not natively supported)
+        VkFormat depthFormat = findDepthFormat();
+        CreateImage(swapChainExtent.width, swapChainExtent.height, m_MSAASamples,
+            depthFormat, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_DepthImageMSAA, m_DepthImageMemoryMSAA);
+        m_DepthImageViewMSAA = CreateImageView(m_DepthImageMSAA, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        // Transition layouts
+        VkCommandBuffer cmd = BeginSingleTimeCommands();
+
+        // Transition color
+        VkImageMemoryBarrier colorBarrier = {};
+        colorBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        colorBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        colorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        colorBarrier.image = m_ColorImageMSAA;
+        colorBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        colorBarrier.subresourceRange.baseMipLevel = 0;
+        colorBarrier.subresourceRange.levelCount = 1;
+        colorBarrier.subresourceRange.baseArrayLayer = 0;
+        colorBarrier.subresourceRange.layerCount = 1;
+        colorBarrier.srcAccessMask = 0;
+        colorBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+
+        // Transition depth
+        VkImageMemoryBarrier depthBarrier = {};
+        depthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthBarrier.image = m_DepthImageMSAA;
+        depthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthBarrier.subresourceRange.baseMipLevel = 0;
+        depthBarrier.subresourceRange.levelCount = 1;
+        depthBarrier.subresourceRange.baseArrayLayer = 0;
+        depthBarrier.subresourceRange.layerCount = 1;
+        depthBarrier.srcAccessMask = 0;
+        depthBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &depthBarrier);
+
+        // 1x depth 无需在此处理 — Mesh render pass 通过 depthStencilResolve
+        // 自动将 MSAA depth resolve 到 1x depth，finalLayout 已在
+        // render pass attachment 中设为 DEPTH_STENCIL_READ_ONLY_OPTIMAL
+
+        EndSingleTimeCommands(cmd);
     }
     VkFormat VulkanContext::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
         for (VkFormat format : candidates) {
@@ -971,7 +1108,7 @@ namespace Engine {
         uboLayoutBinding.binding = 0;
         uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
 
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
@@ -1175,12 +1312,22 @@ namespace Engine {
     void VulkanContext::updateGlobalUniforms(glm::mat4 projView)
     {
         UniformBufferObject ubo{};
-
         ubo.projView = projView;
 
         void* data;
         vkMapMemory(device, uniformBuffersMemory[currentImageIndex], 0, sizeof(ubo), 0, &data);
         memcpy(data, &ubo, sizeof(ubo));
+        vkUnmapMemory(device, uniformBuffersMemory[currentImageIndex]);
+    }
+
+    void VulkanContext::UpdateGlobalLightUniforms(const glm::vec4& cameraPos, const glm::vec4& lightPos, const glm::vec4& lightColor)
+    {
+        void* data;
+        vkMapMemory(device, uniformBuffersMemory[currentImageIndex], 0, sizeof(UniformBufferObject), 0, &data);
+        UniformBufferObject* ubo = static_cast<UniformBufferObject*>(data);
+        ubo->cameraPosition = cameraPos;
+        ubo->lightPosition = lightPos;
+        ubo->lightColor = lightColor;
         vkUnmapMemory(device, uniformBuffersMemory[currentImageIndex]);
     }
 

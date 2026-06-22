@@ -17,11 +17,11 @@ namespace Engine {
         float AOStrength;        // AO 强度
 
         glm::vec4 EmissiveColor; // 自发光颜色
-
-        int UseNormalMap;        // 布尔值 (作为int传递)
+        
         int HasAlbedoMap;
         int HasNormalMap;
         int HasMetalRoughnessMap;
+        int HasEmissiveMap;
     };
     class Material
     {
@@ -40,7 +40,14 @@ namespace Engine {
         void SetEmissive(float intensity, const glm::vec3& color); // 方便起见传入 vec3
         void SetAOStrength(float value);
         void SetUseNormalMap(bool use);
+        void SetHasAlbedoMap(bool has);
+        void SetHasMetalRoughnessMap(bool has);
+        void SetHasEmissiveMap(bool has);
         void SetTexture(const std::string& textureTypeName, std::shared_ptr<Texture2D> texture);
+
+        // 批量更新：调用 Begin 后所有 setter 只写 CPU 侧数据，End 时一次性推到 GPU
+        void BeginBatchUpdate();
+        void EndBatchUpdate();
 
         glm::vec4 GetColor() const { return m_UniformData.AlbedoColor; }
         virtual uint32_t GetRendererID() const { return m_RendererID; }
@@ -65,5 +72,6 @@ namespace Engine {
         VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
         VkBuffer m_UniformBuffer;
         VkDeviceMemory m_UniformBufferMemory;
+        bool m_BatchUpdate = false;
     };
 }

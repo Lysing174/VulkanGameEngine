@@ -29,6 +29,7 @@ namespace Engine {
 
 		// 获取配置
 		virtual const ShaderConfig& GetConfig() const override { return m_Config; }
+		virtual void SetSamples(VkSampleCountFlagBits samples) override { m_Config.PipelineState.Samples = samples; }
 
 		// 获取 DescriptorSetLayout (创建 Material 时需要)
 		VkDescriptorSetLayout GetMaterialDescriptorSetLayout() const { return m_MaterialDescriptorSetLayout; }
