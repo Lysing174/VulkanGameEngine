@@ -32,10 +32,16 @@ namespace Engine {
 		/// </summary>
 		void End();
 
+		/// <summary>
+		/// 控制是否拦截输入事件。当 Scene viewport 获得焦点时设为 false，让相机旋转等操作穿透到下层。
+		/// </summary>
+		void SetBlockEvents(bool block) { m_BlockEvents = block; }
+
 		static ImGuiContext* GetContext();
 
 	private:
 		float m_Time = 0.0f;
+		bool m_BlockEvents = true;
 
 		void SetDarkThemeColors();
 	};

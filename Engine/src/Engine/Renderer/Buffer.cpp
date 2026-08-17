@@ -66,5 +66,4 @@ namespace Engine {
 			{ Engine::ShaderDataType::Float2, "a_Texcoord" },
 			{ Engine::ShaderDataType::Float3, "a_Tangent" } };
 	
-	BufferLayout GaussianVertex::m_layout = { { Engine::ShaderDataType::Float3, "a_Position" }};
-}
+	}

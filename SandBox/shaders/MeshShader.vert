@@ -35,9 +35,6 @@ void main() {
     vec3 N = normalize(normalMatrix * inNormal);
     vec3 T = normalize(normalMatrix * inTangent);
 
-    // Re-orthogonalize T against N (Gram-Schmidt)
-    T = normalize(T - dot(T, N) * N);
-
     // Reconstruct B via cross product; Assimp stores handedness in mBitangents,
     // not tangent.w, so we don't need to read w — cross(N,T) is correct.
     vec3 B = cross(N, T);

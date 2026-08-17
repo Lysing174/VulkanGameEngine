@@ -50,7 +50,7 @@ namespace Engine {
 
 		ShaderConfig m_Config;
 
-		// 按 RenderPass 名缓存 Pipeline: "Mesh" → pipeline, "Gaussian" → pipeline
+		// 按 RenderPass 名缓存 Pipeline: "Mesh" → pipeline
 		std::unordered_map<std::string, VkPipeline> m_PipelineCache;
 		VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
 		VkDescriptorSetLayout m_MaterialDescriptorSetLayout;

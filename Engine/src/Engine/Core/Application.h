@@ -28,6 +28,7 @@ namespace Engine {
 		inline Window& GetWindow() { return *m_Window; }
 		inline float GetTimeStep() { return m_TimeStep; }
 		inline float GetFixedTimeStep() { return m_FixedTimeStep; }
+		inline ImGuiLayer* GetImGuiLayer() { return m_ImGuiLayer; }
 
 		inline static Application& Get() { return *s_Instance; }
 	private:

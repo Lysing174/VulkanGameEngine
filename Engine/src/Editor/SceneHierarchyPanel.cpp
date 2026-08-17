@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 
 #include "SceneHierarchyPanel.h"
 #include "Engine/Scene/Components.h"
@@ -257,6 +257,7 @@ namespace Engine {
 			DisplayAddComponentEntry<MeshRendererComponent>("Mesh Renderer");
 			DisplayAddComponentEntry<MeshFilterComponent>("Mesh Filter");
 			DisplayAddComponentEntry<PointLightComponent>("Point Light");
+			DisplayAddComponentEntry<DirectLightComponent>("Directional Light");
 			//DisplayAddComponentEntry<Rigidbody2DComponent>("Rigidbody 2D");
 			//DisplayAddComponentEntry<BoxCollider2DComponent>("Box Collider 2D");
 			//DisplayAddComponentEntry<CircleCollider2DComponent>("Circle Collider 2D");

@@ -6,7 +6,11 @@
 #include <memory>
 
 namespace Engine {
-    // 对应 Shader 中的 layout(set = 1, binding = 0) uniform MaterialData
+
+    class VulkanUniformBuffer; // forward declare
+
+    // 对应 Shader 中的 layout(set = 1, binding = 5) uniform MaterialUBO
+    // 注意: 字段顺序必须与 shader 中完全一致
     struct MaterialUniformBuffer
     {
         glm::vec4 AlbedoColor;   // 基础颜色 (RGBA)
@@ -19,9 +23,10 @@ namespace Engine {
         glm::vec4 EmissiveColor; // 自发光颜色
         
         int HasAlbedoMap;
-        int HasNormalMap;
         int HasMetalRoughnessMap;
+        int HasNormalMap;
         int HasEmissiveMap;
+        int HasAoMap;
     };
     class Material
     {
@@ -43,6 +48,7 @@ namespace Engine {
         void SetHasAlbedoMap(bool has);
         void SetHasMetalRoughnessMap(bool has);
         void SetHasEmissiveMap(bool has);
+        void SetHasAoMap(bool has);
         void SetTexture(const std::string& textureTypeName, std::shared_ptr<Texture2D> texture);
 
         // 批量更新：调用 Begin 后所有 setter 只写 CPU 侧数据，End 时一次性推到 GPU
@@ -70,8 +76,8 @@ namespace Engine {
         MaterialUniformBuffer m_UniformData;
         std::unordered_map<uint32_t, std::shared_ptr<Texture2D>> m_Textures;
         VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
-        VkBuffer m_UniformBuffer;
-        VkDeviceMemory m_UniformBufferMemory;
+        VkBuffer m_UniformBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory m_UniformBufferMemory = VK_NULL_HANDLE;
         bool m_BatchUpdate = false;
     };
 }

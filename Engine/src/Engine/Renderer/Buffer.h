@@ -190,21 +190,6 @@ namespace Engine {
 
 	};
 	
-	struct GaussianVertex
-	{
-		//TODO: 
-		glm::vec3 pos;
-		static BufferLayout m_layout;
-
-		static std::shared_ptr<BufferLayout>  GetLayout() {
-			return std::make_shared<BufferLayout>(m_layout);
-		}
-
-		bool operator==(const MeshVertex& other) const {
-			return pos == other.pos;
-		}
-		
-	};
 }
 
 namespace std
@@ -225,10 +210,5 @@ namespace std
 		}
 	};
 	
-	template<> struct hash<Engine::GaussianVertex> {
-		size_t operator()(Engine::GaussianVertex const& vertex) const {
-			return (hash<glm::vec3>()(vertex.pos));
-		}
-	};
 
 }

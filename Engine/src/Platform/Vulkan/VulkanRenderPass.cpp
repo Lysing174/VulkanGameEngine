@@ -10,15 +10,64 @@ namespace Engine
         this->device = device;
         m_MSAASamples = msaaSamples;
 
-        if (passName=="Mesh")
+        if (passName == "ImGui")
+        {
+            // ========================================================
+            // ImGui Pass — renders UI on top of cleared swapchain
+            // Single color attachment (swapchain image), CLEAR + UNDEFINED
+            // Works for both offscreen (mesh → offscreen FBO) and inline
+            // ========================================================
+            VkAttachmentDescription colorAttachment = {};
+            colorAttachment.format = swapChainImageFormat;
+            colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+            VkAttachmentReference colorAttachmentRef = {};
+            colorAttachmentRef.attachment = 0;
+            colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            VkSubpassDescription subpass = {};
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments = &colorAttachmentRef;
+
+            VkSubpassDependency dependency = {};
+            dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+            dependency.dstSubpass = 0;
+            dependency.srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            dependency.srcAccessMask = 0;
+            dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+            VkAttachmentDescription attachments[] = { colorAttachment };
+
+            VkRenderPassCreateInfo renderPassInfo = {};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            renderPassInfo.attachmentCount = 1;
+            renderPassInfo.pAttachments = attachments;
+            renderPassInfo.subpassCount = 1;
+            renderPassInfo.pSubpasses = &subpass;
+            renderPassInfo.dependencyCount = 1;
+            renderPassInfo.pDependencies = &dependency;
+
+            if (vkCreateRenderPass(*device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create imgui render pass!");
+            }
+        }
+        else if (passName=="Mesh")
         {
             bool useMSAA = (msaaSamples != VK_SAMPLE_COUNT_1_BIT);
 
             if (useMSAA)
             {
                 // ========================================================
-                // MSAA Path — Vulkan 1.2 core API (RenderPass2 + depthStencilResolve)
-                // Attachments: [0]=MSAA Color, [1]=Resolve Color, [2]=MSAA Depth, [3]=Resolve Depth(1x)
+                // MSAA Path — Vulkan 1.2 core API (RenderPass2)
+                // Attachments: [0]=MSAA Color, [1]=Resolve Color, [2]=MSAA Depth
                 // ========================================================
 
                 // Attachment 0: MSAA Color
@@ -38,7 +87,7 @@ namespace Engine
                 colorAttachmentRef.attachment = 0;
                 colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-                // Attachment 1: Resolve (SwapChain)
+                // Attachment 1: Resolve (for ImGui display)
                 VkAttachmentDescription2 resolveAttachment = {};
                 resolveAttachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
                 resolveAttachment.format = swapChainImageFormat;
@@ -47,8 +96,8 @@ namespace Engine
                 resolveAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
                 resolveAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
                 resolveAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-                resolveAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                resolveAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                resolveAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                resolveAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
                 VkAttachmentReference2 resolveAttachmentRef = {};
                 resolveAttachmentRef.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
@@ -72,30 +121,6 @@ namespace Engine
                 depthAttachmentRef.attachment = 2;
                 depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-                // Attachment 3: Depth Resolve (1x depth for Gaussian sampling)
-                VkAttachmentDescription2 depthResolveAttachment = {};
-                depthResolveAttachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
-                depthResolveAttachment.format = depthImageFormat;
-                depthResolveAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-                depthResolveAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-                depthResolveAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-                depthResolveAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-                depthResolveAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-                depthResolveAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                depthResolveAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-                VkAttachmentReference2 depthResolveAttachmentRef = {};
-                depthResolveAttachmentRef.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
-                depthResolveAttachmentRef.attachment = 3;
-                depthResolveAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-                // Depth/Stencil resolve — pNext-chained to subpass
-                VkSubpassDescriptionDepthStencilResolve depthStencilResolve = {};
-                depthStencilResolve.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
-                depthStencilResolve.depthResolveMode = VK_RESOLVE_MODE_MIN_BIT;
-                depthStencilResolve.stencilResolveMode = VK_RESOLVE_MODE_NONE;
-                depthStencilResolve.pDepthStencilResolveAttachment = &depthResolveAttachmentRef;
-
                 VkSubpassDescription2 subpass = {};
                 subpass.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
                 subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -103,7 +128,6 @@ namespace Engine
                 subpass.pColorAttachments = &colorAttachmentRef;
                 subpass.pResolveAttachments = &resolveAttachmentRef;
                 subpass.pDepthStencilAttachment = &depthAttachmentRef;
-                subpass.pNext = &depthStencilResolve;
 
                 VkSubpassDependency2 dependency = {};
                 dependency.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
@@ -114,11 +138,11 @@ namespace Engine
                 dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
                 dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-                VkAttachmentDescription2 attachments[] = { colorAttachment, resolveAttachment, depthAttachment, depthResolveAttachment };
+                VkAttachmentDescription2 attachments[] = { colorAttachment, resolveAttachment, depthAttachment };
 
                 VkRenderPassCreateInfo2 renderPassInfo = {};
                 renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
-                renderPassInfo.attachmentCount = 4;
+                renderPassInfo.attachmentCount = 3;
                 renderPassInfo.pAttachments = attachments;
                 renderPassInfo.subpassCount = 1;
                 renderPassInfo.pSubpasses = &subpass;
@@ -143,8 +167,8 @@ namespace Engine
                 colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
                 colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
                 colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-                colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                colorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
                 VkAttachmentReference colorAttachmentRef = {};
                 colorAttachmentRef.attachment = 0;
@@ -194,52 +218,6 @@ namespace Engine
                 }
             }
         }
-        else if (passName=="Gaussian")
-        {
-            // Gaussian Pass 不需要深度附件 — 管线已关闭深度测试 (DepthVisualizer),
-            // 深度图仅通过 combined image sampler 描述符在 fragment shader 中采样。
-            // 若同时作为附件和 sampler 描述符绑定，会违反 Vulkan 规范导致数据竞争。
-
-            VkAttachmentDescription colorAttachment = {};
-            colorAttachment.format = swapChainImageFormat;
-            colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            colorAttachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-            VkAttachmentReference colorAttachmentRef = {};
-            colorAttachmentRef.attachment = 0;
-            colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-            VkSubpassDescription subpass = {};
-            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-            subpass.colorAttachmentCount = 1;
-            subpass.pColorAttachments = &colorAttachmentRef;
-            subpass.pDepthStencilAttachment = nullptr;
-
-            VkSubpassDependency dependency = {};
-            dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-            dependency.dstSubpass = 0;
-            dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-            dependency.srcAccessMask = 0;
-            dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-            dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-            VkAttachmentDescription attachments[] = { colorAttachment };
-            VkRenderPassCreateInfo renderPassInfo = {};
-            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            renderPassInfo.attachmentCount = 1;
-            renderPassInfo.pAttachments = attachments;
-            renderPassInfo.subpassCount = 1;
-            renderPassInfo.pSubpasses = &subpass;
-            renderPassInfo.dependencyCount = 1;
-            renderPassInfo.pDependencies = &dependency;
-
-            if (vkCreateRenderPass(*device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create gaussian render pass!");
-            }
-        }
         else
             throw std::runtime_error("unknown render pass name!");
         
@@ -273,13 +251,13 @@ namespace Engine
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             std::vector<VkImageView> attachments;
             if (useMSAA) {
-                // MSAA: [MSAA Color, Resolve(SwapChain), MSAA Depth, Resolve Depth(1x)] — 4 attachments
-                attachments = { colorMSAA, swapChainImageViews[i], depthMSAA, depthImageView };
+                // MSAA: [MSAA Color, Resolve(SwapChain), MSAA Depth] — 3 attachments
+                attachments = { colorMSAA, swapChainImageViews[i], depthMSAA };
             } else if (hasDepth) {
                 // No MSAA, with depth: [Color(SwapChain), Depth] — 2 attachments
                 attachments = { swapChainImageViews[i], depthImageView };
             } else {
-                // No MSAA, no depth (e.g. Gaussian): [Color(SwapChain)] — 1 attachment
+                // No MSAA, no depth : [Color(SwapChain)] — 1 attachment
                 attachments = { swapChainImageViews[i] };
             }
 

@@ -41,21 +41,19 @@ project "Engine"
 		"Engine/src",
 		"vendor/bin/imgui",
 		"vendor/bin/entt",
-		"vendor/bin/assimp",
+		"vendor/bin/tiny_gltf",
 		"vendor/bin/happly",
 		"D:/program/vulkanSDK1.4.304.1/Include",
 		"D:/program/vulkanSDK1.4.304.1/Third-Party/Include"
 	}
 	libdirs
 	{
-		"vendor/bin/assimp",
 		"D:/program/vulkanSDK1.4.304.1/Lib",
 		"D:/program/vulkanSDK1.4.304.1/Third-Party/Lib"
 	}
 	links {
         "glfw3.lib",
 		"ImGui",
-		"assimp-vc143-mtd.lib",
 		"vulkan-1.lib"
     }
 	filter "system:windows"
@@ -105,6 +103,7 @@ project "SandBox"
 		"ThirdParty/Include",
 		"Engine/src",
 		"vendor/bin/imgui",
+		"vendor/bin/tiny_gltf",
 		"vendor/bin/entt",
 		"vendor/bin/happly",
 		"D:/program/vulkanSDK1.4.304.1/Include",

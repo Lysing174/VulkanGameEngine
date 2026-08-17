@@ -87,12 +87,14 @@ namespace Engine {
 				{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_AlbedoMap"     },
 				{ 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_NormalMap"     },
 				{ 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_MetalRoughAO"  },
-				{ 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_EmissiveMap"  },
-				{ 4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_Material"      },
+				{ 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_AOMap"         },
+				{ 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_EmissiveMap"   },
+				{ 5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_Material"      },
 			};
 			config.PushConstantRanges = {
 				{ VK_SHADER_STAGE_VERTEX_BIT,   0,              sizeof(glm::mat4) },
-				{ VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec4) },
+				// Fragment: albedoColor(16B, offset 64) + lightCount(4B) + lightIndices(16B) = 36B
+				{ VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec4) + 20 },
 			};
 			config.PipelineState.BlendEnable = false;
 			return config;
@@ -142,43 +144,17 @@ namespace Engine {
 			return config;
 		}
 
-		// 高斯点云: 深度纹理采样器 + GaussianData SSBO + Push Constants, POINT_LIST拓扑
-		static ShaderConfig GaussianPointCloud()
+		// Skybox: cubemap from global descriptor set (set=0, binding=3) + VP push constant
+		static ShaderConfig Skybox()
 		{
 			ShaderConfig config;
-			config.MaterialBindings = {
-				{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_DepthMap" },
-				{ 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1, "GaussianDataBuffer" },
-			};
+			// Cubemap is sourced from the global descriptor set, no per-material bindings needed
 			config.PushConstantRanges = {
 				{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4) },
 			};
-			config.PipelineState.HasVertexInput = false;
-			config.PipelineState.DepthTestEnable = false;
+			config.PipelineState.DepthTestEnable = true;
 			config.PipelineState.DepthWriteEnable = false;
 			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
-			config.PipelineState.Topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-			return config;
-		}
-
-		// 3DGS Splat 渲染: FrameInfo UBO + GaussianData SSBO + SortedIndices SSBO + DepthMap + ModelTransforms SSBO
-		// TRIANGLE_LIST 拓扑, 实例化 Quad 绘制, Alpha 混合
-		static ShaderConfig GaussianSplat()
-		{
-			ShaderConfig config;
-			config.MaterialBindings = {
-				{ 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1, "FrameInfo" },
-				{ 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1, "GaussianDataBuffer" },
-				{ 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1, "SortedIndicesBuffer" },
-				{ 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_DepthMap" },
-				{ 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1, "ModelTransformBuffer" },
-			};
-			config.PipelineState.HasVertexInput = false;
-			config.PipelineState.DepthTestEnable = false;
-			config.PipelineState.DepthWriteEnable = false;
-			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
-			config.PipelineState.Topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-			config.PipelineState.BlendEnable = true;
 			return config;
 		}
 	};

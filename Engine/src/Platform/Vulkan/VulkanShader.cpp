@@ -57,21 +57,21 @@ namespace Engine {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
         //动态设置视口
-        VkViewport viewport{};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        auto extent = VulkanContext::Get()->GetSwapChainExtent();
-
-        viewport.width = (float)extent.width;
-        viewport.height = (float)extent.height;
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-        VkRect2D scissor{};
-        scissor.offset = { 0, 0 };
-        scissor.extent = extent;
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        // VkViewport viewport{};
+        // viewport.x = 0.0f;
+        // viewport.y = 0.0f;
+        // auto extent = VulkanContext::Get()->GetSwapChainExtent();
+        //
+        // viewport.width = (float)extent.width;
+        // viewport.height = (float)extent.height;
+        // viewport.minDepth = 0.0f;
+        // viewport.maxDepth = 1.0f;
+        // vkCmdSetViewport(cmd, 0, 1, &viewport);
+        //
+        // VkRect2D scissor{};
+        // scissor.offset = { 0, 0 };
+        // scissor.extent = extent;
+        // vkCmdSetScissor(cmd, 0, 1, &scissor);
 	}
 
 	void VulkanShader::Unbind() const

@@ -1,6 +1,8 @@
 #pragma once
 #include "Engine/Renderer/Texture.h"
+#include "Platform/Vulkan/VulkanImage.h"
 #include "vulkan/vulkan.h"
+#include <memory>
 
 namespace Engine {
 
@@ -20,28 +22,30 @@ namespace Engine {
 
         virtual uint32_t GetWidth() const override { return m_Width; }
         virtual uint32_t GetHeight() const override { return m_Height; }
-        virtual uint32_t GetRendererID() const override { return (uint32_t)m_Image; }
+        virtual uint32_t GetRendererID() const override;
         virtual std::string GetPath() const override { return m_Path; }
 
-        VkImage GetImage() const { return m_Image; }
-        VkImageView GetImageView() const { return m_ImageView; }
+        // Delegate to underlying VulkanImage
+        VkImage GetImage() const { return m_Image->GetImage(); }
+        VkImageView GetImageView() const { return m_Image->GetImageView(); }
         VkSampler GetSampler() const { return m_Sampler; }
-        VkDescriptorSet GetDescriptorSet() const { return m_MaterialDescriptorSet; }        // ImGui 需要 DescriptorSet 才能显示图片
+        VkDescriptorSet GetDescriptorSet() const { return m_MaterialDescriptorSet; }
         const VkDescriptorImageInfo& GetDescriptorImageInfo() const { return m_DescriptorImageInfo; }
+
+        // Access the underlying VulkanImage (for compute shader usage)
+        const VulkanImage& GetVulkanImage() const { return *m_Image; }
 
     private:
         std::string m_Path;
-        uint32_t m_Width, m_Height, m_Channels;
+        uint32_t m_Width = 0, m_Height = 0, m_Channels = 0;
 
-        VkImage m_Image = VK_NULL_HANDLE;
-        VkDeviceMemory m_ImageMemory = VK_NULL_HANDLE;
-        VkImageView m_ImageView = VK_NULL_HANDLE;
+        std::unique_ptr<VulkanImage> m_Image;
         VkSampler m_Sampler = VK_NULL_HANDLE;
-        VkFormat m_ImageFormat = VK_FORMAT_R8G8B8A8_SRGB; // 或者 UNORM
+        VkFormat m_ImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
 
         // 用于 ImGui 显示或绑定到材质的 DescriptorSet
         VkDescriptorSet m_MaterialDescriptorSet = VK_NULL_HANDLE;
-
         VkDescriptorImageInfo m_DescriptorImageInfo;
     };
-}
+
+} // namespace Engine

@@ -85,22 +85,6 @@ namespace Engine {
 	// 			}
 	// 		}
 	//
-	// 		// Draw Gaussians (Pass 2: 读深度, 写颜色)
-	// 		auto gaussianView = m_Registry.view<TransformComponent, GaussianSplatComponent>();
-	// 		for (auto entity : gaussianView)
-	// 		{
-	// 			auto [transform, splatComp] = gaussianView.get<TransformComponent, GaussianSplatComponent>(entity);
-	// 			if (splatComp.Splat && splatComp.Visible)
-	// 			{
-	// 				Renderer::SubmitGaussian(
-	// 					transform.GetTransform(),
-	// 					splatComp.Splat,
-	// 					splatComp.GlobalOpacity,
-	// 					splatComp.ScaleModifier,
-	// 					(int)entity
-	// 				);
-	// 			}
-	// 		}
 	//
 	// 		Renderer::EndScene();
 	// 	}
@@ -145,16 +129,26 @@ namespace Engine {
 	{
 		Renderer::BeginScene(camera);
 
-		// Collect point light data (use first PointLightComponent found)
-		auto lightView = m_Registry.view<TransformComponent, PointLightComponent>();
-		for (auto entity : lightView)
+		// 收集所有光照 — 开启光照收集
+		Renderer::BeginLightCollection();
+
+		// 收集点光源
+		auto pointLightView = m_Registry.view<TransformComponent, PointLightComponent>();
+		for (auto entity : pointLightView)
 		{
-			auto [transform, light] = lightView.get<TransformComponent, PointLightComponent>(entity);
-			Renderer::SetPointLightData(transform.Translation, light.Color, light.Intensity);
-			break; // only first light for now
+			auto [transform, light] = pointLightView.get<TransformComponent, PointLightComponent>(entity);
+			Renderer::SubmitPointLight(transform.Translation, light.Color, light.Intensity, light.Range);
 		}
 
-		// Draw Meshes (Pass 1: 写颜色+深度)
+		// 收集方向光
+		auto directLightView = m_Registry.view<TransformComponent, DirectLightComponent>();
+		for (auto entity : directLightView)
+		{
+			auto [transform, light] = directLightView.get<TransformComponent, DirectLightComponent>(entity);
+			Renderer::SubmitDirectLight(light.Direction, light.Color, light.Intensity);
+		}
+
+		// Draw Meshes
 		auto meshView = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
 		for (auto entity : meshView)
 		{
@@ -165,21 +159,6 @@ namespace Engine {
 					transform.GetTransform(),
 					filter.Mesh,      
 					std::make_shared<MeshRendererComponent>(renderer), 
-					(int)entity
-				);
-			}
-		}
-
-		// Draw Gaussians (Pass 2: 深度可视化, 读取 Mesh Pass 的深度缓冲)
-		auto gaussianView = m_Registry.view<TransformComponent, GaussianComponent>();
-		for (auto entity : gaussianView)
-		{
-			auto [transform, splatComp] = gaussianView.get<TransformComponent, GaussianComponent>(entity);
-			if (splatComp.Visible)
-			{
-				Renderer::SubmitGaussian(
-					transform.GetTransform(),
-					splatComp.GaussianModel,
 					(int)entity
 				);
 			}
@@ -221,13 +200,10 @@ namespace Engine {
 	}
 
 	template<>
-	void Scene::OnComponentAdded<GaussianComponent>(Entity entity, GaussianComponent& component)
+	void Scene::OnComponentAdded<DirectLightComponent>(Entity entity, DirectLightComponent& component)
 	{
 	}
 
-
-
-	// 注意：这里通常需要处理视口大小初始化，防止相机宽高比不对
 	template<>
 	void Scene::OnComponentAdded<CameraComponent>(Entity entity, CameraComponent& component)
 	{
@@ -239,4 +215,5 @@ namespace Engine {
 	void Scene::OnComponentAdded<PointLightComponent>(Entity entity, PointLightComponent& component)
 	{
 	}
+	
 }

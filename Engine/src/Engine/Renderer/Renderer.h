@@ -5,8 +5,20 @@
 #include <Engine/Scene/Components.h>
 #include <Engine/Renderer/Shader.h>
 #include <Engine/Renderer/Buffer.h>
+#include <Engine/Renderer/FrameBuffer.h>
 
 namespace Engine {
+
+	constexpr uint32_t MAX_LIGHTS = 32;           // 场景最大光源数
+	constexpr uint32_t MAX_LIGHTS_PER_OBJECT = 4; // 每物体最多光源数
+
+	// GPU 端光源结构 (std430, SSBO 用)
+	struct GPULight
+	{
+		glm::vec4 PositionType;   // xyz = 位置(点光) 或 0(方向光), w = 类型: 0=点光, 1=方向光
+		glm::vec4 ColorIntensity; // rgb = 颜色, a = 强度
+		glm::vec4 DirectionRange; // xyz = 方向(方向光), w = 范围(点光衰减距离)
+	};
 
 	struct MeshRenderCommandRequest
 	{
@@ -19,24 +31,9 @@ namespace Engine {
 		uint32_t SubmeshFirstIndex;
 		uint32_t SubmeshFirstVertex;
 
-	};
-
-	struct GaussianRenderCommandRequest
-	{
-		glm::mat4 Transform;
-		std::shared_ptr<GaussianModel> Model;
-		int EntityID;
-	};
-
-	// Frame info for 3DGS splat rendering (std140 compatible)
-	struct GaussianFrameInfo
-	{
-		glm::mat4 viewMatrix           = glm::mat4(1.0f);
-		glm::mat4 projectionMatrix     = glm::mat4(1.0f);
-		glm::vec4 cameraPosAndScale    = glm::vec4(0.0f); // xyz = camera position, w = splatScale
-		glm::vec4 focal                = glm::vec4(0.0f); // xy = focal length, zw = unused
-		glm::vec4 viewportInfo         = glm::vec4(0.0f); // xy = viewport size, zw = basisViewport
-		glm::vec4 extraInfo            = glm::vec4(0.0f); // x = alphaCullThreshold, yzw = unused
+		// 每物体光源裁剪结果
+		uint32_t LightCount = 0;
+		uint32_t LightIndices[MAX_LIGHTS_PER_OBJECT] = {};
 	};
 
 	class Renderer
@@ -60,31 +57,29 @@ namespace Engine {
 		static void OnSwapchainRecreated(); // Swapchain 重建后更新深度纹理 descriptor
 
 		static void SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<MeshRendererComponent>& rendererComponent, int entityID = -1);
-		static void SubmitGaussian(const glm::mat4& transform, const std::shared_ptr<GaussianModel>& model, int entityID = -1);
-		static void SetPointLightData(const glm::vec3& position, const glm::vec3& color, float intensity);
+
+		// 光照系统：收集 + 上传
+		static void BeginLightCollection();
+		static void SubmitPointLight(const glm::vec3& position, const glm::vec3& color, float intensity, float range);
+		static void SubmitDirectLight(const glm::vec3& direction, const glm::vec3& color, float intensity);
+		static void EndLightCollection();                                    // 锁定光源列表并上传 GPU
+		static void CullLightsForObject(const glm::vec3& worldPos, uint32_t maxLights,
+		                                uint32_t& outCount, uint32_t* outIndices);
 
 		static API GetAPI() { return s_API; }
 		static std::shared_ptr<ShaderLibrary> GetShaderLibrary() { return s_ShaderLibrary; }
+		static void SetOffscreenFramebuffer(const std::shared_ptr<Framebuffer>& fb) { s_OffscreenFramebuffer = fb; }
+		static std::shared_ptr<Framebuffer> GetOffscreenFramebuffer() { return s_OffscreenFramebuffer; }
 
-		static Renderer* Create();
-
-		// Register a GaussianModel into the global SSBO (assigns offset)
-		static void RegisterGaussianModel(const std::shared_ptr<GaussianModel>& model);
+		// Skybox (managed by EditorLayer, rendered in EndScene)
+		static void SetSkyboxData(const std::shared_ptr<Shader>& shader, const std::shared_ptr<Mesh>& mesh);
 
 	private:
+		static void DrawSkybox();
 		static void DrawMesh(const MeshRenderCommandRequest& request);
-		static void DrawGaussian(const GaussianRenderCommandRequest& request);
 		static void FlushMeshPass();
-		static void FlushGaussianPass();
-		static void RebuildGlobalGaussianSSBO();
-		static void CreateGaussianDescriptorSet();
-
-		// 3DGS: GPU sorting
-		static void SortGaussiansOnGPU();
-		static void CreateGaussianSplatBuffers();
-		static void CreateGaussianSortPipelines();
-		static void CreateGaussianSortDescriptorSets();
-		static void DestroyGaussianSortResources();
+		static void CreateLightBuffer();       // 创建光照 SSBO
+		static void UpdateLightBuffer();       // 更新光照 SSBO (每帧)
 
 	private:
 		static API s_API;
@@ -103,71 +98,20 @@ namespace Engine {
 			float LightIntensity = 20.0f;
 		};
 		static std::vector<MeshRenderCommandRequest> s_MeshRenderQueue;
-		static std::vector<GaussianRenderCommandRequest> s_GaussianRenderQueue;
 		static std::shared_ptr<ShaderLibrary> s_ShaderLibrary;
+		static std::shared_ptr<Framebuffer> s_OffscreenFramebuffer;
 		static SceneData s_SceneData;
 
 		// Global Gaussian SSBO: all models' data in one buffer
-		static std::shared_ptr<ShaderStorageBuffer> s_GlobalGaussianSSBO;
-		static uint32_t s_TotalGaussianCount;
-		static bool s_GaussianSSBODirty;
-		static std::vector<std::shared_ptr<GaussianModel>> s_RegisteredGaussianModels;
+		// Light SSBO: all scene lights (MAX_LIGHTS), set=0 binding=1
+        static VkBuffer s_LightSSBO;
+        static VkDeviceMemory s_LightSSBOMemory;
+        static std::vector<GPULight> s_SceneLights;   // CPU 端光源列表 (收集阶段用)
+        static bool s_LightsDirty;                     // 本帧是否有新光源需要更新 SSBO
+        static uint32_t s_SceneLightCount;
 
-		// Gaussian DescriptorSet (depth texture + global SSBO, bind once per frame)
-		static VkDescriptorSet s_GaussianDescriptorSet;
-
-		// 3DGS Splat: FrameInfo UBO + sorted indices SSBO
-		static VkBuffer s_FrameInfoUBO;
-		static VkDeviceMemory s_FrameInfoUBOMemory;
-		static GaussianFrameInfo s_FrameInfoData;
-		static VkDescriptorSet s_GaussianSplatDescriptorSet;
-
-		// 3DGS GPU Sort: distance/keys + indices/values (ping-pong)
-		static VkBuffer s_DistancesBuffer[2];
-		static VkDeviceMemory s_DistancesBufferMemory[2];
-		static VkBuffer s_IndicesBuffer[2];
-		static VkDeviceMemory s_IndicesBufferMemory[2];
-
-		// 3DGS GPU Sort: histogram buffers
-		static VkBuffer s_GlobalHistogramBuffer;
-		static VkDeviceMemory s_GlobalHistogramBufferMemory;
-		static VkBuffer s_PartitionHistogramBuffer;
-		static VkDeviceMemory s_PartitionHistogramBufferMemory;
-
-		// 3DGS GPU Sort: compute pipelines + descriptor sets
-		static VkPipeline s_DistComputePipeline;
-		static VkPipelineLayout s_DistComputePipelineLayout;
-		static VkDescriptorSetLayout s_DistDescriptorSetLayout;
-		static VkDescriptorSet s_DistDescriptorSets[2]; // per frame in flight
-
-		static VkPipeline s_UpsweepPipeline;
-		static VkPipelineLayout s_UpsweepPipelineLayout;
-		static VkDescriptorSetLayout s_UpsweepDescriptorSetLayout;
-		static VkDescriptorSet s_UpsweepDescriptorSets[2]; // [0]=read buf0, [1]=read buf1
-
-		static VkPipeline s_SpinePipeline;
-		static VkPipelineLayout s_SpinePipelineLayout;
-		static VkDescriptorSetLayout s_SpineDescriptorSetLayout;
-		static VkDescriptorSet s_SpineDescriptorSet;
-
-		static VkPipeline s_DownsweepPipeline;
-		static VkPipelineLayout s_DownsweepPipelineLayout;
-		static VkDescriptorSetLayout s_DownsweepDescriptorSetLayout;
-		static VkDescriptorSet s_DownsweepDescriptorSets[2]; // [0]=in buf0 out buf1, [1]=in buf1 out buf0
-
-		// Sorted indices SSBO (for GaussianSplat.vert to read)
-		// After sorting, the "values" buffer contains the sorted indices
-		// We point the GaussianSplat descriptor to the correct indices buffer
-		static uint32_t s_CurrentSortBuffer; // 0 or 1 (ping-pong)
-
-        // Model transform SSBO: one mat4 per registered model, updated every frame
-        static VkBuffer s_ModelTransformSSBO;
-        static VkDeviceMemory s_ModelTransformSSBOMemory;
-
-        // Sort cache: skip re-sorting when nothing changed
-        static bool s_SortCacheValid;
-        static glm::mat4 s_PrevViewMatrix;
-        static glm::mat4 s_PrevProjectionMatrix;
-        static std::vector<glm::mat4> s_PrevModelTransforms;
+        // Skybox
+        static std::shared_ptr<Shader> s_SkyboxShader;
+        static std::shared_ptr<Mesh>   s_SkyboxMesh;
     };
 }

@@ -25,7 +25,7 @@ namespace Engine {
 
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;//开启键盘导航，允许enter键等控制ui
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;//开启ui停靠，可吸附到边缘
-        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;//开启多视口，ui可拖出形成新的窗口
+        //io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;//开启多视口，ui可拖出形成新的窗口
 
         ImGuiStyle& style = ImGui::GetStyle();
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
@@ -58,14 +58,20 @@ namespace Engine {
         init_info.ImageCount = context->GetImageCount();
         init_info.Allocator = nullptr;
         init_info.CheckVkResultFn = nullptr;
-        init_info.PipelineInfoMain.RenderPass = context->GetRenderPass("Gaussian")->GetVkRenderPass();
+        init_info.PipelineInfoMain.RenderPass = context->GetRenderPass("ImGui")->GetVkRenderPass();
         init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         init_info.PipelineInfoMain.Subpass = 0;
 
-        // 4. 初始化 Vulkan 后端
-        ImGui_ImplVulkan_Init(&init_info);
+        // 4. 加载更大号字体 (必须在 Vulkan Init 之前，因为 Init 内部上传字体纹理到 GPU)
+        {
+            ImFontConfig fontConfig;
+            fontConfig.SizePixels = 26.0f;  // 默认 13px，这里调大到 20px
+            io.Fonts->Clear();               // 移除 CreateContext 创建的默认小字体
+            io.Fonts->AddFontDefault(&fontConfig);
+        }
 
-        // 字体上传已由 ImGui_ImplVulkan_Init 内部自动完成 (新版 API)
+        // 5. 初始化 Vulkan 后端 (内部会上传字体纹理)
+        ImGui_ImplVulkan_Init(&init_info);
     }
 	void ImGuiLayer::OnDetach()
 	{
@@ -102,6 +108,9 @@ namespace Engine {
     }
     void ImGuiLayer::OnEvent(Event& event)
     {
+        if (!m_BlockEvents)
+            return;
+
         ImGuiIO& io = ImGui::GetIO();
 
         if (io.WantCaptureMouse)
@@ -115,17 +124,6 @@ namespace Engine {
             if (event.IsInCategory(EventCategoryKeyboard) || event.IsInCategory(EventCategoryInput))
                 event.Handled = true;
         }
-        /*若想手动控制glfw回调：
-        EventDispatcher dispatcher(event);
-        dispatcher.Dispatch<MouseButtonPressedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseButtonPressedEvent));
-        dispatcher.Dispatch<MouseButtonReleasedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseButtonReleasedEvent));
-        dispatcher.Dispatch<MouseMovedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseMovedEvent));
-        dispatcher.Dispatch<MouseScrolledEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnMouseScrolledEvent));
-        dispatcher.Dispatch<KeyPressedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnKeyPressedEvent));
-        dispatcher.Dispatch<KeyReleasedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnKeyReleasedEvent));
-        dispatcher.Dispatch<KeyTypedEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnKeyTypedEvent));
-        dispatcher.Dispatch<WindowResizeEvent>(EG_BIND_EVENT_FN(ImGuiLayer::OnWindowResizeEvent));
-        */
     }
 
     void ImGuiLayer::SetDarkThemeColors()

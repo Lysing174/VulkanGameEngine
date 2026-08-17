@@ -3,7 +3,6 @@
 #include "Engine/Scene/SceneCamera.h"
 #include "Engine/Renderer/Mesh.h" 
 #include "Engine/Renderer/Material.h"
-#include "Engine/Renderer/GaussianModel.h"
 #include "Engine/Scene/UUID.h"
 
 #include <glm/glm.hpp>
@@ -72,6 +71,7 @@ namespace Engine {
 
 		bool CastShadows = true;    // 是否投射阴影
 		bool ReceiveShadows = true; // 是否接收阴影
+		uint32_t MaxLights = 4;     // 最多作用该物体的光源数量
 
 		MeshRendererComponent() = default;
 		MeshRendererComponent(const std::vector<std::shared_ptr<Material>>& materials)
@@ -91,18 +91,6 @@ namespace Engine {
 		CameraComponent(const CameraComponent&) = default;
 	};
 
-	struct GaussianComponent
-	{
-		std::shared_ptr<GaussianModel> GaussianModel;
-
-		// 渲染控制参数
-		bool Visible = true;
-
-		GaussianComponent() = default;
-		GaussianComponent(const std::shared_ptr<Engine::GaussianModel>& gaussianModel)
-			: GaussianModel(gaussianModel) {}
-	};
-
 	struct PointLightComponent
 	{
 		glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
@@ -112,5 +100,16 @@ namespace Engine {
 		PointLightComponent() = default;
 		PointLightComponent(const glm::vec3& color, float intensity, float range)
 			: Color(color), Intensity(intensity), Range(range) {}
+	};
+
+	struct DirectLightComponent
+	{
+		glm::vec3 Direction = { 0.0f, -1.0f, 0.0f }; // 光照方向（世界空间，从光源指向场景）
+		glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
+		float Intensity = 5.0f;
+
+		DirectLightComponent() = default;
+		DirectLightComponent(const glm::vec3& direction, const glm::vec3& color, float intensity)
+			: Direction(glm::normalize(direction)), Color(color), Intensity(intensity) {}
 	};
 }

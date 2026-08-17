@@ -3,6 +3,7 @@
 #include "Platform/Vulkan/VulkanContext.h"
 #include "Platform/Vulkan/VulkanShader.h"
 #include "Platform/Vulkan/VulkanTexture.h"
+#include "Platform/Vulkan/VulkanBuffer.h"
 #include "Engine/Renderer/Renderer.h"
 
 namespace Engine {
@@ -17,13 +18,10 @@ namespace Engine {
         if (!uboBindings.empty())
         {
             VkDeviceSize bufferSize = sizeof(MaterialUniformBuffer);
-            VulkanContext::Get()->CreateBuffer(
-                    bufferSize,
-                    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    m_UniformBuffer,
-                    m_UniformBufferMemory
-                );
+            VulkanUniformBuffer ubo(bufferSize);
+            auto handles = ubo.Release();
+            m_UniformBuffer = handles.Buffer;
+            m_UniformBufferMemory = handles.Memory;
         }
 
         m_RendererID = shader->GetRendererID();
@@ -46,15 +44,16 @@ namespace Engine {
 
         0.0f,         // 金属度系数
         0.0f,         // 粗糙度系数
-        0.0f, // 自发光强度
-        0.0f,        // AO 强度
+        0.0f,         // 自发光强度
+        0.0f,         // AO 强度
 
         glm::vec4(1.0f,1.0f,1.0f,1.0f), // 自发光颜色
 
-        0,        // 布尔值 (作为int传递)
-        0,
-        0,
-        0
+        0,        // HasAlbedoMap
+        0,        // HasMetalRoughnessMap  (与 shader 顺序对齐)
+        0,        // HasNormalMap
+        0,        // HasEmissiveMap
+        0         // HasAoMap
         };
         UploadUniformBuffer();
     }
@@ -64,9 +63,7 @@ namespace Engine {
         auto device = VulkanContext::Get()->GetDevice();
 
         // 释放 UniformBuffer
-        const ShaderConfig& config = m_Shader->GetConfig();
-        auto uboBindings = config.GetBindingsByType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-        if (!uboBindings.empty())
+        if (m_UniformBuffer != VK_NULL_HANDLE)
         {
             vkDestroyBuffer(device, m_UniformBuffer, nullptr);
             vkFreeMemory(device, m_UniformBufferMemory, nullptr);
@@ -366,6 +363,16 @@ namespace Engine {
         if (m_UniformData.HasEmissiveMap != hasInt)
         {
             m_UniformData.HasEmissiveMap = hasInt;
+            UploadUniformBuffer();
+        }
+    }
+
+    void Material::SetHasAoMap(bool has)
+    {
+        int hasInt = has ? 1 : 0;
+        if (m_UniformData.HasAoMap != hasInt)
+        {
+            m_UniformData.HasAoMap = hasInt;
             UploadUniformBuffer();
         }
     }

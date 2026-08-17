@@ -1,0 +1,184 @@
+#version 450
+
+// ============================================================
+// GGXPrefilter.comp — GPU Pre-filtered Environment Map
+//
+// Importance-samples the GGX NDF to pre-convolve a cubemap
+// for split-sum IBL specular reflections.
+//
+// For each mip level (roughness), each texel on each face
+// generates N samples using Hammersley + GGX importance sampling,
+// samples the base environment cubemap, and averages the result.
+//
+// Workgroup: 8×8×1
+// Dispatch:  ceil(faceSize/8) × ceil(faceSize/8) × 6 (faces)
+// ============================================================
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Binding 0: source environment cubemap (base level, mip 0)
+layout(set = 0, binding = 0) uniform samplerCube sourceCubemap;
+
+// Binding 1: output 2D array (6 layers = 6 cubemap faces, current mip)
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray outputMip;
+
+layout(push_constant) uniform PushConstants
+{
+    float roughness;
+    float mipLevelF;
+    float faceSizeF;
+} pc;
+
+const float PI = 3.14159265359;
+const uint  SAMPLE_COUNT = 256u;
+
+// ============================================================
+// Van der Corput radical inverse (base 2)
+// ============================================================
+float RadicalInverse_VdC(uint bits)
+{
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10; // 0x100000000
+}
+
+// ============================================================
+// Hammersley 2D low-discrepancy sequence: [0,1)^2
+// ============================================================
+vec2 Hammersley(uint i, uint N)
+{
+    return vec2(float(i) / float(N), RadicalInverse_VdC(i));
+}
+
+// ============================================================
+// GGX / Trowbridge-Reitz NDF
+// ============================================================
+float DistributionGGX(vec3 N, vec3 H, float roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    float denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denom * denom, 0.001);
+}
+
+// ============================================================
+// Importance-sample GGX: generates a half-vector H around N
+// from a 2D uniform random pair using the GGX distribution.
+// ============================================================
+vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness)
+{
+    float a = roughness * roughness;
+
+    float phi = 2.0 * PI * Xi.x;
+    float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+
+    // Half-vector in tangent space
+    vec3 H;
+    H.x = cos(phi) * sinTheta;
+    H.y = sin(phi) * sinTheta;
+    H.z = cosTheta;
+
+    // Build tangent-space basis
+    vec3 up = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(up, N));
+    vec3 bitangent = cross(N, tangent);
+
+    // Transform half-vector to world space
+    vec3 sampleVec = tangent * H.x + bitangent * H.y + N * H.z;
+    return normalize(sampleVec);
+}
+
+// ============================================================
+// Cubemap face index (gl_LocalInvocationID.z = 0..5) → direction
+// ============================================================
+// Layer mapping:
+//   0: +X (right)
+//   1: -X (left)
+//   2: +Y (top)
+//   3: -Y (bottom)
+//   4: +Z (front)
+//   5: -Z (back)
+
+vec3 FaceUVToDirection(uint face, vec2 uv)
+{
+    // uv in [0, 1], map to [-1, 1]
+    float u = uv.x * 2.0 - 1.0;
+    float v = uv.y * 2.0 - 1.0;
+
+    vec3 dir;
+    switch (face)
+    {
+        case 0:  dir = vec3( 1.0, -v, -u); break; // +X
+        case 1:  dir = vec3(-1.0, -v,  u); break; // -X
+        case 2:  dir = vec3( u,   1.0, v); break; // +Y
+        case 3:  dir = vec3( u,  -1.0,-v); break; // -Y
+        case 4:  dir = vec3( u,  -v,   1.0); break; // +Z
+        default: dir = vec3(-u,  -v,  -1.0); break; // -Z
+    }
+    return normalize(dir);
+}
+
+// ============================================================
+// Main
+// ============================================================
+void main()
+{
+    uint faceIndex = gl_GlobalInvocationID.z;
+    if (faceIndex >= 6u) return;
+
+    uint mipLevel = uint(pc.mipLevelF + 0.5);
+    float mipSize = max(1.0, pc.faceSizeF * exp2(-pc.mipLevelF));
+    uint mipSizeU = uint(mipSize + 0.5);
+
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+
+    if (x >= mipSizeU || y >= mipSizeU) return;
+
+    // Pixel center UV on this face
+    vec2 uv = (vec2(x, y) + 0.5) / mipSize;
+
+    // Normal direction for this texel
+    vec3 N = FaceUVToDirection(faceIndex, uv);
+
+    // View direction = normal (for cubemap, view direction equals reflection)
+    vec3 V = N;
+
+    float totalWeight = 0.0;
+    vec4 prefilteredColor = vec4(0.0);
+
+    float r = pc.roughness;
+
+    for (uint i = 0u; i < SAMPLE_COUNT; ++i)
+    {
+        vec2 Xi = Hammersley(i, SAMPLE_COUNT);
+        vec3 H = ImportanceSampleGGX(Xi, N, r);
+
+        // Reflection direction (mirrored about H)
+        vec3 L = normalize(2.0 * dot(V, H) * H - V);
+
+        float NdotL = dot(N, L);
+        if (NdotL > 0.0)
+        {
+            // Sample base-level cubemap (mip 0 — unmodified environment map)
+            vec3 sampleColor = textureLod(sourceCubemap, L, 0.0).rgb;
+
+            // Optional: apply mip-weighted filtering (beyond the scope of GGX alone)
+            // For GGX prefilter, we simply average the importance-sampled values
+            prefilteredColor.rgb += sampleColor * NdotL;
+            totalWeight += NdotL;
+        }
+    }
+
+    prefilteredColor.rgb /= max(totalWeight, 0.001);
+    prefilteredColor.a = 1.0;
+
+    // Write to the output mip (2D array, layer = face, coordinate = pixel)
+    imageStore(outputMip, ivec3(uvec2(x, y), faceIndex), prefilteredColor);
+}

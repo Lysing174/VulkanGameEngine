@@ -30,14 +30,14 @@ namespace Engine
 		VulkanContext::Get()->EndFrame();
 	}
 
-	void VulkanRenderer::BeginMeshRenderPass()
+	void VulkanRenderer::BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB)
 	{
-		VulkanContext::Get()->BeginMeshRenderPass();
+		VulkanContext::Get()->BeginMeshRenderPass(offscreenFB);
 	}
-	
-	void VulkanRenderer::BeginGaussianRenderPass()
+
+	void VulkanRenderer::BeginUIRenderPass()
 	{
-		VulkanContext::Get()->BeginGaussianRenderPass();
+		VulkanContext::Get()->BeginUIRenderPass();
 	}
 	
 	void VulkanRenderer::EndRenderPass()
@@ -53,37 +53,45 @@ namespace Engine
 	void VulkanRenderer::DrawMesh(const MeshRenderCommandRequest& request)
 	{
 		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
+		VkPipelineLayout layout = request.Material->GetShader()->GetPipelineLayout();
 
 		request.Mesh->Bind();
-
-		// 5. 推送 Push Constants (核心步骤)
-		// 注意：这里假设你的 Shader 里 PushConstant 包含了 Transform 和 EntityID
-		// 如果你的 Shader 里只有 Transform，就只 Push Transform
 
 		// Push Transform (Vertex Shader)
 		vkCmdPushConstants(
 			cmd,
-			request.Material->GetShader()->GetPipelineLayout(),
-			VK_SHADER_STAGE_VERTEX_BIT, // 假设 Transform 在顶点着色器
+			layout,
+			VK_SHADER_STAGE_VERTEX_BIT,
 			0,                          // 偏移量 0
 			sizeof(glm::mat4),          // 大小
 			&(request.Transform)
 		);
 
-		// (可选) Push EntityID (Fragment Shader / Vertex Shader)
-		if (request.EntityID != -1)
+		// Push LightCount + LightIndices (Fragment Shader, offset = 80)
+		if (request.LightCount > 0)
 		{
-			// 注意：你需要确保 shader 里定义了 EntityID 且计算好了 offset
-			// 这里为了简单，假设它紧跟在 mat4 后面，或者你自己管理 offset
-			// vkCmdPushConstants(cmd, layout, stage, sizeof(glm::mat4), sizeof(int), &entityID);
+			struct LightPushData {
+				uint32_t lightCount;
+				uint32_t lightIndices[4]; // 4 * 4 = 16 bytes
+			};
+			LightPushData lpd;
+			lpd.lightCount = request.LightCount;
+			memcpy(lpd.lightIndices, request.LightIndices, sizeof(request.LightIndices));
+			// Fill remaining slots with 0
+			for (uint32_t i = request.LightCount; i < 4; i++)
+				lpd.lightIndices[i] = 0;
+
+			vkCmdPushConstants(
+				cmd,
+				layout,
+				VK_SHADER_STAGE_FRAGMENT_BIT,
+				sizeof(glm::mat4) + sizeof(glm::vec4),  // offset = 64 + 16 = 80
+				sizeof(LightPushData),
+				&lpd
+			);
 		}
 
 		vkCmdDrawIndexed(cmd, request.SubmeshIndexCount, 1, request.SubmeshFirstIndex, request.SubmeshFirstVertex, 0);
 	}
-	void VulkanRenderer::DrawGaussian(const GaussianRenderCommandRequest& request)
-	{
-		// Note: Gaussian drawing is now handled directly in Renderer::FlushGaussianPass()
-		// via instanced quad draw with transforms from ModelTransform SSBO.
-		// This function is kept for API compatibility but is not actively used.
-	}
+
 }

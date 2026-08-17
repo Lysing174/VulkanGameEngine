@@ -9,11 +9,16 @@ namespace Engine {
     {
         uint32_t Width = 0;
         uint32_t Height = 0;
+        
         // 你可以根据需要添加更多附件格式，例如：
         // FramebufferFormat Format = FramebufferFormat::RGBA888; 
 
         uint32_t Samples = 1; // 多重采样，通常 1 用于编辑器 FBO
         bool SwapChainTarget = false; // 是否是主交换链的目标 (如果你用这个类管理主屏幕)
+
+        // VkRenderPass — 必须在 Create() 前由外部指定
+        // 使用 void* 避免平台无关头文件依赖 Vulkan
+        void* RenderPass = nullptr;
     };
 
     class Framebuffer

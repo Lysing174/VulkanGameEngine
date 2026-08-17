@@ -23,6 +23,8 @@
 #include <entt.hpp>
 
 #include "VulkanRenderPass.h"
+#include "VulkanFrameBuffer.h"
+#include "VulkanBuffer.h"
 
 #ifdef EG_DEBUG
 const bool enableValidationLayers = true;
@@ -95,8 +97,6 @@ namespace Engine {
         struct UniformBufferObject {
             glm::mat4 projView;             // offset 0,  64 bytes
             glm::vec4 cameraPosition;        // offset 64, 16 bytes (xyz = camera world pos)
-            glm::vec4 lightPosition;         // offset 80, 16 bytes (xyz = light world pos)
-            glm::vec4 lightColor;            // offset 96, 16 bytes (rgb = color, a = intensity)
         };
 
 
@@ -107,24 +107,19 @@ namespace Engine {
         virtual void Init() override;
         virtual void BeginFrame(glm::mat4 projView) override;
         virtual void EndFrame() override;
-        void BeginMeshRenderPass();
-        void BeginGaussianRenderPass();
+		void BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB);
+        void BeginUIRenderPass();
         void EndRenderPass();
         void DrawImGui();
+        
+        void UpdateGlobalCameraUniforms(const glm::vec4& cameraPos);
 
-        void UpdateGlobalLightUniforms(const glm::vec4& cameraPos, const glm::vec4& lightPos, const glm::vec4& lightColor);
+		void OnWindowResized(int width, int height);
 
-        void OnWindowResized(int width, int height);
-
-		void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-		void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
-		void CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
-		void CreateImage(uint32_t width, uint32_t height, VkSampleCountFlagBits samples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+
 		VkSampleCountFlagBits GetMaxUsableSampleCount();
-        void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
         void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
-        VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
         VkCommandBuffer BeginSingleTimeCommands();
         void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
 
@@ -138,24 +133,39 @@ namespace Engine {
         uint32_t GetImageCount() { return (uint32_t)swapChainImages.size(); } // 你 swapchain 里的图片数量
         std::shared_ptr<VulkanRenderPass> GetCurrentRenderPass() {
             if (renderPassesMap.find(currentRenderPassName)==renderPassesMap.end())
-                return nullptr;
+            {
+                EG_CORE_ERROR("Render pass {0} not found", currentRenderPassName);
+                throw std::runtime_error("Render pass not found");
+            }
             return renderPassesMap[currentRenderPassName];
         }
         std::shared_ptr<VulkanRenderPass> GetRenderPass(const std::string& renderPassName) {
             if (renderPassesMap.find(renderPassName)==renderPassesMap.end())
-                return nullptr;
+            {
+                EG_CORE_ERROR("Render pass {0} not found", currentRenderPassName);
+                throw std::runtime_error("Render pass not found");
+            }
             return renderPassesMap[renderPassName];
         }
         VkCommandBuffer GetCurrentCommandBuffer() { return commandBuffers[currentImageIndex]; }
         VkDescriptorSet GetCurrentDescriptorSet() { return descriptorSets[currentImageIndex]; }
         VkDescriptorSetLayout GetGlobalDescriptorSetLayout() { return descriptorSetLayout; }
         VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
+		VkFormat GetSwapChainImageFormat() { return swapChainImageFormat; }
+		VkFormat GetDepthFormat() { return depthImageFormat; }
 		VkImageView GetDepthImageView() { return depthImageView; }
-		VkSampler GetDepthSampler() { return depthSampler; }
 		VkSampleCountFlagBits GetMSAASamples() const { return m_MSAASamples; }
 		void SetMSAASamples(VkSampleCountFlagBits samples) { m_MSAASamples = samples; }
 
-        static VulkanContext* Get() { return s_Instance; }
+		// 获取 Light SSBO (由 Renderer 更新数据)
+		VkBuffer GetLightSSBO() { return m_LightSSBO.GetBuffer(); }
+		VkDeviceMemory GetLightSSBOMemory() { return m_LightSSBO.GetMemory(); }
+		VkDeviceSize GetLightSSBOSize() { return m_LightSSBO.GetSize(); }
+
+		// IBL: set environment map (cubemap + SH coefficients) after initialization
+		void SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData);
+
+		static VulkanContext* Get() { return s_Instance; }
 
     private:
         VkInstance instance;
@@ -171,13 +181,16 @@ namespace Engine {
         VkDescriptorPool descriptorPool;
         std::vector<VkDescriptorSet> descriptorSets;
 
-        std::vector<VkBuffer> uniformBuffers;
-        std::vector<VkDeviceMemory> uniformBuffersMemory;
-		VkImage depthImage;
+        std::vector<VulkanBuffer> uniformBuffers;
+        VulkanBuffer m_LightSSBO;
+
+        // IBL: SH coefficients buffer + cached environment map descriptor
+        VulkanBuffer m_IBL_SHBuffer;
+        VkDescriptorImageInfo m_EnvMapDescriptor{};
+        VkImage depthImage;
 		VkDeviceMemory depthImageMemory;
 		VkImageView depthImageView;
 		VkFormat depthImageFormat;
-		VkSampler depthSampler;  // 深度纹理采样器 (Gaussian shader 用)
 
 		// MSAA resources
 		VkSampleCountFlagBits m_MSAASamples = VK_SAMPLE_COUNT_4_BIT;
@@ -201,12 +214,6 @@ namespace Engine {
         uint32_t currentImageIndex = 0;
 
         std::string currentRenderPassName="";
-
-        const int WIDTH = 800;
-        const int HEIGHT = 600;
-
-        const std::string MODEL_PATH = "models/cottage_obj.obj";
-        const std::string TEXTURE_PATH = "textures/cottage_diffuse.png";
 
         static VulkanContext* s_Instance;
 

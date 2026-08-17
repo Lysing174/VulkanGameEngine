@@ -4,14 +4,17 @@
 #include "Engine/Scene/Components.h" 
 #include "Engine/Events/ApplicationEvent.h"
 #include "Engine/Renderer/Model.h"
+#include "Engine/Core/Application.h"
+#include "Engine/ImGui/ImGuiLayer.h"
 #include "Platform/Vulkan/VulkanContext.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 
 // glTF PBR model paths (replace with your own .gltf/.glb files)
 const std::string NANOSUIT_PATH = "models/nanosuit/nanosuit.gltf";
-const std::string MODEL_PATH = "models/pbr_porche/scene.gltf";
+//const std::string MODEL_PATH = "models/pbr_porche/scene.gltf";
 
-//const std::string MODEL_PATH = "models/helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
+const std::string MODEL_PATH = "models/helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
 //const std::string TEXTURE_PATH = "models/cottage_diffuse.png";
 
 namespace Engine {
@@ -50,52 +53,81 @@ namespace Engine {
 		//std::shared_ptr<Material> houseMat = std::make_shared<Material>(shader);
 		//houseMat->SetTexture("u_AlbedoMap", Texture2D::Create(TEXTURE_PATH));
 
-        Entity houseEntity = m_ActiveScene->CreateEntity("House");
-        Model houseModel = Model(MODEL_PATH, shader);
-        houseEntity.AddComponent<MeshFilterComponent>(houseModel.GetMesh());
+        Entity HelmetEntity = m_ActiveScene->CreateEntity("Helmet");
+        Model helmetModel = Model(MODEL_PATH, shader);
+        HelmetEntity.AddComponent<MeshFilterComponent>(helmetModel.GetMesh());
 
         // 使用 Model 加载的材质，如果模型没有材质则使用默认的 houseMat
-        auto& modelMaterials = houseModel.GetMaterials();
-		houseEntity.AddComponent<MeshRendererComponent>(modelMaterials);
+        auto& helmetMaterials = helmetModel.GetMaterials();
+		HelmetEntity.AddComponent<MeshRendererComponent>(helmetMaterials);
+    	HelmetEntity.GetComponent<TransformComponent>().Translation={0.0f,0.0f,0.0f};
+    	HelmetEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
+    	HelmetEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
     	
-    	// Entity nanosuitEntity = m_ActiveScene->CreateEntity("Nanosuit");
-    	// Model nanosuitModel = Model(NANOSUIT_PATH, shader);
-    	// nanosuitEntity.AddComponent<MeshFilterComponent>(nanosuitModel.GetMesh());
-    	// auto& nanosuitMaterials = nanosuitModel.GetMaterials();
-    	// nanosuitEntity.AddComponent<MeshRendererComponent>(nanosuitMaterials);
-    	// nanosuitEntity.GetComponent<TransformComponent>().Translation={-10.0f,0.0f,10.0f};
+    	Entity BustEntity = m_ActiveScene->CreateEntity("Bust");
+    	Model bustModel = Model("models/marble_bust/marble_bust_01_4k.gltf", shader);
+    	BustEntity.AddComponent<MeshFilterComponent>(bustModel.GetMesh());
 
-
+    	// 使用 Model 加载的材质，如果模型没有材质则使用默认的 houseMat
+    	auto& bustMaterials = bustModel.GetMaterials();
+    	BustEntity.AddComponent<MeshRendererComponent>(bustMaterials);
+    	BustEntity.GetComponent<TransformComponent>().Translation={4.0f,-3.0f,0.0f};
+    	BustEntity.GetComponent<TransformComponent>().Scale={10.0f,10.0f,10.0f};
+    	BustEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
+ 
     	
-    	auto gaussianShader=Renderer::GetShaderLibrary()->Get("GaussianSplat.vert.spv");
-    	gaussianShader->CreatePipeline(nullptr, "Gaussian");
-    	Entity gaussianEntity=m_ActiveScene->CreateEntity("Gaussian");
-    	auto gaussianModel=GaussianModel::Create("gaussians/plant.ply");
-    	gaussianEntity.AddComponent<GaussianComponent>(gaussianModel);
-    	gaussianEntity.GetComponent<TransformComponent>().Translation={0.0f,2.0f,10.0f};
-    	gaussianEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
-    	gaussianEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,3.1415926f};
-
-    	
-    	// Entity gaussianEntity2=m_ActiveScene->CreateEntity("Gaussian2");
-    	// auto gaussianModel2=GaussianModel::Create("gaussians/car_street.ply");
-    	// gaussianEntity2.AddComponent<GaussianComponent>(gaussianModel2);
-    	// gaussianEntity2.GetComponent<TransformComponent>().Translation={10.0f,2.0f,10.0f};
-    	//
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();
         cameraEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 2.0f, 5.0f };
 
         // Create a point light entity
-        Entity pointLightEntity = m_ActiveScene->CreateEntity("Point Light");
-        pointLightEntity.AddComponent<PointLightComponent>(
-            glm::vec3(1.0f, 0.95f, 0.8f), 500.0f, 100.0f);
-        pointLightEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 0.0f, -5.0f };
+        Entity directLightEntity = m_ActiveScene->CreateEntity("Direct Light");
+        directLightEntity.AddComponent<DirectLightComponent>(
+            glm::vec3(-1.0f, -1.0f, 0.0f), glm::vec3(1.0f, 1.0f, 1.0f), 10.0f);
+        directLightEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 0.0f, -5.0f };
 
         m_SceneHierarchyPanel = SceneHierarchyPanel(m_ActiveScene);
+
+        // ============================================================
+        // Create offscreen framebuffer for mesh pass, store in Renderer
+        // ============================================================
+        FramebufferSpecification fbSpec;
+        fbSpec.Width = (uint32_t)m_ViewportSize.x;
+        fbSpec.Height = (uint32_t)m_ViewportSize.y;
+        fbSpec.Samples = VulkanContext::Get()->GetMSAASamples();
+        fbSpec.RenderPass = VulkanContext::Get()->GetRenderPass("Mesh")->GetVkRenderPass();
+        auto fb = Framebuffer::Create(fbSpec);
+        Renderer::SetOffscreenFramebuffer(fb);
+
+        // Initialize camera projection to match actual FBO dimensions
+        m_EditorCamera.SetViewportSize((float)fbSpec.Width, (float)fbSpec.Height);
+
+        // ============================================================
+        // Initialize Environment Image (HDR → cubemap → mipmap → SH)
+        // ============================================================
+        m_EnvironmentImage = std::make_shared<EnvironmentImage>("HDRs/citrus_orchard_road_puresky.hdr");
+        m_EnvironmentImage->Initialize();
+
+        // Pass IBL data to VulkanContext (SH + prefiltered cubemap)
+        {
+            auto envMapInfo = m_EnvironmentImage->GetCubeMap()->GetDescriptorImageInfo();
+            envMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            auto shData = m_EnvironmentImage->GetSHData();
+            VulkanContext::Get()->SetEnvironmentMap(envMapInfo, shData);
+        }
+
+        // Setup skybox rendering
+        {
+            auto skyboxShader = Renderer::GetShaderLibrary()->Get("Skybox.vert.spv");
+            auto skyboxMesh   = std::make_shared<Mesh>(Mesh::CreateCube());
+            skyboxShader->SetSamples(VulkanContext::Get()->GetMSAASamples());
+            skyboxShader->CreatePipeline(skyboxMesh->GetVertexBuffer()->GetLayout(), "Mesh");
+            Renderer::SetSkyboxData(skyboxShader, skyboxMesh);
+        }
     }
 
     void EditorLayer::OnDetach() {}
+
 	void EditorLayer::OnFixedUpdate()
     {
     	
@@ -116,13 +148,24 @@ namespace Engine {
     		m_FpsAccumulator = 0.0f;
     	}
 
-        // 1. 如果视口大小变了，通知 Scene (处理 ImGui 窗口缩放的情况)
-        // if (m_ViewportSize.x > 0.0f && m_ViewportSize.y > 0.0f && ...变了...) {
-        //     m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-        //     m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
-        // }
-
         m_EditorCamera.OnUpdate();
+
+        // ============================================================
+        // Resize offscreen FBO BEFORE rendering (must happen before 
+        // command buffer recording, otherwise CB references destroyed images)
+        // ============================================================
+        auto fb = Renderer::GetOffscreenFramebuffer();
+        if (fb)
+        {
+            uint32_t newW = (uint32_t)m_ViewportSize.x;
+            uint32_t newH = (uint32_t)m_ViewportSize.y;
+            if (newW > 0 && newH > 0 &&
+                (fb->GetWidth() != newW || fb->GetHeight() != newH))
+            {
+                fb->Resize(newW, newH);
+                m_EditorCamera.SetViewportSize((float)newW, (float)newH);
+            }
+        }
 
         // 3. 【核心调用】
         // 场景 A: 编辑器模式 (我们现在主要用这个)
@@ -138,10 +181,34 @@ namespace Engine {
     {
         EventDispatcher dispatcher(e);
         dispatcher.Dispatch<WindowResizeEvent>([this](WindowResizeEvent& e) {
-            if (e.GetWidth() <= 0 || e.GetHeight() <= 0)return false;
+            if (e.GetWidth() <= 0 || e.GetHeight() <= 0) return false;
 
-            m_ActiveScene->OnViewportResize(e.GetWidth(), e.GetHeight());
-            m_EditorCamera.SetViewportSize((float)e.GetWidth(), (float)e.GetHeight());
+            // Estimate viewport size from previous frame's viewport/window ratio.
+            // Dockspace layout keeps roughly the same proportions after resize,
+            // so this avoids using raw window size (wrong aspect) for camera/FBO.
+            float ratioX = (m_WindowSize.x > 0.0f) ? m_ViewportSize.x / m_WindowSize.x : 0.674f;
+            float ratioY = (m_WindowSize.y > 0.0f) ? m_ViewportSize.y / m_WindowSize.y : 0.70f;
+            uint32_t estW = (uint32_t)(e.GetWidth()  * ratioX);
+            uint32_t estH = (uint32_t)(e.GetHeight() * ratioY);
+            if (estW == 0) estW = 1;
+            if (estH == 0) estH = 1;
+
+            // Update window size tracking
+            m_WindowSize = { (float)e.GetWidth(), (float)e.GetHeight() };
+
+            // Resize offscreen FBO to estimated viewport size immediately
+            auto fb = Renderer::GetOffscreenFramebuffer();
+            if (fb && (fb->GetWidth() != estW || fb->GetHeight() != estH))
+            {
+                fb->Resize(estW, estH);
+            }
+
+            // Update camera projection + scene cameras with estimated viewport
+            m_EditorCamera.SetViewportSize((float)estW, (float)estH);
+            m_ActiveScene->OnViewportResize(estW, estH);
+
+            // ImGui viewport will refine this in next OnImGuiRender()
+            m_ViewportSize = { (float)estW, (float)estH };
             return false;
             });
 
@@ -149,223 +216,114 @@ namespace Engine {
     }
     void EditorLayer::OnImGuiRender()
     {
-		//// Note: Switch this to true to enable dockspace
-		//static bool dockspaceOpen = false;
-		//static bool opt_fullscreen_persistant = true;
-		//bool opt_fullscreen = opt_fullscreen_persistant;
-		//static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
+		static bool dockspaceOpen = true;
+		static bool firstFrame = true;
 
-		//// We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not dockable into,
-		//// because it would be confusing to have two docking targets within each others.
-		//ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-		//if (opt_fullscreen)
-		//{
-		//	ImGuiViewport* viewport = ImGui::GetMainViewport();
-		//	ImGui::SetNextWindowPos(viewport->Pos);
-		//	ImGui::SetNextWindowSize(viewport->Size);
-		//	ImGui::SetNextWindowViewport(viewport->ID);
-		//	ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-		//	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-		//	window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-		//	window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-		//}
+		ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+		ImGuiViewport* viewport = ImGui::GetMainViewport();
+		ImGui::SetNextWindowPos(viewport->Pos);
+		ImGui::SetNextWindowSize(viewport->Size);
+		ImGui::SetNextWindowViewport(viewport->ID);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+		window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+		window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
-		//// When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our background and handle the pass-thru hole, so we ask Begin() to not render a background.
-		//if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
-		//	window_flags |= ImGuiWindowFlags_NoBackground;
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+		ImGui::Begin("Editor", &dockspaceOpen, window_flags);
+		ImGui::PopStyleVar(3);
 
-		//// Important: note that we proceed even if Begin() returns false (aka window is collapsed).
-		//// This is because we want to keep our DockSpace() active. If a DockSpace() is inactive, 
-		//// all active windows docked into it will lose their parent and become undocked.
-		//// We cannot preserve the docking relationship between an active window and an inactive docking, otherwise 
-		//// any change of dockspace/settings would lead to windows being stuck in limbo and never being visible.
-		//ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-		//ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
-		//ImGui::PopStyleVar();
+		// ---- Dockspace ----
+		ImGuiID dockspace_id = ImGui::GetID("EditorDockSpace");
+		ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
-		//if (opt_fullscreen)
-		//	ImGui::PopStyleVar(2);
+		if (firstFrame)
+		{
+			firstFrame = false;
 
-		//// DockSpace
-		//ImGuiIO& io = ImGui::GetIO();
-		//ImGuiStyle& style = ImGui::GetStyle();
-		//float minWinSizeX = style.WindowMinSize.x;
-		//style.WindowMinSize.x = 370.0f;
-		//if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
-		//{
-		//	ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-		//	ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
-		//}
+			ImGui::DockBuilderRemoveNode(dockspace_id);
+			ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+			ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
 
-		//style.WindowMinSize.x = minWinSizeX;
+			// Layout: Left(sceneHierarchy+stats) | Center(scene) | Right(properties)
+			ImGuiID dock_left;
+			ImGuiID dock_main;
+			ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.15f, &dock_left, &dock_main);
+			ImGuiID dock_right;
+			ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.176f, &dock_right, &dock_main);
 
+			// Left column: top = Scene Hierarchy, bottom = Stats
+			ImGuiID dock_bottom;
+			ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.3f, &dock_bottom, &dock_main);
+
+			ImGui::DockBuilderDockWindow("Scene Hierarchy", dock_left);
+			ImGui::DockBuilderDockWindow("Stats", dock_bottom);
+			ImGui::DockBuilderDockWindow("Properties", dock_right);
+			ImGui::DockBuilderDockWindow("Scene", dock_main);
+
+			ImGui::DockBuilderFinish(dockspace_id);
+		}
+
+		// ---- Menu Bar ----
 		if (ImGui::BeginMenuBar())
 		{
 			if (ImGui::BeginMenu("File"))
 			{
-				if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
-				{
-					//OpenProject();
-				}
-
+				if (ImGui::MenuItem("Open Project...", "Ctrl+O")) {}
 				ImGui::Separator();
-
-				if (ImGui::MenuItem("New Scene", "Ctrl+N"))
-				{
-					//NewScene();
-				}
-
-				if (ImGui::MenuItem("Save Scene", "Ctrl+S"))
-				{
-					//SaveScene();
-				}
-
-				if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S"))
-				{
-					//SaveSceneAs();
-				}
-
+				if (ImGui::MenuItem("New Scene", "Ctrl+N")) {}
+				if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {}
+				if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) {}
 				ImGui::Separator();
-
-				if (ImGui::MenuItem("Exit"))
-				{
-					//Application::Get().Close();
-				}
-
+				if (ImGui::MenuItem("Exit")) {}
 				ImGui::EndMenu();
 			}
-
 			if (ImGui::BeginMenu("Script"))
 			{
-				if (ImGui::MenuItem("Reload assembly", "Ctrl+R")) 
-				{
-					//ScriptEngine::ReloadAssembly();
-				}
-
+				if (ImGui::MenuItem("Reload assembly", "Ctrl+R")) {}
 				ImGui::EndMenu();
 			}
-
 			ImGui::EndMenuBar();
 		}
 
+		// ---- Dockable Windows ----
 		m_SceneHierarchyPanel.OnImGuiRender();
-		//m_ContentBrowserPanel->OnImGuiRender();
 
 		ImGui::Begin("Stats");
-
-#if 0
-		std::string name = "None";
-		if (m_HoveredEntity)
-			name = m_HoveredEntity.GetComponent<TagComponent>().Tag;
-		ImGui::Text("Hovered Entity: %s", name.c_str());
-#endif
-
-		//auto stats = Renderer2D::GetStats();
 		ImGui::Text("FPS: %.1f", m_Fps);
 		ImGui::Text("Frame Time: %.2f ms", m_FrameTime * 1000.0f);
 		ImGui::Separator();
-		ImGui::Text("Renderer Stats:( not ready yet)");
-		//ImGui::Text("Draw Calls: %d", stats.DrawCalls);
-		//ImGui::Text("Quads: %d", stats.QuadCount);
-		//ImGui::Text("Vertices: %d", stats.GetTotalVertexCount());
-		//ImGui::Text("Indices: %d", stats.GetTotalIndexCount());
-
+		ImGui::Text("Renderer Stats: (not ready yet)");
 		ImGui::End();
 
-		ImGui::Begin("Settings( not ready yet)");
-		//ImGui::Checkbox("Show physics colliders", &m_ShowPhysicsColliders);
+		// ---- Scene Viewport ----
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
+		ImGui::Begin("Scene");
 
-		//ImGui::Image((ImTextureID)s_Font->GetAtlasTexture()->GetRendererID(), { 512,512 }, { 0, 1 }, { 1, 0 });
+		m_ViewportFocused = ImGui::IsWindowFocused();
+		m_ViewportHovered = ImGui::IsWindowHovered();
 
+		// 当 Scene viewport 被 hovered 或 focused 时，允许鼠标/键盘事件穿透到下层供相机旋转等操作
+		Application::Get().GetImGuiLayer()->SetBlockEvents(!m_ViewportHovered && !m_ViewportFocused);
+
+		ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+		m_ViewportSize = { viewportSize.x, viewportSize.y };
+
+		// Track window size for aspect-ratio estimation in WindowResizeEvent
+		ImVec2 winSize = ImGui::GetWindowSize();
+		m_WindowSize = { winSize.x, winSize.y };
+
+		// Display offscreen framebuffer texture in the Scene viewport
+		auto fb = Renderer::GetOffscreenFramebuffer();
+		if (fb)
+		{
+			uint64_t texID = fb->GetColorAttachmentRendererID();
+			ImGui::Image((ImTextureID)texID, viewportSize, ImVec2{0, 0}, ImVec2{1, 1});
+		}
 
 		ImGui::End();
+		ImGui::PopStyleVar();
 
-		//ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
-		//ImGui::Begin("Viewport");
-		//auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
-		//auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
-		//auto viewportOffset = ImGui::GetWindowPos();
-		//m_ViewportBounds[0] = { viewportMinRegion.x + viewportOffset.x, viewportMinRegion.y + viewportOffset.y };
-		//m_ViewportBounds[1] = { viewportMaxRegion.x + viewportOffset.x, viewportMaxRegion.y + viewportOffset.y };
-
-		//m_ViewportFocused = ImGui::IsWindowFocused();
-		//m_ViewportHovered = ImGui::IsWindowHovered();
-
-		//Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportHovered);
-
-		//ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
-		//m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
-
-		//uint64_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-		//ImGui::Image(reinterpret_cast<void*>(textureID), ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
-
-		//if (ImGui::BeginDragDropTarget())
-		//{
-		//	if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
-		//	{
-		//		const wchar_t* path = (const wchar_t*)payload->Data;
-		//		OpenScene(path);
-		//	}
-		//	ImGui::EndDragDropTarget();
-		//}
-
-		//// Gizmos
-		//Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
-		//if (selectedEntity && m_GizmoType != -1)
-		//{
-		//	ImGuizmo::SetOrthographic(false);
-		//	ImGuizmo::SetDrawlist();
-
-		//	ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y, m_ViewportBounds[1].x - m_ViewportBounds[0].x, m_ViewportBounds[1].y - m_ViewportBounds[0].y);
-
-		//	// Camera
-
-		//	// Runtime camera from entity
-		//	// auto cameraEntity = m_ActiveScene->GetPrimaryCameraEntity();
-		//	// const auto& camera = cameraEntity.GetComponent<CameraComponent>().Camera;
-		//	// const glm::mat4& cameraProjection = camera.GetProjection();
-		//	// glm::mat4 cameraView = glm::inverse(cameraEntity.GetComponent<TransformComponent>().GetTransform());
-
-		//	// Editor camera
-		//	const glm::mat4& cameraProjection = m_EditorCamera.GetProjection();
-		//	glm::mat4 cameraView = m_EditorCamera.GetViewMatrix();
-
-		//	// Entity transform
-		//	auto& tc = selectedEntity.GetComponent<TransformComponent>();
-		//	glm::mat4 transform = tc.GetTransform();
-
-		//	// Snapping
-		//	bool snap = Input::IsKeyPressed(Key::LeftControl);
-		//	float snapValue = 0.5f; // Snap to 0.5m for translation/scale
-		//	// Snap to 45 degrees for rotation
-		//	if (m_GizmoType == ImGuizmo::OPERATION::ROTATE)
-		//		snapValue = 45.0f;
-
-		//	float snapValues[3] = { snapValue, snapValue, snapValue };
-
-		//	ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProjection),
-		//		(ImGuizmo::OPERATION)m_GizmoType, ImGuizmo::LOCAL, glm::value_ptr(transform),
-		//		nullptr, snap ? snapValues : nullptr);
-
-		//	if (ImGuizmo::IsUsing())
-		//	{
-		//		glm::vec3 translation, rotation, scale;
-		//		Math::DecomposeTransform(transform, translation, rotation, scale);
-
-		//		glm::vec3 deltaRotation = rotation - tc.Rotation;
-		//		tc.Translation = translation;
-		//		tc.Rotation += deltaRotation;
-		//		tc.Scale = scale;
-		//	}
-		//}
-
-
-		//ImGui::End();
-		//ImGui::PopStyleVar();
-
-		//UI_Toolbar();
-
-		//ImGui::End();
-
+		ImGui::End(); // Editor dock space
     }
 }

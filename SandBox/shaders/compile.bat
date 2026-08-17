@@ -21,17 +21,14 @@ echo [2/4] Compiling Mesh...
 %GLSLC% MeshShader.vert -o Mesh.vert.spv
 %GLSLC% MeshShader.frag -o Mesh.frag.spv
 
-rem --- 编译 GaussianSplat Shader ---
-echo [3/4] Compiling GaussianSplat...
-%GLSLC% GaussianSplat.vert -o GaussianSplat.vert.spv
-%GLSLC% GaussianSplat.frag -o GaussianSplat.frag.spv
+rem --- 编译 Skybox Shader ---
+echo [3/4] Compiling Skybox...
+%GLSLC% Skybox.vert -o Skybox.vert.spv
+%GLSLC% Skybox.frag -o Skybox.frag.spv
 
-rem --- 编译 Gaussian Compute Shaders ---
-echo [4/4] Compiling Gaussian Compute...
-%GLSLC% GaussianDist.comp -o GaussianDist.comp.spv
-%GLSLC% GaussianSortUpsweep.comp -o GaussianSortUpsweep.comp.spv
-%GLSLC% GaussianSortSpine.comp -o GaussianSortSpine.comp.spv
-%GLSLC% GaussianSortDownsweep.comp -o GaussianSortDownsweep.comp.spv
+rem --- 编译 GGX Prefilter Compute Shader ---
+echo [4/4] Compiling GGXPrefilter...
+%GLSLC% GGXPrefilter.comp -o GGXPrefilter.comp.spv
 
 
 rem 检查是否有错误 (如果 glslc 返回非0，暂停看报错)

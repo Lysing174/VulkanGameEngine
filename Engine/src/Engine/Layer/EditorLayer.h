@@ -3,9 +3,10 @@
 #include "Engine/Scene/Scene.h"
 #include "Engine/Scene/Entity.h"
 #include "Engine/Renderer/EditorCamera.h"
-#include "Engine/Renderer/FrameBuffer.h"
+#include "Engine/Renderer/EnvironmentImage.h"
 #include "Editor/SceneHierarchyPanel.h"
 #include <chrono>
+#include <memory>
 
 namespace Engine {
 
@@ -31,7 +32,6 @@ namespace Engine {
             Edit = 0, Play = 1, Simulate = 2
         };
         SceneState m_SceneState = SceneState::Edit;
-        std::shared_ptr<Framebuffer> m_Framebuffer;
         EditorCamera m_EditorCamera;
 
         Entity m_CubeEntity; 
@@ -39,6 +39,9 @@ namespace Engine {
         std::shared_ptr<Material> m_RedMaterial;
 
         glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };
+        glm::vec2 m_WindowSize   = { 1280.0f, 720.0f };
+        bool m_ViewportFocused = false;
+        bool m_ViewportHovered = false;
 
         // FPS
         std::chrono::time_point<std::chrono::high_resolution_clock> m_LastFrameTime;
@@ -48,5 +51,8 @@ namespace Engine {
         int m_FrameCount = 0;
 
         SceneHierarchyPanel m_SceneHierarchyPanel;
+
+        // IBL environment
+        std::shared_ptr<EnvironmentImage> m_EnvironmentImage;
     };
 }
