@@ -106,21 +106,23 @@ namespace Engine {
 				m_Accumulator -= m_FixedTimeStep;
 			}
 
+			Renderer::BeginScene(m_EditorLayer->GetEditorCamera());
 			//Update
 			for (Layer* layer : m_LayerStack)
 			{
 				layer->OnUpdate();
 			}
-
+			Renderer::RunMeshPass();
+			
 			m_ImGuiLayer->Begin();
-
 			for (Layer* layer : m_LayerStack)
 				layer->OnImGuiRender();
-
 			m_ImGuiLayer->End();
-
-			// ImGui::Render() 已生成 drawData，现在可以绘制 ImGui 并提交帧
-			Renderer::PresentFrame();
+			// ImGui::Render() 已在 ImGuiLayer::End() 中生成 drawData，
+			// 现在录制 ImGui Pass 并提交整帧
+			Renderer::RunImGuiPass();
+			
+			Renderer::EndScene();
 
 		}
 	}

@@ -22,14 +22,14 @@ namespace Engine {
 
         virtual uint32_t GetWidth() const override { return m_Width; }
         virtual uint32_t GetHeight() const override { return m_Height; }
-        virtual uint32_t GetRendererID() const override;
+        //virtual uint32_t GetRendererID() const override;
         virtual std::string GetPath() const override { return m_Path; }
 
         // Delegate to underlying VulkanImage
         VkImage GetImage() const { return m_Image->GetImage(); }
         VkImageView GetImageView() const { return m_Image->GetImageView(); }
         VkSampler GetSampler() const { return m_Sampler; }
-        VkDescriptorSet GetDescriptorSet() const { return m_MaterialDescriptorSet; }
+        //VkDescriptorSet GetDescriptorSet() const { return m_MaterialDescriptorSet; }
         const VkDescriptorImageInfo& GetDescriptorImageInfo() const { return m_DescriptorImageInfo; }
 
         // Access the underlying VulkanImage (for compute shader usage)
@@ -42,9 +42,7 @@ namespace Engine {
         std::unique_ptr<VulkanImage> m_Image;
         VkSampler m_Sampler = VK_NULL_HANDLE;
         VkFormat m_ImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
-
-        // 用于 ImGui 显示或绑定到材质的 DescriptorSet
-        VkDescriptorSet m_MaterialDescriptorSet = VK_NULL_HANDLE;
+        
         VkDescriptorImageInfo m_DescriptorImageInfo;
     };
 

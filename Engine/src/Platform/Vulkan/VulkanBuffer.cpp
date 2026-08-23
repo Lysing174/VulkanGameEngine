@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "VulkanBuffer.h"
 
 #include "Engine/Core/Application.h"
@@ -82,12 +82,13 @@ namespace Engine {
 		vkMapMemory(device, m_Memory, offset, size, 0, &mapped);
 		memcpy(mapped, data, (size_t)size);
 
-		// 非 coherent 内存需要 flush
+		// 非 coherent 内存需要 flush. 直接 flush 整块内存 (VK_WHOLE_SIZE) 可避免
+		// offset/size 必须按 nonCoherentAtomSize 对齐的限制 (VUID-VkMappedMemoryRange-size-01390).
 		VkMappedMemoryRange range = {};
 		range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
 		range.memory = m_Memory;
-		range.offset = offset;
-		range.size = size;
+		range.offset = 0;
+		range.size = VK_WHOLE_SIZE;
 		vkFlushMappedMemoryRanges(device, 1, &range);
 
 		vkUnmapMemory(device, m_Memory);

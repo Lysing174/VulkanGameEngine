@@ -14,6 +14,7 @@ workspace "VulkanEngine"
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
 include "vendor/bin/imgui"
+include "vendor/bin/imguizmo"
 
 project "Engine"
 	location "Engine"
@@ -40,6 +41,7 @@ project "Engine"
 		"ThirdParty/Include",
 		"Engine/src",
 		"vendor/bin/imgui",
+		"vendor/bin/imguizmo",
 		"vendor/bin/entt",
 		"vendor/bin/tiny_gltf",
 		"vendor/bin/happly",
@@ -54,6 +56,7 @@ project "Engine"
 	links {
         "glfw3.lib",
 		"ImGui",
+		"ImGuizmo",
 		"vulkan-1.lib"
     }
 	filter "system:windows"
@@ -103,6 +106,7 @@ project "SandBox"
 		"ThirdParty/Include",
 		"Engine/src",
 		"vendor/bin/imgui",
+		"vendor/bin/imguizmo",
 		"vendor/bin/tiny_gltf",
 		"vendor/bin/entt",
 		"vendor/bin/happly",
@@ -118,6 +122,7 @@ project "SandBox"
 	links
 	{
 		"ImGui",
+		"ImGuizmo",
 		"Engine"
 	}
 

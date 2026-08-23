@@ -12,6 +12,9 @@
 bin/
 bin-int/
 
+# c2puml 输出目录
+c2puml_output/
+
 # 操作系统文件
 .DS_Store
 Thumbs.db

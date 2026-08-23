@@ -91,10 +91,6 @@ namespace Engine {
 			0, spec.MipLevels,
 			0, spec.ArrayLayers
 		);
-
-		if (!spec.DebugName.empty())
-			EG_CORE_INFO("Created VulkanImage: {0} ({1}x{2}, {3} mips, {4} layers)",
-				spec.DebugName, spec.Width, spec.Height, spec.MipLevels, spec.ArrayLayers);
 	}
 
 	VulkanImage::~VulkanImage()

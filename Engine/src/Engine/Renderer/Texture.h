@@ -14,7 +14,7 @@ namespace Engine {
         virtual void Bind(uint32_t slot = 0) const = 0;
 
         // 绑定 ID (用于 ImGui 显示)
-        virtual uint32_t GetRendererID() const = 0;
+        //virtual uint32_t GetRendererID() const = 0;
 
         virtual std::string GetPath() const = 0;
 

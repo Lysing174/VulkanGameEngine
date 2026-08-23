@@ -127,9 +127,8 @@ namespace Engine {
 
 	void Scene::RenderEditorScene(EditorCamera& camera)
 	{
-		Renderer::BeginScene(camera);
-
-		// 收集所有光照 — 开启光照收集
+		// 仅收集本帧需提交的数据 (光源 / Mesh)
+		// BeginScene / RunMeshPass 由上层 (EditorLayer) 驱动
 		Renderer::BeginLightCollection();
 
 		// 收集点光源
@@ -148,23 +147,23 @@ namespace Engine {
 			Renderer::SubmitDirectLight(light.Direction, light.Color, light.Intensity);
 		}
 
-		// Draw Meshes
+		// 收集 Mesh
 		auto meshView = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
 		for (auto entity : meshView)
 		{
 			auto [transform, renderer, filter] = meshView.get<TransformComponent, MeshRendererComponent, MeshFilterComponent>(entity);
-			if (filter.Mesh)
-			{
-				Renderer::SubmitMesh(
-					transform.GetTransform(),
-					filter.Mesh,      
-					std::make_shared<MeshRendererComponent>(renderer), 
-					(int)entity
-				);
-			}
+			if (!filter.HasMesh())
+				continue;
+
+			Renderer::SubmitMesh(
+				transform.GetTransform(),
+				filter.GetMeshID(),
+				renderer,
+				(int)entity
+			);
 		}
 
-		Renderer::EndScene();
+		// 数据收集完毕，Mesh Pass 录制由上层调用 Renderer::RunMeshPass() 完成
 	}
 
 	template<typename T>

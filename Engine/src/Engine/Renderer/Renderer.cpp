@@ -12,7 +12,8 @@
 namespace Engine {
     Renderer::API Renderer::s_API = Renderer::API::Vulkan;
 	std::vector<MeshRenderCommandRequest> Renderer::s_MeshRenderQueue;
-    std::shared_ptr<ShaderLibrary> Renderer::s_ShaderLibrary = std::make_shared<ShaderLibrary>();
+    std::unique_ptr<ShaderLibrary> Renderer::s_ShaderLibrary = std::make_unique<ShaderLibrary>();
+    std::unique_ptr<ModelLibrary> Renderer::s_ModelLibrary = std::make_unique<ModelLibrary>();
     std::shared_ptr<Framebuffer> Renderer::s_OffscreenFramebuffer = nullptr;
     Renderer::SceneData Renderer::s_SceneData;
 
@@ -71,7 +72,7 @@ namespace Engine {
         return;
 	}
 
-	void Renderer::EndScene()
+	void Renderer::RunMeshPass()
 	{
 		switch (Renderer::GetAPI())
 		{
@@ -91,10 +92,19 @@ namespace Engine {
 				VulkanRenderer::BeginMeshRenderPass(
 					std::static_pointer_cast<VulkanFramebuffer>(s_OffscreenFramebuffer));
 
+				// 绑定 global descriptor set：swapchain/descriptor 重建期间可能为 VK_NULL_HANDLE，
+				// 此时直接跳过绘制 (避免 VUID-vkCmdBindDescriptorSets-None-08600)
+				VkDescriptorSet globalSet = VulkanContext::Get()->GetCurrentDescriptorSet();
+				if (globalSet == VK_NULL_HANDLE)
+				{
+					VulkanRenderer::EndRenderPass();  // Close mesh RP (nothing drawn)
+					break;
+				}
+
 				// Draw skybox first (behind all meshes, depth write off)
 				DrawSkybox();
 
-				FlushMeshPass();
+				DrawMeshes();
 				VulkanRenderer::EndRenderPass();  // Close mesh RP
 				break;
 			}
@@ -102,7 +112,7 @@ namespace Engine {
 		}
 	}
 
-	void Renderer::PresentFrame()
+	void Renderer::RunImGuiPass()
 	{
 		switch (Renderer::GetAPI())
 		{
@@ -112,27 +122,54 @@ namespace Engine {
 				VulkanRenderer::BeginUIRenderPass();  // Open ImGui RP (LOAD, not CLEAR)
 				VulkanRenderer::DrawImGui();           // Draw ImGui in its own RP
 				VulkanRenderer::EndRenderPass();        // Close ImGui RP
-				VulkanRenderer::EndScene();             // Submit command buffer
 				break;
 			}
 		default: EG_CORE_ASSERT(false, "Unknown RendererAPI!"); return;
 		}
 	}
 
-    void Renderer::SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<MeshRendererComponent>& rendererComponent, int entityID)
+	void Renderer::EndScene()
+	{
+		switch (Renderer::GetAPI())
+		{
+		case Renderer::API::None:    EG_CORE_ASSERT(false, "RendererAPI::None is currently not supported!"); return;
+		case Renderer::API::Vulkan:
+			{
+				VulkanRenderer::EndScene();  // 提交命令缓冲并呈现
+				break;
+			}
+		default: EG_CORE_ASSERT(false, "Unknown RendererAPI!"); return;
+		}
+	}
+
+    void Renderer::SubmitMesh(const glm::mat4& transform, const UUID& meshID, const MeshRendererComponent& rendererComponent, int entityID)
     {
+        // 由 Renderer 从 ModelLibrary 按 UUID 解析出 Mesh 指针
+        auto meshModel = Renderer::GetModelLibrary()->Load(meshID);
+        auto mesh = meshModel ? meshModel->GetMesh() : nullptr;
+        if (!mesh) { return; }
+
+        // 材质来源 model (可能与 mesh 不同，支持跨模型自由组合)
+        auto matModel = Renderer::GetModelLibrary()->Load(rendererComponent.MaterialID);
+
         // 从模型矩阵获取世界位置
         glm::vec3 worldPos = glm::vec3(transform[3]);
 
         // CPU 光源裁剪: 选出最近的 N 个光源
         uint32_t lightCount = 0;
         uint32_t lightIndices[MAX_LIGHTS_PER_OBJECT] = {};
-        CullLightsForObject(worldPos, rendererComponent->MaxLights, lightCount, lightIndices);
+        CullLightsForObject(worldPos, rendererComponent.MaxLights, lightCount, lightIndices);
 
         for (const auto& submesh : mesh->GetSubmeshes())
         {
-            std::shared_ptr<Material> material = rendererComponent->GetMaterial(submesh.MaterialIndex);
-            if (!material) { EG_CORE_WARN("Can't match material!"); continue; }
+            std::shared_ptr<Material> material = nullptr;
+            if (matModel)
+            {
+                const auto& materials = matModel->GetMaterials();
+                if (submesh.MaterialIndex < materials.size())
+                    material = materials[submesh.MaterialIndex];
+            }
+            if (!material) { continue; }
 
             glm::mat4 finalTransform = transform * submesh.Transform;
 
@@ -274,10 +311,18 @@ namespace Engine {
         }
     }
 
-    void Renderer::FlushMeshPass()
+    void Renderer::DrawMeshes()
     {
         if (s_MeshRenderQueue.empty()) return;
-
+    	
+    	VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
+    	VkDescriptorSet globalDescriptorSet = VulkanContext::Get()->GetCurrentDescriptorSet();
+    	// swapchain/descriptor 重建期间 set 可能为空, 跳过绑定避免 08600 validation 报错
+    	if (globalDescriptorSet == VK_NULL_HANDLE)
+    		return;
+    	
+    	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Renderer::GetShaderLibrary()->Get("Mesh.vert.spv")->GetPipelineLayout(), 0, 1, &globalDescriptorSet, 0, nullptr);
+    	
         std::sort(s_MeshRenderQueue.begin(), s_MeshRenderQueue.end(),
             [](const MeshRenderCommandRequest& a, const MeshRenderCommandRequest& b) {
                 uint32_t shaderA = a.Material->GetShader()->GetRendererID();
@@ -330,6 +375,14 @@ namespace Engine {
 			return;
 
 		auto* ctx = VulkanContext::Get();
+
+		// swapchain/descriptor 重建 (如窗口最小化、resize、关闭) 期间,
+		// 当前帧的 global descriptor set 可能尚未分配/已失效 (VK_NULL_HANDLE).
+		// 此时绑定空 set 会触发 VUID-vkCmdDrawIndexed-None-08600, 故直接跳过本帧天空盒.
+		VkDescriptorSet globalSet = ctx->GetCurrentDescriptorSet();
+		if (globalSet == VK_NULL_HANDLE)
+			return;
+
 		VkCommandBuffer cmd = ctx->GetCurrentCommandBuffer();
 
 		s_SkyboxShader->Bind();
@@ -343,7 +396,6 @@ namespace Engine {
 		vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &vp);
 
 		// Bind global descriptor set (set=0) which contains the cubemap at binding 3
-		VkDescriptorSet globalSet = ctx->GetCurrentDescriptorSet();
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 			layout, 0, 1, &globalSet, 0, nullptr);
 

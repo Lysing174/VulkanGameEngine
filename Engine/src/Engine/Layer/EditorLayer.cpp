@@ -10,12 +10,12 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 
-// glTF PBR model paths (replace with your own .gltf/.glb files)
-const std::string NANOSUIT_PATH = "models/nanosuit/nanosuit.gltf";
-//const std::string MODEL_PATH = "models/pbr_porche/scene.gltf";
+#include "Engine/Core/ImGuiLog.h"
 
-const std::string MODEL_PATH = "models/helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
-//const std::string TEXTURE_PATH = "models/cottage_diffuse.png";
+#include <glm/gtc/type_ptr.hpp>
+
+// glTF PBR model 路径统一由 ModelLibrary 按 models/ 之后的相对路径管理
+// (见 EditorLayer::OnAttach 中的 HELMET_PATH / BUST_PATH)
 
 namespace Engine {
 
@@ -36,11 +36,16 @@ namespace Engine {
         m_RedMaterial = std::make_shared<Material>(shader);
         m_RedMaterial->SetAlbedoColor(glm::vec4(0, 1, 1, 1));
 
+        // 仅扫描模型库 (建立下拉框资产清单 + 持久化 .meta UUID)，不预加载二进制。
+        // 实际模型在 SubmitMesh 时按 UUID 懒加载，避免启动把所有模型读进内存。
+        auto* modelLibrary = Renderer::GetModelLibrary();
+        modelLibrary->ScanDirectory("models");
+
         m_ActiveScene = std::make_shared<Scene>();
 
         m_CubeEntity = m_ActiveScene->CreateEntity("Red Cube");
-        m_CubeEntity.AddComponent<MeshFilterComponent>(m_CubeMesh);
-        m_CubeEntity.AddComponent<MeshRendererComponent>(m_RedMaterial);
+        m_CubeEntity.AddComponent<MeshFilterComponent>();   // 空 UUID → 不渲染
+    	m_CubeEntity.AddComponent<MeshRendererComponent>();
 
         // Set MSAA samples before creating pipeline (must match render pass sample count)
         shader->SetSamples(VulkanContext::Get()->GetMSAASamples());
@@ -49,28 +54,23 @@ namespace Engine {
         transform.Translation = { 0.0f, 30.0f, 0.0f };
         transform.Scale = { 2.0f, 2.0f, 2.0f };
 
-		// 创建带纹理的材质
-		//std::shared_ptr<Material> houseMat = std::make_shared<Material>(shader);
-		//houseMat->SetTexture("u_AlbedoMap", Texture2D::Create(TEXTURE_PATH));
+        // 模型来源用相对路径反查 ModelLibrary 中的 UUID (组件只存 UUID)
+        const std::string HELMET_PATH = "helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
+        const std::string BUST_PATH   = "marble_bust/marble_bust_01_4k.gltf";
+
+        UUID helmetID = modelLibrary->FindIDByPath(HELMET_PATH);
+        UUID bustID   = modelLibrary->FindIDByPath(BUST_PATH);
 
         Entity HelmetEntity = m_ActiveScene->CreateEntity("Helmet");
-        Model helmetModel = Model(MODEL_PATH, shader);
-        HelmetEntity.AddComponent<MeshFilterComponent>(helmetModel.GetMesh());
-
-        // 使用 Model 加载的材质，如果模型没有材质则使用默认的 houseMat
-        auto& helmetMaterials = helmetModel.GetMaterials();
-		HelmetEntity.AddComponent<MeshRendererComponent>(helmetMaterials);
+        HelmetEntity.AddComponent<MeshFilterComponent>(helmetID);
+        HelmetEntity.AddComponent<MeshRendererComponent>(helmetID);
     	HelmetEntity.GetComponent<TransformComponent>().Translation={0.0f,0.0f,0.0f};
     	HelmetEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
     	HelmetEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
-    	
-    	Entity BustEntity = m_ActiveScene->CreateEntity("Bust");
-    	Model bustModel = Model("models/marble_bust/marble_bust_01_4k.gltf", shader);
-    	BustEntity.AddComponent<MeshFilterComponent>(bustModel.GetMesh());
 
-    	// 使用 Model 加载的材质，如果模型没有材质则使用默认的 houseMat
-    	auto& bustMaterials = bustModel.GetMaterials();
-    	BustEntity.AddComponent<MeshRendererComponent>(bustMaterials);
+    	Entity BustEntity = m_ActiveScene->CreateEntity("Bust");
+    	BustEntity.AddComponent<MeshFilterComponent>(bustID);
+    	BustEntity.AddComponent<MeshRendererComponent>(bustID);
     	BustEntity.GetComponent<TransformComponent>().Translation={4.0f,-3.0f,0.0f};
     	BustEntity.GetComponent<TransformComponent>().Scale={10.0f,10.0f,10.0f};
     	BustEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
@@ -126,6 +126,35 @@ namespace Engine {
         }
     }
 
+    void EditorLayer::InitDockspace()
+    {
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGuiID dockspace_id = ImGui::GetID("EditorDockSpace");
+
+        ImGui::DockBuilderRemoveNode(dockspace_id);
+        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
+
+        // Layout: Left(sceneHierarchy+stats) | Center(scene) | Right(properties)
+        ImGuiID dock_left;
+        ImGuiID dock_main;
+        ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.15f, &dock_left, &dock_main);
+        ImGuiID dock_right;
+        ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.176f, &dock_right, &dock_main);
+
+        // Left column: top = Scene Hierarchy, bottom = Stats
+        ImGuiID dock_bottom;
+        ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.3f, &dock_bottom, &dock_main);
+
+        ImGui::DockBuilderDockWindow("Scene Hierarchy", dock_left);
+        ImGui::DockBuilderDockWindow("Stats", dock_bottom);
+        ImGui::DockBuilderDockWindow("Log", dock_bottom);
+        ImGui::DockBuilderDockWindow("Properties", dock_right);
+        ImGui::DockBuilderDockWindow("Scene", dock_main);
+
+        ImGui::DockBuilderFinish(dockspace_id);
+    }
+
     void EditorLayer::OnDetach() {}
 
 	void EditorLayer::OnFixedUpdate()
@@ -170,7 +199,10 @@ namespace Engine {
         // 3. 【核心调用】
         // 场景 A: 编辑器模式 (我们现在主要用这个)
         // 使用 EditorCamera 渲染，不运行物理模拟
-        m_ActiveScene->OnUpdateEditor(m_EditorCamera);
+        // 渲染生命周期由本 Layer 驱动：BeginScene → 收集 → RunMeshPass
+        //Renderer::BeginScene(m_EditorCamera);
+        m_ActiveScene->OnUpdateEditor(m_EditorCamera);  // 仅收集光源 / Mesh 数据
+        //Renderer::RunMeshPass();                          // 录制 Mesh Pass
 
         // 场景 B: 游戏运行模式 (当你按下 Play 按钮时切换到这个)
         // 使用场景内的 CameraComponent 渲染，运行物理模拟和脚本
@@ -212,13 +244,25 @@ namespace Engine {
             return false;
             });
 
+        // gizmo 正在被拖拽时, 拦截鼠标/滚轮事件, 不让 EditorCamera 响应
+        // (m_GizmoUsing 在 RenderSceneViewport 中于 Manipulate 之后更新)
+        if (m_GizmoUsing && (e.GetEventType() == EventType::MouseMoved ||
+                             e.GetEventType() == EventType::MouseScrolled))
+            return;
+
         m_EditorCamera.OnEvent(e);
     }
     void EditorLayer::OnImGuiRender()
     {
-		static bool dockspaceOpen = true;
-		static bool firstFrame = true;
+		RenderDockspaceAndMenu();
+		RenderSceneHierarchy();
+		RenderStats();
+		RenderLog();
+		RenderSceneViewport();
+	}
 
+	void EditorLayer::RenderDockspaceAndMenu()
+	{
 		ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
 		ImGuiViewport* viewport = ImGui::GetMainViewport();
 		ImGui::SetNextWindowPos(viewport->Pos);
@@ -230,40 +274,20 @@ namespace Engine {
 		window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-		ImGui::Begin("Editor", &dockspaceOpen, window_flags);
+		ImGui::Begin("Editor", &m_DockspaceOpen, window_flags);
 		ImGui::PopStyleVar(3);
 
 		// ---- Dockspace ----
 		ImGuiID dockspace_id = ImGui::GetID("EditorDockSpace");
 		ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
-		if (firstFrame)
-		{
-			firstFrame = false;
-
-			ImGui::DockBuilderRemoveNode(dockspace_id);
-			ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
-			ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
-
-			// Layout: Left(sceneHierarchy+stats) | Center(scene) | Right(properties)
-			ImGuiID dock_left;
-			ImGuiID dock_main;
-			ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Left, 0.15f, &dock_left, &dock_main);
-			ImGuiID dock_right;
-			ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.176f, &dock_right, &dock_main);
-
-			// Left column: top = Scene Hierarchy, bottom = Stats
-			ImGuiID dock_bottom;
-			ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.3f, &dock_bottom, &dock_main);
-
-			ImGui::DockBuilderDockWindow("Scene Hierarchy", dock_left);
-			ImGui::DockBuilderDockWindow("Stats", dock_bottom);
-			ImGui::DockBuilderDockWindow("Properties", dock_right);
-			ImGui::DockBuilderDockWindow("Scene", dock_main);
-
-			ImGui::DockBuilderFinish(dockspace_id);
-		}
-
+    	// 一次性初始化 dockspace 布局 (懒初始化, 确保 ImGui 上下文已就绪)
+    	if (!m_DockspaceInitialized)
+    	{
+    		InitDockspace();
+    		m_DockspaceInitialized = true;
+    	}
+    	
 		// ---- Menu Bar ----
 		if (ImGui::BeginMenuBar())
 		{
@@ -285,17 +309,30 @@ namespace Engine {
 			}
 			ImGui::EndMenuBar();
 		}
+	}
 
-		// ---- Dockable Windows ----
+	void EditorLayer::RenderSceneHierarchy()
+	{
 		m_SceneHierarchyPanel.OnImGuiRender();
+	}
 
+	void EditorLayer::RenderStats()
+	{
 		ImGui::Begin("Stats");
 		ImGui::Text("FPS: %.1f", m_Fps);
 		ImGui::Text("Frame Time: %.2f ms", m_FrameTime * 1000.0f);
 		ImGui::Separator();
 		ImGui::Text("Renderer Stats: (not ready yet)");
 		ImGui::End();
+	}
 
+	void EditorLayer::RenderLog()
+	{
+		ImGuiLog::Get().Draw("Log");
+	}
+
+	void EditorLayer::RenderSceneViewport()
+	{
 		// ---- Scene Viewport ----
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{ 0, 0 });
 		ImGui::Begin("Scene");
@@ -308,7 +345,13 @@ namespace Engine {
 
 		ImVec2 viewportSize = ImGui::GetContentRegionAvail();
 		m_ViewportSize = { viewportSize.x, viewportSize.y };
-
+		// 视口像素矩形左上角: 窗口位置 + 内容区偏移(dock 边框/标题栏/padding)
+		// 给 gizmo SetRect 用, 否则命中测试区域与视觉轴错位 (IsOver 恒为 false)
+		ImVec2 contentMin = ImGui::GetWindowContentRegionMin();
+		ImVec2 sceneWindowPos = ImGui::GetWindowPos();
+		sceneWindowPos.x += contentMin.x;
+		sceneWindowPos.y += contentMin.y;
+    	
 		// Track window size for aspect-ratio estimation in WindowResizeEvent
 		ImVec2 winSize = ImGui::GetWindowSize();
 		m_WindowSize = { winSize.x, winSize.y };
@@ -321,9 +364,65 @@ namespace Engine {
 			ImGui::Image((ImTextureID)texID, viewportSize, ImVec2{0, 0}, ImVec2{1, 1});
 		}
 
+		// ---- Gizmo (绘在 Scene 视口之上) ----
+		// 必须在 Scene 窗口内调用, 这样 gizmo 才会画进当前窗口的 drawlist 并叠在图像之上
+		// 必须每帧调用: 初始化/衔接 gizmo 内部状态, 否则 IsOver/IsUsing 恒错甚至永久卡死
+		ImGuizmo::BeginFrame();
+		ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+		ImGuizmo::SetRect(sceneWindowPos.x, sceneWindowPos.y,
+		                  m_ViewportSize.x, m_ViewportSize.y);
+
+		// 模式切换热键 (仅在视口聚焦时生效)
+		if (m_ViewportFocused)
+		{
+			if (ImGui::IsKeyPressed(ImGuiKey_T)) m_GizmoOperation = ImGuizmo::TRANSLATE;
+			if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoOperation = ImGuizmo::ROTATE;
+			if (ImGui::IsKeyPressed(ImGuiKey_E)) m_GizmoOperation = ImGuizmo::SCALE;
+			if (ImGui::IsKeyPressed(ImGuiKey_W)) m_GizmoMode = (m_GizmoMode == ImGuizmo::LOCAL) ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+		}
+
+		Entity selectedEntity = m_SceneHierarchyPanel.GetSelectedEntity();
+    	if (selectedEntity)
+		{
+			// 相机矩阵 (EditorCamera 的 projection 是 GLM OpenGL 风格, Z∈[-1,1],
+			// 与 ImGuizmo 约定一致, 无需 Vulkan Z-flip)
+			glm::mat4 view = m_EditorCamera.GetViewMatrix();
+			glm::mat4 projection = m_EditorCamera.GetProjection();
+			glm::mat4 model = selectedEntity.GetComponent<TransformComponent>().GetTransform();
+
+			// 吸附步进 (按住 Ctrl 时启用)
+			float snapTranslation[3] = { 0.5f, 0.5f, 0.5f };
+			float snapRotation[3]    = { 15.0f, 15.0f, 15.0f };
+			float snapScale[3]       = { 0.1f, 0.1f, 0.1f };
+			float* snap = nullptr;
+			if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl))
+			{
+				if (m_GizmoOperation == ImGuizmo::TRANSLATE) snap = snapTranslation;
+				else if (m_GizmoOperation == ImGuizmo::ROTATE) snap = snapRotation;
+				else if (m_GizmoOperation == ImGuizmo::SCALE) snap = snapScale;
+			}
+		if (ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection),
+
+			                         m_GizmoOperation, m_GizmoMode,
+			                         glm::value_ptr(model), nullptr, snap))
+			{
+				// 把 gizmo 修改后的 model 矩阵分解回 TransformComponent
+				glm::vec3 translation, rotationEuler, scale;
+				ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model),
+					glm::value_ptr(translation), glm::value_ptr(rotationEuler), glm::value_ptr(scale));
+				auto& tc = selectedEntity.GetComponent<TransformComponent>();
+				tc.Translation = translation;
+				tc.Rotation = glm::radians(rotationEuler); // Decompose 返回角度(度)
+				tc.Scale = scale;
+			}
+		}
+
+		// 记录本帧 gizmo 是否正在被拖拽, 供 OnEvent 拦截相机输入
+		m_GizmoUsing = ImGuizmo::IsUsing();
+
 		ImGui::End();
 		ImGui::PopStyleVar();
 
 		ImGui::End(); // Editor dock space
-    }
+	}
 }

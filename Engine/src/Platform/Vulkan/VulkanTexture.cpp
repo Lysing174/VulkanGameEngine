@@ -149,20 +149,20 @@ namespace Engine {
         {
             vkDestroySampler(device, m_Sampler, nullptr);
         }
-        if (m_MaterialDescriptorSet != VK_NULL_HANDLE)
-        {
-            vkFreeDescriptorSets(device, VulkanContext::Get()->GetDescriptorPool(), 1, &m_MaterialDescriptorSet);
-        }
+        // if (m_MaterialDescriptorSet != VK_NULL_HANDLE)
+        // {
+        //     vkFreeDescriptorSets(device, VulkanContext::Get()->GetDescriptorPool(), 1, &m_MaterialDescriptorSet);
+        // }
         // VulkanImage is destroyed via unique_ptr destructor
     }
 
-    uint32_t VulkanTexture2D::GetRendererID() const
-    {
-        // ImGui uses this to display the texture — return the descriptor set if available,
-        // otherwise fall back to the image pointer (for ImGui binding in other paths)
-        if (m_MaterialDescriptorSet != VK_NULL_HANDLE)
-            return (uint32_t)(uint64_t)m_MaterialDescriptorSet;
-        return (uint32_t)(uint64_t)m_Image->GetImageView();
-    }
+    // uint32_t VulkanTexture2D::GetRendererID() const
+    // {
+    //     // ImGui uses this to display the texture — return the descriptor set if available,
+    //     // otherwise fall back to the image pointer (for ImGui binding in other paths)
+    //     if (m_MaterialDescriptorSet != VK_NULL_HANDLE)
+    //         return (uint32_t)(uint64_t)m_MaterialDescriptorSet;
+    //     return (uint32_t)(uint64_t)m_Image->GetImageView();
+    // }
 
 } // namespace Engine

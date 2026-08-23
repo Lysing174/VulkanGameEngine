@@ -1,0 +1,35 @@
+{
+  "project_name": "VulkanEngine",
+  "source_folders": [
+    "./Engine/src"
+  ],
+  "output_dir": "./c2puml_output",
+  "model_output_path": "model.json",
+  "recursive_search": true,
+  "include_depth": 2,
+  "include_filter_local_only": false,
+  "always_show_includes": false,
+  "convert_empty_class_to_artifact": false,
+  "max_function_signature_chars": 0,
+  "hide_macro_values": false,
+  "file_filters": {
+    "include": [
+      ".*\\.(c|cpp|h|hpp)$"
+    ],
+    "exclude": [
+      ".*/ThirdParty/.*",
+      ".*/ThirdParty/Include/.*",
+      ".*/vendor/.*",
+      ".*/vendor/bin/imgui/.*",
+      ".*/vendor/bin/entt/.*",
+      ".*/vendor/bin/tiny_gltf/.*",
+      ".*/vendor/bin/happly/.*",
+      ".*spdlog.*",
+      ".*glm/.*",
+      ".*D:/program/vulkanSDK.*",
+      ".*stb_image.*",
+      ".*/SandBox/.*"
+    ]
+  },
+  "file_specific": {}
+}

@@ -8,6 +8,9 @@
 #include <chrono>
 #include <memory>
 
+#include <imgui.h>
+#include <ImGuizmo.h>
+
 namespace Engine {
 
     class EditorLayer : public Layer
@@ -26,7 +29,15 @@ namespace Engine {
         EditorCamera GetEditorCamera() { return m_EditorCamera; }
 
     private:
-        std::shared_ptr<Scene> m_ActiveScene; 
+        void InitDockspace();          // 一次性布局, 在 OnAttach 调用
+        void RenderDockspaceAndMenu();
+        void RenderSceneHierarchy();
+        void RenderStats();
+        void RenderLog();
+        void RenderSceneViewport();    // 含 gizmo
+
+    private:
+        std::shared_ptr<Scene> m_ActiveScene;
         enum class SceneState
         {
             Edit = 0, Play = 1, Simulate = 2
@@ -51,6 +62,14 @@ namespace Engine {
         int m_FrameCount = 0;
 
         SceneHierarchyPanel m_SceneHierarchyPanel;
+
+        bool m_DockspaceOpen = false;
+        bool m_DockspaceInitialized = false;
+
+        // Gizmo state
+        ImGuizmo::OPERATION m_GizmoOperation = ImGuizmo::TRANSLATE;
+        ImGuizmo::MODE m_GizmoMode = ImGuizmo::LOCAL;
+        bool m_GizmoUsing = false; // 本帧 gizmo 是否正被拖拽 (由 RenderSceneViewport 更新)
 
         // IBL environment
         std::shared_ptr<EnvironmentImage> m_EnvironmentImage;

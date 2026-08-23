@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "VulkanRenderer.h"
 #include "Platform/Vulkan/VulkanContext.h"
 #include "Platform/Vulkan/VulkanBuffer.h"
@@ -23,7 +23,9 @@ namespace Engine
 		VulkanContext::Get()->BeginFrame(projView);
 		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
 		VkDescriptorSet globalDescriptorSet = VulkanContext::Get()->GetCurrentDescriptorSet();
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Renderer::GetShaderLibrary()->Get("Mesh.vert.spv")->GetPipelineLayout(), 0, 1, &globalDescriptorSet, 0, nullptr);
+		// swapchain/descriptor 重建期间 set 可能为空, 跳过绑定避免 08600 validation 报错
+		if (globalDescriptorSet != VK_NULL_HANDLE)
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Renderer::GetShaderLibrary()->Get("Mesh.vert.spv")->GetPipelineLayout(), 0, 1, &globalDescriptorSet, 0, nullptr);
 	}
 	void VulkanRenderer::EndScene()
 	{

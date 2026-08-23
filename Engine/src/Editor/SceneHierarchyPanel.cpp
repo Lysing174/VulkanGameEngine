@@ -13,6 +13,8 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cstring>
+#include <vector>
+#include <string>
 
 /* The Microsoft C++ compiler is non-compliant with the C++ standard and needs
  * the following definition to disable a security warning on std::strncpy().
@@ -20,6 +22,45 @@
 #ifdef _MSVC_LANG
 #define _CRT_SECURE_NO_WARNINGS
 #endif
+
+namespace {
+	// 渲染一个模型资产下拉框。当前选中值由 outID(资产 UUID) 表示，
+	// 选中后写回 outID。返回 true 表示用户改变了选择。
+	// 额外项：第一项 "<None>" 表示空 UUID (不渲染)。
+	bool ModelAssetCombo(const char* label, Engine::UUID& outID)
+	{
+		auto* modelLibrary = Engine::Renderer::GetModelLibrary();
+		if (!modelLibrary) return false;
+
+		const auto& assets = modelLibrary->GetAssets();
+
+		// 构建选项：第 0 项为 None，其余为资产名
+		std::vector<const char*> items;
+		items.push_back("<None>");
+		for (const auto& a : assets)
+			items.push_back(a.second.c_str());
+
+		// 当前选中 index：None=0，否则按 UUID 匹配
+		int current = 0;
+		if ((uint64_t)outID != 0)
+		{
+			for (size_t i = 0; i < assets.size(); i++)
+			{
+				if (assets[i].first == outID) { current = (int)i + 1; break; }
+			}
+		}
+
+		bool changed = ImGui::Combo(label, &current, items.data(), (int)items.size());
+		if (changed)
+		{
+			if (current == 0)
+				outID = Engine::UUID(0);
+			else
+				outID = assets[current - 1].first;
+		}
+		return changed;
+	}
+}
 
 namespace Engine {
 
@@ -56,11 +97,9 @@ namespace Engine {
 				if (ImGui::MenuItem("Create Box Entity"))
 				{
 					 Entity boxEntity = m_Context->CreateEntity("Box Entity");
-					 auto shader = Renderer::GetShaderLibrary()->Get("Mesh.vert.spv");
-					 std::shared_ptr material = std::make_shared<Material>(shader);
 
-					 boxEntity.AddComponent<MeshFilterComponent>(std::make_shared<Mesh>(Mesh::CreateCube()));
-					 boxEntity.AddComponent<MeshRendererComponent>(material);
+					 boxEntity.AddComponent<MeshFilterComponent>();
+					 boxEntity.AddComponent<MeshRendererComponent>();
 
 				}
 
@@ -323,128 +362,33 @@ namespace Engine {
 					EG_CORE_ERROR("Can't support orthographic camera!");
 				}
 			});
-
-		//DrawComponent<ScriptComponent>("Script", entity, [entity, scene = m_Context](auto& component) mutable
-		//	{
-		//		bool scriptClassExists = ScriptEngine::EntityClassExists(component.ClassName);
-
-		//		static char buffer[64];
-		//		strcpy_s(buffer, sizeof(buffer), component.ClassName.c_str());
-
-		//		UI::ScopedStyleColor textColor(ImGuiCol_Text, ImVec4(0.9f, 0.2f, 0.3f, 1.0f), !scriptClassExists);
-
-		//		if (ImGui::InputText("Class", buffer, sizeof(buffer)))
-		//		{
-		//			component.ClassName = buffer;
-		//			return;
-		//		}
-
-		//		// Fields
-		//		bool sceneRunning = scene->IsRunning();
-		//		if (sceneRunning)
-		//		{
-		//			Ref<ScriptInstance> scriptInstance = ScriptEngine::GetEntityScriptInstance(entity.GetUUID());
-		//			if (scriptInstance)
-		//			{
-		//				const auto& fields = scriptInstance->GetScriptClass()->GetFields();
-		//				for (const auto& [name, field] : fields)
-		//				{
-		//					if (field.Type == ScriptFieldType::Float)
-		//					{
-		//						float data = scriptInstance->GetFieldValue<float>(name);
-		//						if (ImGui::DragFloat(name.c_str(), &data))
-		//						{
-		//							scriptInstance->SetFieldValue(name, data);
-		//						}
-		//					}
-		//				}
-		//			}
-		//		}
-		//		else
-		//		{
-		//			if (scriptClassExists)
-		//			{
-		//				Ref<ScriptClass> entityClass = ScriptEngine::GetEntityClass(component.ClassName);
-		//				const auto& fields = entityClass->GetFields();
-
-		//				auto& entityFields = ScriptEngine::GetScriptFieldMap(entity);
-		//				for (const auto& [name, field] : fields)
-		//				{
-		//					// Field has been set in editor
-		//					if (entityFields.find(name) != entityFields.end())
-		//					{
-		//						ScriptFieldInstance& scriptField = entityFields.at(name);
-
-		//						// Display control to set it maybe
-		//						if (field.Type == ScriptFieldType::Float)
-		//						{
-		//							float data = scriptField.GetValue<float>();
-		//							if (ImGui::DragFloat(name.c_str(), &data))
-		//								scriptField.SetValue(data);
-		//						}
-		//					}
-		//					else
-		//					{
-		//						// Display control to set it maybe
-		//						if (field.Type == ScriptFieldType::Float)
-		//						{
-		//							float data = 0.0f;
-		//							if (ImGui::DragFloat(name.c_str(), &data))
-		//							{
-		//								ScriptFieldInstance& fieldInstance = entityFields[name];
-		//								fieldInstance.Field = field;
-		//								fieldInstance.SetValue(data);
-		//							}
-		//						}
-		//					}
-		//				}
-		//			}
-		//		}
-		//	});
+		
 		DrawComponent<MeshFilterComponent>("Mesh Filter", entity, [](auto& component)
 			{
-				if (component.Mesh)
-				{
-					// 展示网格信息（假设你以后给 Mesh 类加了 GetName 方法，现在可以用占位符）
-					ImGui::Text("Mesh Data: %p", component.Mesh.get());
+				ModelAssetCombo("Mesh", component.MeshID);
 
-					// 如果想展示 Submesh 数量
-					ImGui::Text("Submesh Count: %d", (int)component.Mesh->GetSubmeshes().size());
+				auto modelLibrary = Renderer::GetModelLibrary();
+				if (modelLibrary && component.HasMesh())
+				{
+					auto model = modelLibrary->Get(component.MeshID);
+					if (model && model->GetMesh())
+					{
+						ImGui::Text("Submesh Count: %d", (int)model->GetMesh()->GetSubmeshes().size());
+					}
+					else
+					{
+						ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "File not found.");
+					}
 				}
 				else
 				{
-					ImGui::TextDisabled("No mesh assigned.");
+					ImGui::TextDisabled("<None>");
 				}
 			});
 		DrawComponent<MeshRendererComponent>("Mesh Renderer", entity, [](auto& component)
 			{
-				ImGui::Checkbox("Cast Shadows", &component.CastShadows);
-				ImGui::Checkbox("Receive Shadows", &component.ReceiveShadows);
-
-				ImGui::Separator();
-
-				if (ImGui::TreeNodeEx("Materials", ImGuiTreeNodeFlags_DefaultOpen))
-				{
-					auto& materials = component.Materials;
-					for (size_t i = 0; i < materials.size(); i++)
-					{
-						std::string label = "Material " + std::to_string(i);
-
-						// 这里可以点击展开每个材质的具体颜色设置
-						if (ImGui::TreeNodeEx((void*)(uint64_t)i, ImGuiTreeNodeFlags_OpenOnArrow, label.c_str()))
-						{
-							// 这里调用之前实现的 Material::SetColor 逻辑进行简单的颜色编辑
-							// 假设你的 Material 类有 GetColor() 方法
-							// glm::vec4 color = materials[i]->GetColor();
-							// if (ImGui::ColorEdit4("Base Color", glm::value_ptr(color)))
-							//     materials[i]->SetColor(color);
-
-							ImGui::Text("Material Instance: %p", materials[i].get());
-							ImGui::TreePop();
-						}
-					}
-					ImGui::TreePop();
-				}
+				ModelAssetCombo("Material", component.MaterialID);
+			
 			});
 
 		DrawComponent<PointLightComponent>("Point Light", entity, [](auto& component)
@@ -452,6 +396,13 @@ namespace Engine {
 				ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
 				ImGui::DragFloat("Intensity", &component.Intensity, 0.1f, 0.0f, 100.0f);
 				ImGui::DragFloat("Range", &component.Range, 0.1f, 0.0f, 1000.0f);
+			});
+
+		DrawComponent<DirectLightComponent>("Direct Light", entity, [](auto& component)
+			{
+				DrawVec3Control("Direction", component.Direction, 0.0f);
+				ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
+				ImGui::DragFloat("Intensity", &component.Intensity, 0.1f, 0.0f, 100.0f);
 			});
 	}
 

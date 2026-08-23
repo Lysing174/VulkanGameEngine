@@ -52,34 +52,29 @@ namespace Engine {
 
 	struct MeshFilterComponent
 	{
-		std::shared_ptr<Mesh> Mesh;
+		// 来源模型资产 UUID (由 ModelLibrary 持久化在 .meta 中)。
+		// 组件只存 UUID，不存路径，改名/移动文件不影响引用。
+		UUID MeshID;
 
-		MeshFilterComponent() = default;
-		MeshFilterComponent(const std::shared_ptr<Engine::Mesh>& mesh)
-			: Mesh(mesh) {}
+		MeshFilterComponent() : MeshID(0) {}
+		MeshFilterComponent(const UUID& meshID) : MeshID(meshID) {}
+
+		bool HasMesh() const { return (uint64_t)MeshID != 0; }
+		const UUID& GetMeshID() const { return MeshID; }
 	};
 
 	struct MeshRendererComponent
 	{
-		std::vector<std::shared_ptr<Material>> Materials;
-
-		std::shared_ptr<Material> GetMaterial(uint32_t index = 0)
-		{
-			if (index < Materials.size()) return Materials[index];
-			return nullptr; 
-		}
-
-		bool CastShadows = true;    // 是否投射阴影
-		bool ReceiveShadows = true; // 是否接收阴影
+		// 材质来源模型资产 UUID (与 Mesh 可来自不同模型，支持自由组合)。
+		UUID MaterialID;
+		
 		uint32_t MaxLights = 4;     // 最多作用该物体的光源数量
 
-		MeshRendererComponent() = default;
-		MeshRendererComponent(const std::vector<std::shared_ptr<Material>>& materials)
-			: Materials(materials) {}
-		MeshRendererComponent(std::shared_ptr<Material> material)
-		{
-			Materials.push_back(material);
-		}
+		MeshRendererComponent() : MaterialID(0) {}
+		MeshRendererComponent(const UUID& materialID) : MaterialID(materialID) {}
+
+		bool HasMaterial() const { return (uint64_t)MaterialID != 0; }
+		const UUID& GetMaterialID() const { return MaterialID; }
 	};
 	struct CameraComponent
 	{

@@ -36,7 +36,6 @@ namespace Engine {
 		m_DescriptorInfo.imageView = m_Image->GetImageView();
 		m_DescriptorInfo.sampler = m_Sampler;
 
-		EG_CORE_INFO("Created CubeTexture: {0}x{1}, {2} mips", width, height, mipLevels);
 	}
 
 	VulkanCubeTexture::~VulkanCubeTexture()

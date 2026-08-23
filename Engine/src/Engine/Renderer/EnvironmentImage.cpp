@@ -330,8 +330,6 @@ void EnvironmentImage::UploadCubemapToGPU()
 
 	// staging buffer 在作用域结束时自动销毁
 
-	EG_CORE_INFO("EnvironmentImage: base level uploaded to GPU");
-
 	// Transition back to GENERAL for compute shader access
 	m_CubeMap->GetImage().TransitionLayout(
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,

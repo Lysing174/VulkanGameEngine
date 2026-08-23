@@ -4,6 +4,7 @@
 #include <Engine/Renderer/EditorCamera.h>
 #include <Engine/Scene/Components.h>
 #include <Engine/Renderer/Shader.h>
+#include <Engine/Renderer/ModelLibrary.h>
 #include <Engine/Renderer/Buffer.h>
 #include <Engine/Renderer/FrameBuffer.h>
 
@@ -52,11 +53,14 @@ namespace Engine {
 		//
 		// static void BeginScene(const Camera& camera, const glm::mat4& transform);
 		static void BeginScene(const EditorCamera& camera);
-		static void EndScene();       // 录制场景命令 (Mesh + Gaussian)，不提交
-		static void PresentFrame();   // 绘制 ImGui + 提交命令缓冲 + 呈现
+		static void RunMeshPass();    // 录制 Mesh Pass (开 pass → 绑 global set → 空则跳过 → skybox → mesh → end pass)
+		static void RunImGuiPass();   // 录制 ImGui Pass (开 pass → 画 ImGui → end pass)
+		static void EndScene();       // 提交命令缓冲并呈现 (RunImGuiPass 之后调用)
 		static void OnSwapchainRecreated(); // Swapchain 重建后更新深度纹理 descriptor
 
-		static void SubmitMesh(const glm::mat4& transform, const std::shared_ptr<Mesh>& mesh, const std::shared_ptr<MeshRendererComponent>& rendererComponent, int entityID = -1);
+		// meshID 为 MeshFilterComponent 的模型资产 UUID；
+		// material 来源由 rendererComponent.MaterialID 指定 (可与 mesh 不同模型，自由组合)。
+		static void SubmitMesh(const glm::mat4& transform, const UUID& meshID, const MeshRendererComponent& rendererComponent, int entityID = -1);
 
 		// 光照系统：收集 + 上传
 		static void BeginLightCollection();
@@ -67,7 +71,8 @@ namespace Engine {
 		                                uint32_t& outCount, uint32_t* outIndices);
 
 		static API GetAPI() { return s_API; }
-		static std::shared_ptr<ShaderLibrary> GetShaderLibrary() { return s_ShaderLibrary; }
+		static ShaderLibrary* GetShaderLibrary() { return s_ShaderLibrary.get(); }
+		static ModelLibrary* GetModelLibrary() { return s_ModelLibrary.get(); }
 		static void SetOffscreenFramebuffer(const std::shared_ptr<Framebuffer>& fb) { s_OffscreenFramebuffer = fb; }
 		static std::shared_ptr<Framebuffer> GetOffscreenFramebuffer() { return s_OffscreenFramebuffer; }
 
@@ -77,13 +82,15 @@ namespace Engine {
 	private:
 		static void DrawSkybox();
 		static void DrawMesh(const MeshRenderCommandRequest& request);
-		static void FlushMeshPass();
+		static void DrawMeshes();
 		static void CreateLightBuffer();       // 创建光照 SSBO
 		static void UpdateLightBuffer();       // 更新光照 SSBO (每帧)
 
 	private:
 		static API s_API;
-
+		static std::unique_ptr<ModelLibrary> s_ModelLibrary;
+		static std::unique_ptr<ShaderLibrary> s_ShaderLibrary;
+		
 		struct SceneData
 		{
 			glm::mat4 ViewProjectionMatrix;
@@ -98,7 +105,6 @@ namespace Engine {
 			float LightIntensity = 20.0f;
 		};
 		static std::vector<MeshRenderCommandRequest> s_MeshRenderQueue;
-		static std::shared_ptr<ShaderLibrary> s_ShaderLibrary;
 		static std::shared_ptr<Framebuffer> s_OffscreenFramebuffer;
 		static SceneData s_SceneData;
 
