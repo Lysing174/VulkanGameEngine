@@ -108,6 +108,7 @@ namespace Engine {
         virtual void BeginFrame(glm::mat4 projView) override;
         virtual void EndFrame() override;
 		void BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB);
+        void BeginShadowRenderPass(VkFramebuffer shadowFB);
         void BeginUIRenderPass();
         void EndRenderPass();
         void DrawImGui();
@@ -154,6 +155,13 @@ namespace Engine {
 		VkFormat GetSwapChainImageFormat() { return swapChainImageFormat; }
 		VkFormat GetDepthFormat() { return depthImageFormat; }
 		VkImageView GetDepthImageView() { return depthImageView; }
+
+		// Shadow maps (方向光阴影贴图, 数组 MAX_SHADOW_MAPS)
+		VkImageView GetShadowMapView(uint32_t index) { return (index < MAX_SHADOW_MAPS) ? m_ShadowViews[index] : VK_NULL_HANDLE; }
+		VkSampler   GetShadowSampler() { return m_ShadowSampler; }
+		VkFramebuffer GetShadowFramebuffer(uint32_t index) { return (index < MAX_SHADOW_MAPS) ? m_ShadowFramebuffers[index] : VK_NULL_HANDLE; }
+		std::shared_ptr<VulkanRenderPass> GetShadowRenderPass() { return renderPassesMap["Shadow"]; }
+		VkExtent2D  GetShadowMapExtent() { return m_ShadowExtent; }
 		VkSampleCountFlagBits GetMSAASamples() const { return m_MSAASamples; }
 		void SetMSAASamples(VkSampleCountFlagBits samples) { m_MSAASamples = samples; }
 
@@ -164,6 +172,11 @@ namespace Engine {
 
 		// IBL: set environment map (cubemap + SH coefficients) after initialization
 		void SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData);
+
+		// Shadow UBO (set=0, binding=5): 光视矩阵 + 光源→阴影图映射 + bias
+		VkBuffer GetShadowUBO() { return m_ShadowUBO.GetBuffer(); }
+		VkDeviceMemory GetShadowUBOMemory() { return m_ShadowUBO.GetMemory(); }
+		VkDeviceSize GetShadowUBOSize() { return m_ShadowUBO.GetSize(); }
 
 		static VulkanContext* Get() { return s_Instance; }
 
@@ -183,14 +196,24 @@ namespace Engine {
 
         std::vector<VulkanBuffer> uniformBuffers;
         VulkanBuffer m_LightSSBO;
+		VulkanBuffer m_ShadowUBO;   // 阴影数据 UBO (set=0 binding=5)
 
         // IBL: SH coefficients buffer + cached environment map descriptor
         VulkanBuffer m_IBL_SHBuffer;
         VkDescriptorImageInfo m_EnvMapDescriptor{};
-        VkImage depthImage;
+		VkImage depthImage;
 		VkDeviceMemory depthImageMemory;
 		VkImageView depthImageView;
 		VkFormat depthImageFormat;
+
+		// Shadow map resources (方向光阴影贴图)
+		VkExtent2D m_ShadowExtent = { 2048, 2048 };
+		VkImage     m_ShadowImages[MAX_SHADOW_MAPS] = {};
+		VkDeviceMemory m_ShadowMemory[MAX_SHADOW_MAPS] = {};
+		VkImageView m_ShadowViews[MAX_SHADOW_MAPS] = {};
+		VkSampler   m_ShadowSampler = VK_NULL_HANDLE;
+		VkFramebuffer m_ShadowFramebuffers[MAX_SHADOW_MAPS] = {};
+		bool        m_ShadowResourcesCreated = false;
 
 		// MSAA resources
 		VkSampleCountFlagBits m_MSAASamples = VK_SAMPLE_COUNT_4_BIT;
@@ -239,6 +262,7 @@ namespace Engine {
         void createDescriptorSets();
         void createCommandBuffers();
         void createSemaphores();
+		void createShadowResources();   // 创建阴影贴图 (image/view/sampler/renderpass/framebuffer)
 
         std::vector<const char*> getRequiredExtensions();
         bool checkValidationLayerSupport();

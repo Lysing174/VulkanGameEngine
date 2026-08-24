@@ -130,6 +130,7 @@ namespace Engine {
 		// 仅收集本帧需提交的数据 (光源 / Mesh)
 		// BeginScene / RunMeshPass 由上层 (EditorLayer) 驱动
 		Renderer::BeginLightCollection();
+		Renderer::BeginShadowCollection();
 
 		// 收集点光源
 		auto pointLightView = m_Registry.view<TransformComponent, PointLightComponent>();
@@ -144,9 +145,17 @@ namespace Engine {
 		for (auto entity : directLightView)
 		{
 			auto [transform, light] = directLightView.get<TransformComponent, DirectLightComponent>(entity);
-			Renderer::SubmitDirectLight(light.Direction, light.Color, light.Intensity);
-		}
 
+			// 方向光方向 = 其 Transform 本地 +Z 轴 (光从原点照向 +Z)
+			glm::vec3 lightDir = glm::normalize(glm::mat3(transform.GetTransform()) * glm::vec3(0.0f, 0.0f, 1.0f));
+			uint32_t lightIdx = Renderer::SubmitDirectLight(lightDir, light.Color, light.Intensity);
+
+			// 收集开启阴影的方向光 (CastShadow): 范围盒 = Transform (位置=近端面, Scale=半长)
+			if (light.CastShadow)
+				Renderer::SubmitShadowLight(transform.Translation, lightDir, transform.Scale,
+											light.ShadowBias, lightIdx);
+		}
+				
 		// 收集 Mesh
 		auto meshView = m_Registry.view<TransformComponent, MeshRendererComponent, MeshFilterComponent>();
 		for (auto entity : meshView)

@@ -7,6 +7,8 @@
 
 # 模型文件
 *.ply
+SandBox/models/
+SandBox/gaussians/
 
 # 输出
 bin/

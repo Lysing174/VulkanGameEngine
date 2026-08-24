@@ -16,6 +16,7 @@ namespace Engine {
 		virtual ~VulkanShader();
 
 		virtual void Bind() const override;
+		virtual void Bind(const std::string& renderpassName) const override;
 		virtual void Unbind() const override;
 
 		virtual void CreatePipeline(const std::shared_ptr<BufferLayout>& bufferLayout, std::string pipelineName) override;

@@ -182,6 +182,43 @@ namespace Engine {
         // 结束 Mesh RenderPass
         vkCmdEndRenderPass(cmd);
     }
+
+    void VulkanContext::BeginShadowRenderPass(VkFramebuffer shadowFB)
+    {
+        // ========================================
+        // Shadow RenderPass: 仅写深度 (CLEAR depth=1.0)
+        // ========================================
+        currentRenderPassName = "Shadow";
+
+        VkRenderPassBeginInfo renderPassInfo = {};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPassesMap["Shadow"]->GetVkRenderPass();
+        renderPassInfo.framebuffer = shadowFB;
+        renderPassInfo.renderArea.offset = { 0, 0 };
+        renderPassInfo.renderArea.extent = m_ShadowExtent;
+
+        VkClearValue clearValue = {};
+        clearValue.depthStencil = { 1.0f, 0 };
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearValue;
+
+        vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        // viewport / scissor → 阴影贴图尺寸
+        VkViewport viewport = {};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float)m_ShadowExtent.width;
+        viewport.height = (float)m_ShadowExtent.height;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(commandBuffers[currentImageIndex], 0, 1, &viewport);
+
+        VkRect2D scissor = {};
+        scissor.offset = { 0, 0 };
+        scissor.extent = m_ShadowExtent;
+        vkCmdSetScissor(commandBuffers[currentImageIndex], 0, 1, &scissor);
+    }
     void VulkanContext::DrawImGui()
     {
         // ImGui 绘制在当前 RenderPass 内
@@ -254,23 +291,26 @@ namespace Engine {
         //createMeshRenderPass();
         renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), m_MSAASamples);
         renderPassesMap["ImGui"]=std::make_shared<VulkanRenderPass>("ImGui",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
-                
+
         createDescriptorSetLayout();
         createCommandPool();
         createDepthResources();
         createMSAAResources();
-        
+        createShadowResources();   // 创建阴影贴图资源 (image/view/sampler/renderpass/framebuffer)
+
         // ImGui pass: 只需要 swapchain image，不需要 depth
         renderPassesMap["ImGui"]->createFramebuffers(swapChainExtent, swapChainImageViews, VK_NULL_HANDLE);
         createUniformBuffer();
         createDescriptorPool();
-        createDescriptorSets();
+        createDescriptorSets();   // 需在 createShadowResources() 之后 (binding 4 写入阴影图)
         createCommandBuffers();
         createSemaphores();
     }
 
     void VulkanContext::cleanupSwapChain() {
         for (auto& renderPass : renderPassesMap) {
+            // Shadow render pass 与 swapchain 无关, 仅在 init 创建一次, 不随 swapchain 销毁/重建
+            if (renderPass.first == "Shadow") continue;
             renderPass.second->cleanup();
         }
 
@@ -347,6 +387,21 @@ namespace Engine {
         vkDestroyCommandPool(device, commandPool, nullptr);
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+
+        // 清理阴影贴图资源 (与 swapchain 无关, cleanupSwapChain 不会销毁)
+        if (m_ShadowResourcesCreated)
+        {
+            for (uint32_t s = 0; s < MAX_SHADOW_MAPS; s++)
+            {
+                if (m_ShadowFramebuffers[s] != VK_NULL_HANDLE) vkDestroyFramebuffer(device, m_ShadowFramebuffers[s], nullptr);
+                if (m_ShadowViews[s]       != VK_NULL_HANDLE) vkDestroyImageView(device, m_ShadowViews[s], nullptr);
+                if (m_ShadowImages[s]      != VK_NULL_HANDLE) vkDestroyImage(device, m_ShadowImages[s], nullptr);
+                if (m_ShadowMemory[s]      != VK_NULL_HANDLE) vkFreeMemory(device, m_ShadowMemory[s], nullptr);
+            }
+            if (auto rp = renderPassesMap["Shadow"]) rp->cleanup();
+            if (m_ShadowSampler != VK_NULL_HANDLE) vkDestroySampler(device, m_ShadowSampler, nullptr);
+            m_ShadowResourcesCreated = false;
+        }
 
         vkDestroyDevice(device, nullptr);
         if (enableValidationLayers) {
@@ -1105,6 +1160,130 @@ namespace Engine {
 
         EndSingleTimeCommands(cmd);
     }
+
+    // ============================================================
+    // Shadow map resources (方向光阴影贴图)
+    // 创建 MAX_SHADOW_MAPS 张深度图 + sampler + Shadow render pass + framebuffer
+    // 与 swapchain 无关, 仅在 init 时创建一次 (窗口 resize 不重建)
+    // ============================================================
+    void VulkanContext::createShadowResources()
+    {
+        if (m_ShadowResourcesCreated) return;
+        m_ShadowResourcesCreated = true;
+
+        VkFormat shadowFormat = VK_FORMAT_D32_SFLOAT;
+
+        // --- 1. 创建 Shadow render pass (仅深度附件), 注册进 renderPassesMap["Shadow"] ---
+        {
+            renderPassesMap["Shadow"] = std::make_shared<VulkanRenderPass>(
+                "Shadow", swapChainImageFormat, shadowFormat,
+                std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
+        }
+
+        // --- 2. 创建 sampler ---
+        {
+            VkSamplerCreateInfo samplerInfo = {};
+            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerInfo.minLod = 0.0f;
+            samplerInfo.maxLod = 1.0f;
+            samplerInfo.compareEnable = VK_FALSE; // 硬阴影, 后续 PCF 再开
+            samplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+            samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+            samplerInfo.unnormalizedCoordinates = VK_FALSE;
+
+            if (vkCreateSampler(device, &samplerInfo, nullptr, &m_ShadowSampler) != VK_SUCCESS)
+                throw std::runtime_error("failed to create shadow sampler!");
+        }
+
+        // --- 3. 创建 MAX_SHADOW_MAPS 张深度图 + view + framebuffer ---
+        VkImageMemoryBarrier depthBarrierTemplate = {};
+        for (uint32_t s = 0; s < MAX_SHADOW_MAPS; s++)
+        {
+            // 3a. image
+            VkImageCreateInfo imageInfo = {};
+            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.extent = { m_ShadowExtent.width, m_ShadowExtent.height, 1 };
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.format = shadowFormat;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+            if (vkCreateImage(device, &imageInfo, nullptr, &m_ShadowImages[s]) != VK_SUCCESS)
+                throw std::runtime_error("failed to create shadow image!");
+
+            VkMemoryRequirements memReq;
+            vkGetImageMemoryRequirements(device, m_ShadowImages[s], &memReq);
+            VkMemoryAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocInfo.allocationSize = memReq.size;
+            allocInfo.memoryTypeIndex = FindMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (vkAllocateMemory(device, &allocInfo, nullptr, &m_ShadowMemory[s]) != VK_SUCCESS)
+                throw std::runtime_error("failed to allocate shadow image memory!");
+            vkBindImageMemory(device, m_ShadowImages[s], m_ShadowMemory[s], 0);
+
+            // 3b. image view
+            VkImageViewCreateInfo viewInfo = {};
+            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            viewInfo.image = m_ShadowImages[s];
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            viewInfo.format = shadowFormat;
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            viewInfo.subresourceRange.baseMipLevel = 0;
+            viewInfo.subresourceRange.levelCount = 1;
+            viewInfo.subresourceRange.baseArrayLayer = 0;
+            viewInfo.subresourceRange.layerCount = 1;
+            if (vkCreateImageView(device, &viewInfo, nullptr, &m_ShadowViews[s]) != VK_SUCCESS)
+                throw std::runtime_error("failed to create shadow image view!");
+
+            // 3c. layout transition → DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            {
+                VkImageMemoryBarrier barrier = {};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = m_ShadowImages[s];
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+                barrier.subresourceRange.baseMipLevel = 0;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.baseArrayLayer = 0;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+                VkCommandBuffer cmd = BeginSingleTimeCommands();
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &barrier);
+                EndSingleTimeCommands(cmd);
+            }
+
+            // 3d. framebuffer
+            VkFramebufferCreateInfo fbInfo = {};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = renderPassesMap["Shadow"]->GetVkRenderPass();
+            fbInfo.attachmentCount = 1;
+            fbInfo.pAttachments = &m_ShadowViews[s];
+            fbInfo.width = m_ShadowExtent.width;
+            fbInfo.height = m_ShadowExtent.height;
+            fbInfo.layers = 1;
+            if (vkCreateFramebuffer(device, &fbInfo, nullptr, &m_ShadowFramebuffers[s]) != VK_SUCCESS)
+                throw std::runtime_error("failed to create shadow framebuffer!");
+        }
+    }
     VkFormat VulkanContext::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
         for (VkFormat format : candidates) {
             VkFormatProperties props;
@@ -1136,7 +1315,7 @@ namespace Engine {
     }
 
     void VulkanContext::createDescriptorSetLayout() {
-        std::array<VkDescriptorSetLayoutBinding, 4> bindings = {};
+        std::array<VkDescriptorSetLayoutBinding, 6> bindings = {};
 
         // Binding 0: Global UBO (projView + camera position)
         bindings[0].binding = 0;
@@ -1165,6 +1344,21 @@ namespace Engine {
         bindings[3].descriptorCount = 1;
         bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         bindings[3].pImmutableSamplers = nullptr;
+
+        // Binding 4: Shadow maps (方向光阴影贴图数组, 大小 = MAX_SHADOW_MAPS)
+        // 由 createShadowResources() 创建资源后, 在 createDescriptorSets() 中写入
+        bindings[4].binding = 4;
+        bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[4].descriptorCount = MAX_SHADOW_MAPS;
+        bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[4].pImmutableSamplers = nullptr;
+
+        // Binding 5: Shadow data UBO (光视矩阵 + 光源→阴影图映射 + bias)
+        bindings[5].binding = 5;
+        bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        bindings[5].descriptorCount = 1;
+        bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[5].pImmutableSamplers = nullptr;
 
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1211,6 +1405,11 @@ namespace Engine {
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
+        // 预先创建 Shadow data UBO (光视矩阵 + 映射 + bias)
+        m_ShadowUBO = VulkanBuffer(sizeof(ShadowUBO),
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
         std::vector<VkDescriptorSetLayout> layouts(imageCount, descriptorSetLayout);
 
         VkDescriptorSetAllocateInfo allocInfo = {};
@@ -1229,7 +1428,7 @@ namespace Engine {
 
         for (size_t i = 0; i < imageCount; i++)
         {
-            std::array<VkWriteDescriptorSet, 3> descriptorWrites = {};
+            std::array<VkWriteDescriptorSet, 5> descriptorWrites = {};
 
             // Binding 0: Global UBO
             VkDescriptorBufferInfo uboInfo = {};
@@ -1270,8 +1469,38 @@ namespace Engine {
             descriptorWrites[2].descriptorCount = 1;
             descriptorWrites[2].pBufferInfo = &shInfo;
 
+            // Binding 4: Shadow maps (数组, 大小 = MAX_SHADOW_MAPS)
+            // 所有 slot 都写入合法 image view (未使用的 slot 复用第 0 张, 避免 VK_NULL_HANDLE 触发验证层报错)
+            std::array<VkDescriptorImageInfo, MAX_SHADOW_MAPS> shadowImageInfos = {};
+            for (uint32_t s = 0; s < MAX_SHADOW_MAPS; s++)
+            {
+                shadowImageInfos[s].sampler = m_ShadowSampler;
+                shadowImageInfos[s].imageView = m_ShadowViews[s]; // 已创建满 MAX_SHADOW_MAPS 张
+                shadowImageInfos[s].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            }
+            descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[3].dstSet = descriptorSets[i];
+            descriptorWrites[3].dstBinding = 4;
+            descriptorWrites[3].dstArrayElement = 0;
+            descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[3].descriptorCount = MAX_SHADOW_MAPS;
+            descriptorWrites[3].pImageInfo = shadowImageInfos.data();
+
+            // Binding 5: Shadow data UBO
+            VkDescriptorBufferInfo shadowUBOInfo = {};
+            shadowUBOInfo.buffer = m_ShadowUBO.GetBuffer();
+            shadowUBOInfo.offset = 0;
+            shadowUBOInfo.range = m_ShadowUBO.GetSize();
+            descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[4].dstSet = descriptorSets[i];
+            descriptorWrites[4].dstBinding = 5;
+            descriptorWrites[4].dstArrayElement = 0;
+            descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[4].descriptorCount = 1;
+            descriptorWrites[4].pBufferInfo = &shadowUBOInfo;
+
             // Binding 3 (cubemap) 由 SetEnvironmentMap() 在 cubemap 加载完成后单独更新
-            vkUpdateDescriptorSets(device, 3, descriptorWrites.data(), 0, nullptr);
+            vkUpdateDescriptorSets(device, 5, descriptorWrites.data(), 0, nullptr);
         }
     }
     

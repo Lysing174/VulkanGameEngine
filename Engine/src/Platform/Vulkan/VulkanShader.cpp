@@ -74,6 +74,24 @@ namespace Engine {
         // vkCmdSetScissor(cmd, 0, 1, &scissor);
 	}
 
+	void VulkanShader::Bind(const std::string& renderpassName) const
+	{
+		auto cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
+
+		VkPipeline pipeline = VK_NULL_HANDLE;
+		auto it = m_PipelineCache.find(renderpassName);
+		if (it != m_PipelineCache.end())
+			pipeline = it->second;
+
+		if (pipeline == VK_NULL_HANDLE)
+		{
+			EG_CORE_ERROR("VulkanShader::Bind(\"{0}\") - Pipeline not found for shader: {1}", renderpassName, m_Name);
+			return;
+		}
+
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+	}
+
 	void VulkanShader::Unbind() const
 	{
 	}

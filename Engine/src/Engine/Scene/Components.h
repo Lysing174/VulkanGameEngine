@@ -99,12 +99,17 @@ namespace Engine {
 
 	struct DirectLightComponent
 	{
-		glm::vec3 Direction = { 0.0f, -1.0f, 0.0f }; // 光照方向（世界空间，从光源指向场景）
+		// 方向光方向 = 其 Transform 本地 +Z 轴 (光从原点照向 +Z)。
+		// 阴影范围 = Transform 的 Scale 分量 (半长, 即立方体半尺寸)，立方体朝向 = Transform 旋转。
+		// Transform.Translation = 阴影盒近端中心 (光所在处, 位于正交近平面)。
 		glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
 		float Intensity = 5.0f;
 
+		bool  CastShadow = false;   // 是否投射阴影
+		float ShadowBias = 0.0f; // 阴影偏移，缓解 shadow acne
+
 		DirectLightComponent() = default;
-		DirectLightComponent(const glm::vec3& direction, const glm::vec3& color, float intensity)
-			: Direction(glm::normalize(direction)), Color(color), Intensity(intensity) {}
+		DirectLightComponent(const glm::vec3& color, float intensity, bool castShadow=false, float shadowBias=0.0f)
+			: Color(color), Intensity(intensity),CastShadow(castShadow), ShadowBias(shadowBias) {}
 	};
 }

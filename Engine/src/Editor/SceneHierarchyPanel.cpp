@@ -400,9 +400,15 @@ namespace Engine {
 
 		DrawComponent<DirectLightComponent>("Direct Light", entity, [](auto& component)
 			{
-				DrawVec3Control("Direction", component.Direction, 0.0f);
+				ImGui::Text("Direction = Transform +Z (use gizmo rotate)");
+				ImGui::Text("Shadow Box = Transform Scale (half extents)");
 				ImGui::ColorEdit3("Color", glm::value_ptr(component.Color));
 				ImGui::DragFloat("Intensity", &component.Intensity, 0.1f, 0.0f, 100.0f);
+				ImGui::Checkbox("Cast Shadow", &component.CastShadow);
+				if (component.CastShadow)
+				{
+					ImGui::DragFloat("Shadow Bias", &component.ShadowBias, 0.0001f, 0.0f, 0.01f, "%.5f");
+				}
 			});
 	}
 

@@ -1,6 +1,9 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+// 必须与 C++ 端 Renderer.h 中的 MAX_SHADOW_MAPS 保持一致
+#define MAX_SHADOW_MAPS 4
+
 const float PI = 3.14159265359;
 
 layout(location = 0) in vec2 fragTexCoord;
@@ -32,6 +35,41 @@ layout(set = 0, binding = 2) uniform SHBuffer {
 
 // Prefiltered environment cubemap (GGX mip chain)
 layout(set = 0, binding = 3) uniform samplerCube u_PrefilteredEnvMap;
+
+// Shadow maps (方向光阴影贴图数组, 大小 = MAX_SHADOW_MAPS)
+layout(set = 0, binding = 4) uniform sampler2D u_ShadowMaps[MAX_SHADOW_MAPS];
+
+// Shadow data (光视矩阵 + 光源→阴影图映射 + bias)
+layout(set = 0, binding = 5) uniform ShadowData {
+    mat4 lightViewProj[MAX_SHADOW_MAPS];
+    vec4 shadowBias[MAX_SHADOW_MAPS];
+    ivec4 shadowMapOfLight[8];   // 每光源(最多32)对应的阴影图 slot, -1 = 无阴影
+} u_Shadow;
+
+// 返回某场景光源对应的阴影图 slot (-1 = 无)
+int ShadowIndexOfLight(uint lightIdx) {
+    uint vecIdx = lightIdx / 4u;
+    uint comp = lightIdx % 4u;
+    int v = u_Shadow.shadowMapOfLight[vecIdx][comp];
+    return v;
+}
+
+// 硬阴影判定: 在 shadow space 比较当前片元深度与阴影贴图深度
+float CalcShadowFactor(uint lightIdx, vec3 worldPos) {
+    int shadowIdx = ShadowIndexOfLight(lightIdx);
+    if (shadowIdx < 0) return 1.0; // 无阴影 → 全亮
+
+    vec4 shadowCoord = u_Shadow.lightViewProj[shadowIdx] * vec4(worldPos, 1.0);
+    // shadowCoord 已经是 [0,1] UV 空间 (lightViewProj 含 bias 矩阵)
+    vec3 proj = shadowCoord.xyz; // w == 1 (正交/已齐次化), 直接使用
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0)
+        return 1.0; // 超出阴影图范围 → 视为受光
+
+    float bias = u_Shadow.shadowBias[shadowIdx].x;
+    float closestDepth = texture(u_ShadowMaps[shadowIdx], proj.xy).r;
+    float currentDepth = proj.z;
+    return (currentDepth - bias > closestDepth) ? 0.0 : 1.0;
+}
 
 // Per-object push constants (Fragment stage only)
 layout(push_constant) uniform FragPushConsts {
@@ -257,6 +295,12 @@ void main()
         }
 
         vec3 radiance = lightColor * intensity * attenuation;
+
+        // 方向光阴影: 乘阴影因子 (硬阴影, 无 PCF)
+        if (lightType >= 0.5)
+        {
+            radiance *= CalcShadowFactor(lightIdx, fragWorldPos);
+        }
 
         // Cook-Torrance BRDF
         vec3 H = normalize(V + L);

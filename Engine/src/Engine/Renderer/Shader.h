@@ -157,6 +157,26 @@ namespace Engine {
 			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
 			return config;
 		}
+
+		// Shadow: depth-only (方向光阴影贴图生成 pass)
+		// 仅顶点输入(位置) + 两个 mat4 push constant (model, lightViewProj)
+		// 无颜色输出, 仅写深度
+		static ShaderConfig Shadow()
+		{
+			ShaderConfig config;
+			config.PushConstantRanges = {
+				// offset 0: model (vertex)
+				{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4) },
+				// offset 64: lightViewProj (vertex)
+				{ VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), sizeof(glm::mat4) },
+			};
+			config.PipelineState.BlendEnable = false;
+			config.PipelineState.DepthTestEnable = true;
+			config.PipelineState.DepthWriteEnable = true;
+			config.PipelineState.CullMode = VK_CULL_MODE_BACK_BIT;
+			config.PipelineState.Samples = VK_SAMPLE_COUNT_1_BIT;
+			return config;
+		}
 	};
 
 	// ============================================================
@@ -169,6 +189,8 @@ namespace Engine {
 		virtual ~Shader() = default;
 
 		virtual void Bind() const = 0;
+		// 按 RenderPass 名绑定对应 pipeline (找不到则回退到 Bind())
+		virtual void Bind(const std::string& renderpassName) const = 0;
 		virtual void Unbind() const = 0;
 
 		virtual void CreatePipeline(const std::shared_ptr<BufferLayout>& bufferLayout, std::string pipelineName) = 0;

@@ -15,6 +15,7 @@ namespace Engine {
 		static void BeginScene(const EditorCamera& camera);
 		static void EndScene();
 		static void BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB);
+		static void BeginShadowRenderPass(VkFramebuffer shadowFB);
 		static void BeginUIRenderPass();
 		static void EndRenderPass();
 		static void DrawImGui();

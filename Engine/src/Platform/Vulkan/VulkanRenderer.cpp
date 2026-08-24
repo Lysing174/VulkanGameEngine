@@ -41,6 +41,11 @@ namespace Engine
 	{
 		VulkanContext::Get()->BeginUIRenderPass();
 	}
+
+	void VulkanRenderer::BeginShadowRenderPass(VkFramebuffer shadowFB)
+	{
+		VulkanContext::Get()->BeginShadowRenderPass(shadowFB);
+	}
 	
 	void VulkanRenderer::EndRenderPass()
 	{

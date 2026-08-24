@@ -26,6 +26,11 @@ echo [3/4] Compiling Skybox...
 %GLSLC% Skybox.vert -o Skybox.vert.spv
 %GLSLC% Skybox.frag -o Skybox.frag.spv
 
+rem --- 编译 Shadow Shader (方向光阴影贴图) ---
+echo [4/4] Compiling Shadow...
+%GLSLC% Shadow.vert -o Shadow.vert.spv
+%GLSLC% Shadow.frag -o Shadow.frag.spv
+
 rem --- 编译 GGX Prefilter Compute Shader ---
 echo [4/4] Compiling GGXPrefilter...
 %GLSLC% GGXPrefilter.comp -o GGXPrefilter.comp.spv

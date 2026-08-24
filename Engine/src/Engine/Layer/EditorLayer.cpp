@@ -51,15 +51,23 @@ namespace Engine {
         shader->SetSamples(VulkanContext::Get()->GetMSAASamples());
         shader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout(), "Mesh");
         auto& transform = m_CubeEntity.GetComponent<TransformComponent>();
+
+        // Shadow pass pipeline (方向光阴影贴图, 深度-only, 与 "Shadow" render pass 匹配)
+        {
+            auto shadowShader = Renderer::GetShaderLibrary()->Get("Shadow.vert.spv");
+            shadowShader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout(), "Shadow");
+        }
         transform.Translation = { 0.0f, 30.0f, 0.0f };
         transform.Scale = { 2.0f, 2.0f, 2.0f };
 
         // 模型来源用相对路径反查 ModelLibrary 中的 UUID (组件只存 UUID)
         const std::string HELMET_PATH = "helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
         const std::string BUST_PATH   = "marble_bust/marble_bust_01_4k.gltf";
+    	const std::string CUBE_PATH   = "helmat/models/Box/glTF-Embedded/Box.gltf";
 
         UUID helmetID = modelLibrary->FindIDByPath(HELMET_PATH);
         UUID bustID   = modelLibrary->FindIDByPath(BUST_PATH);
+    	UUID cubeID   = modelLibrary->FindIDByPath(CUBE_PATH);
 
         Entity HelmetEntity = m_ActiveScene->CreateEntity("Helmet");
         HelmetEntity.AddComponent<MeshFilterComponent>(helmetID);
@@ -75,6 +83,13 @@ namespace Engine {
     	BustEntity.GetComponent<TransformComponent>().Scale={10.0f,10.0f,10.0f};
     	BustEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
  
+    	Entity CubeEntity = m_ActiveScene->CreateEntity("Cube");
+    	CubeEntity.AddComponent<MeshFilterComponent>(cubeID);
+    	CubeEntity.AddComponent<MeshRendererComponent>(cubeID);
+    	CubeEntity.GetComponent<TransformComponent>().Translation={0.0f,-3.5f,0.0f};
+    	CubeEntity.GetComponent<TransformComponent>().Scale={15.0f,1.0f,15.0f};
+    	CubeEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
+ 
     	
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();
@@ -83,8 +98,12 @@ namespace Engine {
         // Create a point light entity
         Entity directLightEntity = m_ActiveScene->CreateEntity("Direct Light");
         directLightEntity.AddComponent<DirectLightComponent>(
-            glm::vec3(-1.0f, -1.0f, 0.0f), glm::vec3(1.0f, 1.0f, 1.0f), 10.0f);
-        directLightEntity.GetComponent<TransformComponent>().Translation = { 0.0f, 0.0f, -5.0f };
+            glm::vec3(1.0f, 1.0f, 1.0f), 15.0f,true,0.0f);
+        // Transform: 位置=阴影盒近端面中心, 旋转定光方向(+Z), Scale=阴影盒半长
+        auto& dlTransform = directLightEntity.GetComponent<TransformComponent>();
+        dlTransform.Translation = { 2.3f, 2.0f, 2.8f };
+        dlTransform.Scale       = { 5.0f, 5.0f, 20.0f };
+    	dlTransform.Rotation = { 2.8f, -0.87f, -1.4f };
 
         m_SceneHierarchyPanel = SceneHierarchyPanel(m_ActiveScene);
 
@@ -202,6 +221,7 @@ namespace Engine {
         // 渲染生命周期由本 Layer 驱动：BeginScene → 收集 → RunMeshPass
         //Renderer::BeginScene(m_EditorCamera);
         m_ActiveScene->OnUpdateEditor(m_EditorCamera);  // 仅收集光源 / Mesh 数据
+    	Renderer::EndShadowCollection(); // 依据各阴影光的范围盒结算光视矩阵
         //Renderer::RunMeshPass();                          // 录制 Mesh Pass
 
         // 场景 B: 游戏运行模式 (当你按下 Play 按钮时切换到这个)

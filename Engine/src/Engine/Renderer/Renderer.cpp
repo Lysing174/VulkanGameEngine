@@ -7,6 +7,7 @@
 #include "Platform/Vulkan/VulkanFrameBuffer.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace Engine {
@@ -28,6 +29,12 @@ namespace Engine {
     std::shared_ptr<Shader> Renderer::s_SkyboxShader = nullptr;
     std::shared_ptr<Mesh>   Renderer::s_SkyboxMesh   = nullptr;
 
+    // Shadow
+    Renderer::ShadowLight Renderer::s_ShadowLights[MAX_SHADOW_MAPS];
+    uint32_t              Renderer::s_ShadowLightCount = 0;
+    glm::mat4             Renderer::s_ShadowViewProjs[MAX_SHADOW_MAPS];        // 采样用 (含 bias)
+    glm::mat4             Renderer::s_ShadowRenderViewProjs[MAX_SHADOW_MAPS];  // 渲染用 (无 bias)
+
 	// ============================================================
     // Init
     // ============================================================
@@ -37,6 +44,8 @@ namespace Engine {
         s_ShaderLibrary->Load("shaders/Mesh.vert.spv", "shaders/Mesh.frag.spv", ShaderConfig::DefaultPBR());
         // Skybox Shader
         s_ShaderLibrary->Load("shaders/Skybox.vert.spv", "shaders/Skybox.frag.spv", ShaderConfig::Skybox());
+        // Shadow Shader (方向光阴影贴图生成 pass)
+        s_ShaderLibrary->Load("shaders/Shadow.vert.spv", "shaders/Shadow.frag.spv", ShaderConfig::Shadow());
     }
 
     // ============================================================
@@ -81,7 +90,7 @@ namespace Engine {
 			{
 				// 上传光照 SSBO
 				EndLightCollection();
-
+				
 				// 更新相机位置到 UBO
 				{
 					auto context = VulkanContext::Get();
@@ -249,15 +258,17 @@ namespace Engine {
         s_SceneLights.push_back(light);
     }
 
-    void Renderer::SubmitDirectLight(const glm::vec3& direction, const glm::vec3& color, float intensity)
+    uint32_t Renderer::SubmitDirectLight(const glm::vec3& direction, const glm::vec3& color, float intensity)
     {
-        if (s_SceneLights.size() >= MAX_LIGHTS) return;
+        if (s_SceneLights.size() >= MAX_LIGHTS) return 0xFFFFFFFF;
 
         GPULight light;
         light.PositionType   = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);  // w=1: 方向光
         light.ColorIntensity = glm::vec4(color, intensity);
         light.DirectionRange = glm::vec4(glm::normalize(direction), 0.0f);
+        uint32_t idx = (uint32_t)s_SceneLights.size();
         s_SceneLights.push_back(light);
+        return idx;
     }
 
     void Renderer::EndLightCollection()
@@ -269,6 +280,156 @@ namespace Engine {
             CreateLightBuffer();
 
         UpdateLightBuffer();
+    }
+
+    // ============================================================
+    // Shadow System
+    // ============================================================
+    void Renderer::BeginShadowCollection()
+    {
+        s_ShadowLightCount = 0;
+    }
+
+    void Renderer::SubmitShadowLight(const glm::vec3& position, const glm::vec3& direction,
+                                     const glm::vec3& halfExtents, float shadowBias, uint32_t lightIndex)
+    {
+        if (s_ShadowLightCount >= MAX_SHADOW_MAPS)
+        {
+            EG_CORE_WARN("Shadow light count exceeds MAX_SHADOW_MAPS ({0}), extra lights ignored", MAX_SHADOW_MAPS);
+            return;
+        }
+        auto& sl = s_ShadowLights[s_ShadowLightCount++];
+        sl.Position    = position;
+        sl.Direction   = glm::normalize(direction);
+        sl.HalfExtents = halfExtents;
+        sl.ShadowBias  = shadowBias;
+        sl.LightIndex  = lightIndex;
+    }
+
+    // 依据各阴影光的范围盒 (位置=近端面, +Z=光照方向, Scale=半长) 计算光视矩阵
+    void Renderer::EndShadowCollection()
+    {
+        if (s_ShadowLightCount == 0)
+            return;
+
+        const float texels = (float)SHADOW_MAP_SIZE;
+        for (uint32_t s = 0; s < s_ShadowLightCount; s++)
+        {
+            const auto& sl = s_ShadowLights[s];
+            glm::vec3 lightDir = sl.Direction;     // 光本地 +Z (世界空间)
+            glm::vec3 lightPos = sl.Position;      // 阴影盒近端面中心 = 正交近平面
+            glm::vec3 half     = sl.HalfExtents;   // 立方体半长 (x=宽, y=高, z=厚度)
+
+            // 光视矩阵: 光位于近端面, 看向 +Z 方向; up 与 lightDir 正交化
+            glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+            if (glm::abs(glm::dot(up, lightDir)) > 0.99f)
+                up = glm::vec3(0.0f, 0.0f, 1.0f);
+            glm::mat4 lightView = glm::lookAt(lightPos, lightPos + lightDir, up);
+
+            // 纹素对齐: 把光原点(光空间 0,0)吸附到纹素网格中心, 消除相机/光移动抖动
+            // 正交范围尺寸恒定 (= 2*half), 故每帧纹素尺寸恒定, 不会跳变
+            float texelWorldX = (2.0f * half.x) / texels;
+            float texelWorldY = (2.0f * half.y) / texels;
+            glm::vec3 lp = glm::vec3(lightView * glm::vec4(lightPos, 1.0f));
+            lp.x = std::floor(lp.x / texelWorldX) * texelWorldX + texelWorldX * 0.5f;
+            lp.y = std::floor(lp.y / texelWorldY) * texelWorldY + texelWorldY * 0.5f;
+            // 把吸附后的偏移还原到世界空间 (lightView 仅含平移/旋转, 逆矩阵即可反算)
+            glm::mat4 invLightView = glm::inverse(lightView);
+            lightPos = glm::vec3(invLightView * glm::vec4(lp, 1.0f));
+            lightView = glm::lookAt(lightPos, lightPos + lightDir, up);
+
+            // 正交投影: 范围盒对齐光空间, x/y = ±half; 光位于近端面, 近面=0, 远面=2*half.z (不预留余量)
+            glm::mat4 lightProj = glm::ortho(
+                -half.x,  half.x,
+                -half.y,  half.y,
+                0.0f,     2.0f * half.z);
+
+            // 渲染用矩阵 (无 bias, 输出 NDC [-1,1]) 与采样用矩阵 (含 bias, 输出 UV [0,1])
+            // 注意: 渲染阴影贴图时不能带 bias 矩阵, 否则几何只会被画到贴图右下 1/4 而与采样错位
+            glm::mat4 lightViewProj = lightProj * lightView;
+            glm::mat4 biasMat = glm::mat4(
+                0.5f, 0.0f, 0.0f, 0.0f,
+                0.0f, 0.5f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.5f, 0.5f, 0.0f, 1.0f);
+            s_ShadowRenderViewProjs[s] = lightViewProj;
+            s_ShadowViewProjs[s]        = biasMat * lightViewProj;
+        }
+
+        UpdateShadowBuffer();
+    }
+
+    void Renderer::UpdateShadowBuffer()
+    {
+        auto context = VulkanContext::Get();
+        auto device = context->GetDevice();
+
+        ShadowUBO ubo;
+        memset(&ubo, 0, sizeof(ShadowUBO));
+        // 默认: 所有光源 shadowMapOfLight = -1 (无阴影)
+        for (int i = 0; i < 8; i++)
+            ubo.shadowMapOfLight[i] = glm::ivec4(-1, -1, -1, -1);
+
+        for (uint32_t s = 0; s < s_ShadowLightCount; s++)
+        {
+            ubo.lightViewProj[s] = s_ShadowViewProjs[s];
+            ubo.shadowBias[s] = glm::vec4(s_ShadowLights[s].ShadowBias, 0.0f, 0.0f, 0.0f);
+            uint32_t li = s_ShadowLights[s].LightIndex;
+            if (li < MAX_LIGHTS)
+            {
+                // 写入 shadowMapOfLight[li] (ivec4 数组, 每个 ivec4 含 4 个 int)
+                uint32_t vecIdx = li / 4;
+                uint32_t comp = li % 4;
+                ubo.shadowMapOfLight[vecIdx][comp] = (int)s;
+            }
+        }
+
+        VkDeviceSize size = context->GetShadowUBOSize();
+        void* data;
+        vkMapMemory(device, context->GetShadowUBOMemory(), 0, size, 0, &data);
+        memcpy(data, &ubo, sizeof(ShadowUBO));
+        vkUnmapMemory(device, context->GetShadowUBOMemory());
+    }
+
+    void Renderer::RunShadowPass()
+    {
+        uint32_t count = s_ShadowLightCount;
+        if (count == 0) return;
+
+        auto context = VulkanContext::Get();
+        VkCommandBuffer cmd = context->GetCurrentCommandBuffer();
+        auto shadowShader = GetShaderLibrary()->Get("Shadow.vert.spv");
+        if (!shadowShader) return;
+
+        VkPipelineLayout layout = shadowShader->GetPipelineLayout();
+
+        // 对每个阴影光: 绑对应 framebuffer + 光视矩阵, 画同一份 mesh 队列
+        for (uint32_t s = 0; s < count; s++)
+        {
+            VulkanRenderer::BeginShadowRenderPass(context->GetShadowFramebuffer(s));
+
+            // 通过 shader 绑定 Shadow pipeline (按 RenderPass 名查找)
+            shadowShader->Bind("Shadow");
+            // Shadow pass 不需要 global/material descriptor set, 仅 push constant
+            // (global set 仍可绑, 但 Shadow shader 未引用 set=0 资源, 绑了也无妨;
+            //  此处保持与 Mesh pass 一致, 不绑避免校验警告)
+            for (auto& request : s_MeshRenderQueue)
+            {
+                request.Mesh->Bind();
+
+                // push model (offset 0)
+                vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                    sizeof(glm::mat4), &request.Transform);
+                // push lightViewProj (offset 64): 渲染用矩阵, 切勿带 bias (见 EndShadowCollection 注释)
+                vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT,
+                    sizeof(glm::mat4), sizeof(glm::mat4), &s_ShadowRenderViewProjs[s]);
+
+                vkCmdDrawIndexed(cmd, request.SubmeshIndexCount, 1,
+                    request.SubmeshFirstIndex, request.SubmeshFirstVertex, 0);
+            }
+
+            VulkanRenderer::EndRenderPass();
+        }
     }
 
     void Renderer::CullLightsForObject(const glm::vec3& worldPos, uint32_t maxLights,

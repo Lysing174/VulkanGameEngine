@@ -112,6 +112,7 @@ namespace Engine {
 			{
 				layer->OnUpdate();
 			}
+			Renderer::RunShadowPass();   // 先渲阴影贴图 (在 Mesh pass 之前)
 			Renderer::RunMeshPass();
 			
 			m_ImGuiLayer->Begin();
