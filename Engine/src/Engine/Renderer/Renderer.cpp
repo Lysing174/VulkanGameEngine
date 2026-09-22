@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cfloat>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/string_cast.hpp>
+
 
 namespace Engine {
     Renderer::API Renderer::s_API = Renderer::API::Vulkan;
@@ -307,53 +309,41 @@ namespace Engine {
     }
 
     // 依据各阴影光的范围盒 (位置=近端面, +Z=光照方向, Scale=半长) 计算光视矩阵
+    // 约定与主相机一致: 右手坐标系, lookAt 向前=-z, 仅翻 Y 不翻 Z, 深度 NDC∈[-1,1]
     void Renderer::EndShadowCollection()
     {
-        if (s_ShadowLightCount == 0)
-            return;
-
-        const float texels = (float)SHADOW_MAP_SIZE;
         for (uint32_t s = 0; s < s_ShadowLightCount; s++)
         {
             const auto& sl = s_ShadowLights[s];
-            glm::vec3 lightDir = sl.Direction;     // 光本地 +Z (世界空间)
+            glm::vec3 lightDir = sl.Direction;     // 光传播方向 (世界空间, 指向被照亮处 = 本地 +Z)
             glm::vec3 lightPos = sl.Position;      // 阴影盒近端面中心 = 正交近平面
             glm::vec3 half     = sl.HalfExtents;   // 立方体半长 (x=宽, y=高, z=厚度)
 
-            // 光视矩阵: 光位于近端面, 看向 +Z 方向; up 与 lightDir 正交化
+            // 光视矩阵: 光位于近端面, 视线方向 = 光传播方向(本地 +Z)。
+            // lookAt 把视线映射到视图空间 -z, 故物体在光前方(沿 +Z)落在视图空间负 z。
             glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
             if (glm::abs(glm::dot(up, lightDir)) > 0.99f)
                 up = glm::vec3(0.0f, 0.0f, 1.0f);
             glm::mat4 lightView = glm::lookAt(lightPos, lightPos + lightDir, up);
 
-            // 纹素对齐: 把光原点(光空间 0,0)吸附到纹素网格中心, 消除相机/光移动抖动
-            // 正交范围尺寸恒定 (= 2*half), 故每帧纹素尺寸恒定, 不会跳变
-            float texelWorldX = (2.0f * half.x) / texels;
-            float texelWorldY = (2.0f * half.y) / texels;
-            glm::vec3 lp = glm::vec3(lightView * glm::vec4(lightPos, 1.0f));
-            lp.x = std::floor(lp.x / texelWorldX) * texelWorldX + texelWorldX * 0.5f;
-            lp.y = std::floor(lp.y / texelWorldY) * texelWorldY + texelWorldY * 0.5f;
-            // 把吸附后的偏移还原到世界空间 (lightView 仅含平移/旋转, 逆矩阵即可反算)
-            glm::mat4 invLightView = glm::inverse(lightView);
-            lightPos = glm::vec3(invLightView * glm::vec4(lp, 1.0f));
-            lightView = glm::lookAt(lightPos, lightPos + lightDir, up);
-
-            // 正交投影: 范围盒对齐光空间, x/y = ±half; 光位于近端面, 近面=0, 远面=2*half.z (不预留余量)
+            // 正交投影: 范围盒对齐光空间, x/y = ±half; lookAt 视线 = 光传播方向(+Z),
+            // 物体在光前方落在视图空间负 z, z∈[-2half.z, 0] (近面 0 = lightPos, 远面 -2half.z)。
+            // 不做 Y 翻转: shadow pass 的 viewport 未用负 height, 渲染与采样统一 v = 0.5 + 0.5*y,
+            // 避免双重翻转/区间符号不一致导致 uv 与贴图像素错位 (影子偏小/偏移的根源)。
             glm::mat4 lightProj = glm::ortho(
                 -half.x,  half.x,
                 -half.y,  half.y,
-                0.0f,     2.0f * half.z);
+                 0.0f,2.0f * half.z);
+        	lightProj[1][1] *= -1;  // Vulkan Y-flip
 
-            // 渲染用矩阵 (无 bias, 输出 NDC [-1,1]) 与采样用矩阵 (含 bias, 输出 UV [0,1])
-            // 注意: 渲染阴影贴图时不能带 bias 矩阵, 否则几何只会被画到贴图右下 1/4 而与采样错位
+
+            // 渲染用矩阵与采样用矩阵统一为 NDC[-1,1] 的 lightViewProj (不带 bias)。
+            // bias(NDC→UV) 的变换改在 MeshShader.frag 的 CalcShadowFactor 里手动完成。
+            // 注意: 渲染阴影贴图时同样用此矩阵, 几何完整覆盖贴图, 与采样一致。
             glm::mat4 lightViewProj = lightProj * lightView;
-            glm::mat4 biasMat = glm::mat4(
-                0.5f, 0.0f, 0.0f, 0.0f,
-                0.0f, 0.5f, 0.0f, 0.0f,
-                0.0f, 0.0f, 1.0f, 0.0f,
-                0.5f, 0.5f, 0.0f, 1.0f);
             s_ShadowRenderViewProjs[s] = lightViewProj;
-            s_ShadowViewProjs[s]        = biasMat * lightViewProj;
+            s_ShadowViewProjs[s]        = lightViewProj;
+
         }
 
         UpdateShadowBuffer();

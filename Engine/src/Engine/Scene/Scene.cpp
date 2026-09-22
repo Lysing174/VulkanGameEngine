@@ -146,7 +146,7 @@ namespace Engine {
 		{
 			auto [transform, light] = directLightView.get<TransformComponent, DirectLightComponent>(entity);
 
-			// 方向光方向 = 其 Transform 本地 +Z 轴 (光从原点照向 +Z)
+			// 方向光方向 = 其 Transform 本地 Z 轴 (光从原点照向 Z)
 			glm::vec3 lightDir = glm::normalize(glm::mat3(transform.GetTransform()) * glm::vec3(0.0f, 0.0f, 1.0f));
 			uint32_t lightIdx = Renderer::SubmitDirectLight(lightDir, light.Color, light.Intensity);
 

@@ -60,8 +60,12 @@ float CalcShadowFactor(uint lightIdx, vec3 worldPos) {
     if (shadowIdx < 0) return 1.0; // 无阴影 → 全亮
 
     vec4 shadowCoord = u_Shadow.lightViewProj[shadowIdx] * vec4(worldPos, 1.0);
-    // shadowCoord 已经是 [0,1] UV 空间 (lightViewProj 含 bias 矩阵)
-    vec3 proj = shadowCoord.xyz; // w == 1 (正交/已齐次化), 直接使用
+    //debugPrintfEXT("projcoord = (%v3f, %f)", shadowCoord.xyz, shadowCoord.w);
+    // shadowCoord 此时为 NDC [-1,1] (lightViewProj 不含 bias 矩阵)
+    // 手动将 NDC 变换到 UV [0,1]: u = 0.5*x + 0.5, v = 0.5 - 0.5*y
+    // (y 取 -0.5 是因为光投影做了 Vulkan Y 翻转, 纹理原点在左上)
+    vec3 proj = shadowCoord.xyz/shadowCoord.w;                 // w == 1 (正交/已齐次化)
+    proj.xy = vec2(0.5 * proj.x + 0.5, 0.5 + 0.5 * proj.y);
     if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0)
         return 1.0; // 超出阴影图范围 → 视为受光
 

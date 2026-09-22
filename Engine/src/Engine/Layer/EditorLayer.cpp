@@ -98,12 +98,12 @@ namespace Engine {
         // Create a point light entity
         Entity directLightEntity = m_ActiveScene->CreateEntity("Direct Light");
         directLightEntity.AddComponent<DirectLightComponent>(
-            glm::vec3(1.0f, 1.0f, 1.0f), 15.0f,true,0.0f);
+            glm::vec3(1.0f, 1.0f, 1.0f), 15.0f,true,0.001f);
         // Transform: 位置=阴影盒近端面中心, 旋转定光方向(+Z), Scale=阴影盒半长
         auto& dlTransform = directLightEntity.GetComponent<TransformComponent>();
         dlTransform.Translation = { 2.3f, 2.0f, 2.8f };
         dlTransform.Scale       = { 5.0f, 5.0f, 20.0f };
-    	dlTransform.Rotation = { 2.8f, -0.87f, -1.4f };
+    	dlTransform.Rotation = { -2.2f, 0.0f, -3.14f };
 
         m_SceneHierarchyPanel = SceneHierarchyPanel(m_ActiveScene);
 
