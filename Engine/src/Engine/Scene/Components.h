@@ -52,7 +52,7 @@ namespace Engine {
 
 	struct MeshFilterComponent
 	{
-		// 来源模型资产 UUID (由 ModelLibrary 持久化在 .meta 中)。
+		// 来源模型资产 UUID (由 AssetLibrary<Model> 持久化在 .meta 中)。
 		// 组件只存 UUID，不存路径，改名/移动文件不影响引用。
 		UUID MeshID;
 
@@ -76,6 +76,19 @@ namespace Engine {
 		bool HasMaterial() const { return (uint64_t)MaterialID != 0; }
 		const UUID& GetMaterialID() const { return MaterialID; }
 	};
+	struct GaussianComponent
+	{
+		// 来源高斯资产 UUID (由 AssetLibrary<GaussianModel> 持久化在 .meta 中)。
+		// 组件只存 UUID，不存路径；运行时按 UUID 从 AssetLibrary<GaussianModel> 取 GaussianModel。
+		UUID GaussianID;
+
+		GaussianComponent() : GaussianID(0) {}
+		GaussianComponent(const UUID& gaussianID) : GaussianID(gaussianID) {}
+
+		bool HasGaussian() const { return (uint64_t)GaussianID != 0; }
+		const UUID& GetGaussianID() const { return GaussianID; }
+	};
+
 	struct CameraComponent
 	{
 		SceneCamera Camera;

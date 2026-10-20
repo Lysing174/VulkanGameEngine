@@ -3,8 +3,8 @@
 
 layout(location = 0) in vec3 fragLocalPos;
 
-// Prefiltered environment cubemap from global descriptor set
-layout(set = 0, binding = 3) uniform samplerCube u_PrefilteredEnvMap;
+// Prefiltered environment cubemap (局部 set=0; 全局编号见 GlobalBindings::ENV_SET)
+layout(set = 0, binding = 1) uniform samplerCube u_PrefilteredEnvMap;
 
 layout(location = 0) out vec4 outColor;
 

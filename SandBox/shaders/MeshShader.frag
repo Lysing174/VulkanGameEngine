@@ -11,12 +11,6 @@ layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragWorldPos;
 layout(location = 3) in mat3 fragTBN;
 
-// Global UBO: projView (vertex) + camera (fragment)
-layout(set = 0, binding = 0) uniform GlobalUBO {
-    mat4 projView;
-    vec4 cameraPosition;        // xyz = camera world pos
-} u_Global;
-
 // Light SSBO: all scene lights (direction & point)
 struct Light {
     vec4 PositionType;    // xyz=position(point) or 0(directional), w=type: 0=point, 1=directional
@@ -24,23 +18,23 @@ struct Light {
     vec4 DirectionRange;  // xyz=direction(directional), w=range(point)
 };
 
-layout(set = 0, binding = 1) readonly buffer LightBuffer {
+layout(set = 1, binding = 0) readonly buffer LightBuffer {
     Light lights[];
 } u_LightBuffer;
 
 // SH Irradiance coefficients (3-band, 9 vec4)
-layout(set = 0, binding = 2) uniform SHBuffer {
+layout(set = 2, binding = 0) uniform SHBuffer {
     vec4 SH[9];
 } u_SH;
 
 // Prefiltered environment cubemap (GGX mip chain)
-layout(set = 0, binding = 3) uniform samplerCube u_PrefilteredEnvMap;
+layout(set = 2, binding = 1) uniform samplerCube u_PrefilteredEnvMap;
 
 // Shadow maps (方向光阴影贴图数组, 大小 = MAX_SHADOW_MAPS)
-layout(set = 0, binding = 4) uniform sampler2D u_ShadowMaps[MAX_SHADOW_MAPS];
+layout(set = 1, binding = 2) uniform sampler2D u_ShadowMaps[MAX_SHADOW_MAPS];
 
 // Shadow data (光视矩阵 + 光源→阴影图映射 + bias)
-layout(set = 0, binding = 5) uniform ShadowData {
+layout(set = 1, binding = 1) uniform ShadowData {
     mat4 lightViewProj[MAX_SHADOW_MAPS];
     vec4 shadowBias[MAX_SHADOW_MAPS];
     ivec4 shadowMapOfLight[8];   // 每光源(最多32)对应的阴影图 slot, -1 = 无阴影
@@ -75,20 +69,24 @@ float CalcShadowFactor(uint lightIdx, vec3 worldPos) {
     return (currentDepth - bias > closestDepth) ? 0.0 : 1.0;
 }
 
-// Per-object push constants (Fragment stage only)
-layout(push_constant) uniform FragPushConsts {
-    layout(offset = 64) vec4 pcAlbedoColor;
-    layout(offset = 80) uint pcLightCount;
-    layout(offset = 84) uint pcLightIndices[4];
-};
+// 合并 push constant: 与 vertex 端 PushConsts 完全一致 (同名同偏移), C++ 按偏移推送.
+// 总大小 192B, 需 device.limits.maxPushConstantsSize >= 192 (绝大多数桌面 GPU 为 256).
+layout(push_constant) uniform PushConsts {
+    layout(offset = 0)   mat4 model;             // VERTEX (未在此阶段使用)
+    layout(offset = 64)  vec4  pcAlbedoColor;    // FRAGMENT
+    layout(offset = 80)  uint  pcLightCount;     // FRAGMENT
+    layout(offset = 84)  uint  pcLightIndices[4];// FRAGMENT
+    layout(offset = 112) mat4  projView;         // VERTEX (未在此阶段使用)
+    layout(offset = 176) vec4  cameraPosition;   // FRAGMENT
+} pc;
 
-// Material descriptor set (set=1)
-layout(set = 1, binding = 0) uniform sampler2D u_AlbedoMap;
-layout(set = 1, binding = 1) uniform sampler2D u_NormalMap;
-layout(set = 1, binding = 2) uniform sampler2D u_MetalRoughAO;
-layout(set = 1, binding = 3) uniform sampler2D u_AOMap;
-layout(set = 1, binding = 4) uniform sampler2D u_EmissiveMap;
-layout(set = 1, binding = 5) uniform MaterialUBO {
+// Material descriptor set (局部 set=0; 全局编号见 GlobalBindings::MATERIAL_SET)
+layout(set = 0, binding = 0) uniform sampler2D u_AlbedoMap;
+layout(set = 0, binding = 1) uniform sampler2D u_NormalMap;
+layout(set = 0, binding = 2) uniform sampler2D u_MetalRoughAO;
+layout(set = 0, binding = 3) uniform sampler2D u_AOMap;
+layout(set = 0, binding = 4) uniform sampler2D u_EmissiveMap;
+layout(set = 0, binding = 5) uniform MaterialUBO {
     vec4 AlbedoColor;
     float Metalness;
     float Roughness;
@@ -257,7 +255,7 @@ void main()
     
     
     // 4. Compute view direction
-    vec3 V = normalize(u_Global.cameraPosition.xyz - fragWorldPos);
+    vec3 V = normalize(pc.cameraPosition.xyz - fragWorldPos);
 
     // 5. Fresnel: F0 mix based on metalness
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
@@ -265,9 +263,9 @@ void main()
     // 6. Multi-light accumulation
     vec3 Lo = vec3(0.0);
 
-    for (uint i = 0; i < pcLightCount && i < 4; i++)
+    for (uint i = 0; i < pc.pcLightCount && i < 4; i++)
     {
-        uint lightIdx = pcLightIndices[i];
+        uint lightIdx = pc.pcLightIndices[i];
 
         // Note: SSBO array access must be within bounds; 0 lights empty is handled by pcLightCount=0
         float lightType = u_LightBuffer.lights[lightIdx].PositionType.w;

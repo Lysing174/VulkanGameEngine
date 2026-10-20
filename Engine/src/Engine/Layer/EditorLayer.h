@@ -27,6 +27,7 @@ namespace Engine {
         virtual void OnImGuiRender() override;
 
         EditorCamera GetEditorCamera() { return m_EditorCamera; }
+        glm::vec2 GetViewportSize()const { return m_ViewportSize; }
 
     private:
         void InitDockspace();          // 一次性布局, 在 OnAttach 调用

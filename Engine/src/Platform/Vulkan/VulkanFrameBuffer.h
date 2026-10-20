@@ -27,6 +27,15 @@ namespace Engine {
         bool           IsMSAA()              const { return m_Specification.Samples != 1; }
         VkImage        GetResolveImage()     const { return m_ColorResolveImage; }
 
+        // 1x framebuffer / 1x 深度 resolve — 供高斯 splat pass (始终 1x) 使用
+        VkFramebuffer  GetGaussianVulkanFramebuffer() const { return m_GaussianFramebuffer; }
+        VkImage        GetDepthResolveImage()        const { return m_DepthResolveImage; }
+        VkImageView    GetDepthResolveView()         const { return m_DepthResolveView; }
+
+        // 高斯 pass 用的 1x 深度视图: MSAA 模式取 1x depth resolve, 否则取 1x depth (即 m_DepthMSAAView).
+        // 高斯 pass 通过 b3(u_DepthMap) 采样它做遮挡.
+        VkImageView    GetGaussianDepthView()        const { return IsMSAA() ? m_DepthResolveView : m_DepthMSAAView; }
+
     private:
         void Invalidate();
         void Release();
@@ -44,6 +53,7 @@ namespace Engine {
         FramebufferSpecification m_Specification;
         VkRenderPass  m_RenderPass         = VK_NULL_HANDLE;
         VkFramebuffer m_VulkanFramebuffer  = VK_NULL_HANDLE;
+        VkFramebuffer m_GaussianFramebuffer = VK_NULL_HANDLE;  // 1x framebuffer for Gaussian splat pass
 
         // Formats
         VkFormat m_ColorFormat  = VK_FORMAT_B8G8R8A8_UNORM;
@@ -64,6 +74,11 @@ namespace Engine {
         VkImage         m_DepthMSAAImage   = VK_NULL_HANDLE;
         VkDeviceMemory  m_DepthMSAAMemory  = VK_NULL_HANDLE;
         VkImageView     m_DepthMSAAView    = VK_NULL_HANDLE;
+
+        // Resolve Depth — 1x (仅 MSAA 模式), mesh 深度 resolve 写入, 高斯读取做遮挡
+        VkImage         m_DepthResolveImage   = VK_NULL_HANDLE;
+        VkDeviceMemory  m_DepthResolveMemory  = VK_NULL_HANDLE;
+        VkImageView     m_DepthResolveView    = VK_NULL_HANDLE;
 
         // ImGui descriptor set (from ImGui_ImplVulkan_AddTexture)
         mutable VkDescriptorSet m_ImGuiDescriptorSet     = VK_NULL_HANDLE;

@@ -78,12 +78,16 @@ namespace Engine {
 	{
 		VkDevice device = VulkanContext::Get()->GetDevice();
 
+		// 映射整块内存 (offset=0, size=VK_WHOLE_SIZE): 这样映射末端 = 整个内存对象末尾,
+		// 后续用 VK_WHOLE_SIZE flush 时即满足 VUID-VkMappedMemoryRange-size-01389
+		// (映射末端必须是 nonCoherentAtomSize 倍数 或 等于内存末尾).
+		// 若只映射 [offset, offset+size) 一段再用 VK_WHOLE_SIZE flush, 映射末端非 atom 倍数
+		// 且不等内存末尾 → 触发 01389.
 		void* mapped;
-		vkMapMemory(device, m_Memory, offset, size, 0, &mapped);
-		memcpy(mapped, data, (size_t)size);
+		vkMapMemory(device, m_Memory, 0, VK_WHOLE_SIZE, 0, &mapped);
+		memcpy((uint8_t*)mapped + offset, data, (size_t)size);
 
-		// 非 coherent 内存需要 flush. 直接 flush 整块内存 (VK_WHOLE_SIZE) 可避免
-		// offset/size 必须按 nonCoherentAtomSize 对齐的限制 (VUID-VkMappedMemoryRange-size-01390).
+		// 整块映射 + flush 整块内存: 映射末端即内存末尾, VK_WHOLE_SIZE 合法, 无需按 atom 对齐.
 		VkMappedMemoryRange range = {};
 		range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
 		range.memory = m_Memory;

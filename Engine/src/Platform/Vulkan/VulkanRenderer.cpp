@@ -14,37 +14,16 @@ namespace Engine
 	//
 	// 	VulkanContext::Get()->BeginFrame(projView);
 	// }
-	void VulkanRenderer::BeginScene(const EditorCamera& camera)
-	{
-		glm::mat4 projection = camera.GetProjection();
-		projection[1][1] *= -1;
-		glm::mat4 projView = projection * camera.GetViewMatrix();
-
-		VulkanContext::Get()->BeginFrame(projView);
-		VkCommandBuffer cmd = VulkanContext::Get()->GetCurrentCommandBuffer();
-		VkDescriptorSet globalDescriptorSet = VulkanContext::Get()->GetCurrentDescriptorSet();
-		// swapchain/descriptor 重建期间 set 可能为空, 跳过绑定避免 08600 validation 报错
-		if (globalDescriptorSet != VK_NULL_HANDLE)
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, Renderer::GetShaderLibrary()->Get("Mesh.vert.spv")->GetPipelineLayout(), 0, 1, &globalDescriptorSet, 0, nullptr);
-	}
-	void VulkanRenderer::EndScene()
-	{
-		VulkanContext::Get()->EndFrame();
-	}
-
-	void VulkanRenderer::BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB)
-	{
-		VulkanContext::Get()->BeginMeshRenderPass(offscreenFB);
-	}
+	
 
 	void VulkanRenderer::BeginUIRenderPass()
 	{
 		VulkanContext::Get()->BeginUIRenderPass();
 	}
 
-	void VulkanRenderer::BeginShadowRenderPass(VkFramebuffer shadowFB)
+	void VulkanRenderer::BeginShadowRenderPass(VkFramebuffer shadowFB, VkExtent2D extent)
 	{
-		VulkanContext::Get()->BeginShadowRenderPass(shadowFB);
+		VulkanContext::Get()->BeginShadowRenderPass(shadowFB, extent);
 	}
 	
 	void VulkanRenderer::EndRenderPass()
@@ -68,7 +47,7 @@ namespace Engine
 		vkCmdPushConstants(
 			cmd,
 			layout,
-			VK_SHADER_STAGE_VERTEX_BIT,
+			VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,
 			0,                          // 偏移量 0
 			sizeof(glm::mat4),          // 大小
 			&(request.Transform)
@@ -91,7 +70,7 @@ namespace Engine
 			vkCmdPushConstants(
 				cmd,
 				layout,
-				VK_SHADER_STAGE_FRAGMENT_BIT,
+				VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,
 				sizeof(glm::mat4) + sizeof(glm::vec4),  // offset = 64 + 16 = 80
 				sizeof(LightPushData),
 				&lpd

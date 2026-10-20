@@ -6,6 +6,7 @@
 #include <Engine/Renderer/Buffer.h>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
+#include <Engine/Renderer/GlobalBindings.h>
 
 namespace Engine {
 
@@ -52,6 +53,19 @@ namespace Engine {
 		std::vector<PushConstantRangeInfo> PushConstantRanges;
 		PipelineStateInfo PipelineState;
 
+		// material descriptor set 所在的 set 序号 (默认 1)
+		uint32_t MaterialSetIndex = MATERIAL_SET;
+
+		// 本 shader 的 pipeline layout 引用的全部 set 序号 (升序, 含 material set 若适用).
+		// 序号见 GlobalBindings.h:
+		//   0 = GaussianRenderer (高斯 SSBO, 仅高斯 shader 绑)
+		//   1 = material       (shader 自身持有)
+		//   2 = light/shadow    (ShadowRenderer)
+		//   3 = env            (EnvRenderer: SH 辐照度 + 预滤波 cubemap)
+		// 各 set 的实际 VkDescriptorSetLayout 由各 set 拥有子系统经 Renderer::GetDescriptorSetLayout() 解析.
+		// 注意: set0 为高斯专属, 普通 PBR/Mesh/Skybox/Shadow 都不应绑 set0.
+		std::vector<uint32_t> SetLayouts = { MATERIAL_SET };  // 默认仅 material; 其他 set 由各 shader 显式声明
+
 		// 按 binding 号查找是否存在
 		bool HasBinding(uint32_t binding) const
 		{
@@ -77,6 +91,16 @@ namespace Engine {
 			return result;
 		}
 
+		// 将“全局 set 序号”(见 GlobalBindings.h) 映射为本 shader pipeline layout 的“局部 set 序号”.
+		// SetLayouts 即按局部顺序排列、紧密无空隙的全局 set 列表, 故其下标就是局部序号.
+		// 返回局部序号; 若 globalSet 不在 SetLayouts 中返回 -1.
+		int GetLocalSetIndex(uint32_t globalSet) const
+		{
+			for (size_t i = 0; i < SetLayouts.size(); ++i)
+				if (SetLayouts[i] == globalSet) return (int)i;
+			return -1;
+		}
+
 		// ======== 预置配置工厂 ========
 
 		// 默认 PBR 材质: Albedo + Normal + ORM + MaterialUBO
@@ -91,70 +115,46 @@ namespace Engine {
 				{ 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_EmissiveMap"   },
 				{ 5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_Material"      },
 			};
-			config.PushConstantRanges = {
-				{ VK_SHADER_STAGE_VERTEX_BIT,   0,              sizeof(glm::mat4) },
-				// Fragment: albedoColor(16B, offset 64) + lightCount(4B) + lightIndices(16B) = 36B
-				{ VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec4) + 20 },
-			};
-			config.PipelineState.BlendEnable = false;
-			return config;
-		}
+		// GLSL 中 push_constant 为 vert/frag 共享的单个 block, SPIR-V 报出其范围为 [0,192],
+		// 故用一个覆盖 [0,192] 的 range 同时允许 VERTEX|FRAGMENT, 避免按 stage 拆分导致 block 越界 (10069).
+		config.PushConstantRanges = {
+			{ VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 192 },
+		};
+		config.PipelineState.BlendEnable = false;
+		config.SetLayouts = { MATERIAL_SET, LIGHT_SET, ENV_SET };  // material + light(set2) + env(set3); set0 为高斯专属, PBR 不绑
+		return config;
+	}
 
-		// 简化 PBR: Albedo + MaterialUBO (无 NormalMap / ORM)
-		static ShaderConfig SimplePBR()
-		{
-			ShaderConfig config;
-			config.MaterialBindings = {
-				{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_AlbedoMap" },
-				{ 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_Material"  },
-			};
-			config.PushConstantRanges = {
-				{ VK_SHADER_STAGE_VERTEX_BIT,   0,              sizeof(glm::mat4) },
-				{ VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec4) },
-			};
-			config.PipelineState.BlendEnable = false;
-			return config;
-		}
+	// 简化 PBR: Albedo + MaterialUBO (无 NormalMap / ORM)
+	// 	static ShaderConfig SimplePBR()
+	// 	{
+	// 		ShaderConfig config;
+	// 		config.MaterialBindings = {
+	// 			{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_AlbedoMap" },
+	// 			{ 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_Material"  },
+	// 		};
+	// 		config.PushConstantRanges = {
+	// 			{ VK_SHADER_STAGE_VERTEX_BIT,   0,              sizeof(glm::mat4) },
+	// 			{ VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec4) },
+	// 		};
+	// 	config.PipelineState.BlendEnable = false;
+	// 	config.SetLayouts = { MATERIAL_SET, LIGHT_SET, ENV_SET };  // material + light(set2) + env(set3); set0 为高斯专属
+	// 	return config;
+	// }
 
-		// 最小配置: 仅 Push Constants, 无 Descriptor (全屏四边形等)
-		static ShaderConfig Minimal()
-		{
-			ShaderConfig config;
-			config.PipelineState.HasVertexInput = false;
-			config.PipelineState.DepthTestEnable = false;
-			config.PipelineState.DepthWriteEnable = false;
-			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
-			return config;
-		}
-
-		// 深度可视化: 一个深度纹理采样器 + Push Constants
-		static ShaderConfig DepthVisualizer()
-		{
-			ShaderConfig config;
-			config.MaterialBindings = {
-				{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, "u_DepthMap" },
-			};
-			config.PushConstantRanges = {
-				{ VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::vec2) * 2 },
-			};
-			config.PipelineState.HasVertexInput = false;
-			config.PipelineState.DepthTestEnable = false;
-			config.PipelineState.DepthWriteEnable = false;
-			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
-			return config;
-		}
-
-		// Skybox: cubemap from global descriptor set (set=0, binding=3) + VP push constant
+		// Skybox: cubemap from env descriptor set (set=3) + VP push constant
 		static ShaderConfig Skybox()
 		{
 			ShaderConfig config;
-			// Cubemap is sourced from the global descriptor set, no per-material bindings needed
-			config.PushConstantRanges = {
-				{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4) },
-			};
+			// Cubemap (预滤波环境) 来自 set3 (EnvRenderer), 无逐材质绑定
+		// Skybox 的 push_constant 为单个 [0,128] 的 vertex block (viewProj 等), 与 SPIR-V 报出的 [0,128] 对齐.
+		config.PushConstantRanges = {
+			{ VK_SHADER_STAGE_VERTEX_BIT, 0, 128 },
+		};
 			config.PipelineState.DepthTestEnable = true;
 			config.PipelineState.DepthWriteEnable = false;
 			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
+			config.SetLayouts = { ENV_SET };  // 仅 env(set3); material 为空不计入
 			return config;
 		}
 
@@ -164,17 +164,37 @@ namespace Engine {
 		static ShaderConfig Shadow()
 		{
 			ShaderConfig config;
-			config.PushConstantRanges = {
-				// offset 0: model (vertex)
-				{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4) },
-				// offset 64: lightViewProj (vertex)
-				{ VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), sizeof(glm::mat4) },
-			};
+		// Shadow 的 push_constant 为单个 [0,128] 的 vertex block (model + lightViewProj),
+		// 合并为单个 VERTEX range, 避免两个 VERTEX range 冲突 (00292) 且越界 (10069).
+		config.PushConstantRanges = {
+			{ VK_SHADER_STAGE_VERTEX_BIT, 0, 128 },
+		};
 			config.PipelineState.BlendEnable = false;
 			config.PipelineState.DepthTestEnable = true;
 			config.PipelineState.DepthWriteEnable = true;
 			config.PipelineState.CullMode = VK_CULL_MODE_BACK_BIT;
 			config.PipelineState.Samples = VK_SAMPLE_COUNT_1_BIT;
+			config.SetLayouts = { };  // 仅 push constant 
+			return config;
+		}
+		
+		// 3DGS Splat 渲染: set0 = GAUSSIAN_SET (高斯专属, 含 FrameInfo UBO + GaussianData SSBO +
+		// SortedIndices SSBO + DepthMap + ModelTransform SSBO); 相机矩阵 (view + proj) 经 push constant 传入.
+		// TRIANGLE_LIST 拓扑, 实例化 Quad 绘制, Alpha 混合
+		static ShaderConfig GaussianSplat()
+		{
+			ShaderConfig config;
+			config.PipelineState.HasVertexInput = false;
+			config.PipelineState.DepthTestEnable = false;
+			config.PipelineState.DepthWriteEnable = false;
+			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
+			config.PipelineState.Topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+			config.PipelineState.BlendEnable = true;
+			// 相机矩阵 (view + proj, 各 64B) 走 push constant; set0 仅放高斯相关资源 (见 GlobalBindings.h)
+			config.PushConstantRanges = {
+				{ VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128 },
+			};
+			config.SetLayouts = { GAUSSIAN_SET };
 			return config;
 		}
 	};
@@ -223,6 +243,8 @@ namespace Engine {
 	// Shader 库
 	// ============================================================
 
+	class VulkanComputeShader;  // 前向声明: 计算着色器 (区别于 VS/FS, 由 ShaderLibrary 单独管理)
+
 	class ShaderLibrary
 	{
 	public:
@@ -233,7 +255,14 @@ namespace Engine {
 		std::shared_ptr<Shader> Get(const std::string& name);
 		bool Exists(const std::string& name) const;
 
+		// 计算着色器 (区别于 VS/FS): 仅 .spv 路径 + ShaderConfig, 通过 VulkanComputeShader 的
+		// 构造函数重载 (path, config) 创建, 存入独立的 compute map (类型不同于 Shader).
+		std::shared_ptr<VulkanComputeShader> LoadCompute(const std::string& spvPath, const ShaderConfig& config = ShaderConfig{});
+		std::shared_ptr<VulkanComputeShader> GetCompute(const std::string& name);
+		bool ComputeExists(const std::string& name) const;
+
 	private:
 		std::unordered_map<std::string, std::shared_ptr<Shader>> m_Shaders;
+		std::unordered_map<std::string, std::shared_ptr<VulkanComputeShader>> m_ComputeShaders;
 	};
 }

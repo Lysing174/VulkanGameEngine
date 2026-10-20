@@ -3,6 +3,7 @@
 
 #include "Engine/Renderer/Renderer.h"
 #include "Platform/Vulkan/VulkanShader.h"
+#include "Platform/Vulkan/VulkanComputeShader.h"
 
 namespace Engine {
     std::shared_ptr<Shader> Shader::Create(const std::string& vertexSrc, const std::string& fragmentSrc, const ShaderConfig& config)
@@ -50,5 +51,29 @@ namespace Engine {
 	bool ShaderLibrary::Exists(const std::string& name) const
 	{
 		return m_Shaders.find(name) != m_Shaders.end();
+	}
+
+	// ---- 计算着色器 (区别于 VS/FS) ----
+	std::shared_ptr<VulkanComputeShader> ShaderLibrary::LoadCompute(const std::string& spvPath, const ShaderConfig& config)
+	{
+		// 以 .spv 路径的 basename 作为库内名称 (与 VulkanShader 一致)
+		size_t found = spvPath.find_last_of("/\\");
+		std::string name = spvPath.substr(found + 1);
+		EG_CORE_ASSERT(!ComputeExists(name), "Compute shader already exists!");
+
+		auto shader = std::make_shared<VulkanComputeShader>(spvPath, config);
+		m_ComputeShaders[name] = shader;
+		return shader;
+	}
+
+	std::shared_ptr<VulkanComputeShader> ShaderLibrary::GetCompute(const std::string& name)
+	{
+		EG_CORE_ASSERT(ComputeExists(name), "Compute shader not found!");
+		return m_ComputeShaders[name];
+	}
+
+	bool ShaderLibrary::ComputeExists(const std::string& name) const
+	{
+		return m_ComputeShaders.find(name) != m_ComputeShaders.end();
 	}
 }

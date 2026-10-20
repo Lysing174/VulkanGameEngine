@@ -34,6 +34,8 @@ namespace Engine {
 			}
 		}
 
+		Renderer::Shutdown();
+
 		for (Layer* layer : m_LayerStack)
 		{
 			layer->OnDetach();
@@ -99,23 +101,27 @@ namespace Engine {
 			//FixedUpdate
 			while (m_Accumulator >= m_FixedTimeStep)
 			{
-				for (Layer* layer : m_LayerStack)
+			for (Layer* layer : m_LayerStack)
 				{
 					layer->OnFixedUpdate(); 
 				}
 				m_Accumulator -= m_FixedTimeStep;
 			}
 
-			Renderer::BeginScene(m_EditorLayer->GetEditorCamera());
+			Renderer::BeginRenderQueueSubmit();
 			//Update
 			for (Layer* layer : m_LayerStack)
 			{
-				layer->OnUpdate();
+				layer->OnUpdate();//场景更新及渲染队列提交（还有scene视口resize）
 			}
+			Renderer::EndRenderQueueSubmit();
+			
+			Renderer::BeginScene(m_EditorLayer->GetEditorCamera());
 			Renderer::RunShadowPass();   // 先渲阴影贴图 (在 Mesh pass 之前)
 			Renderer::RunMeshPass();
 			
 			m_ImGuiLayer->Begin();
+
 			for (Layer* layer : m_LayerStack)
 				layer->OnImGuiRender();
 			m_ImGuiLayer->End();

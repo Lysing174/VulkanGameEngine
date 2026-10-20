@@ -131,6 +131,11 @@ namespace Engine {
             barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
             dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        } else if (oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
+            barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            srcStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
         } else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
             barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -162,7 +167,7 @@ namespace Engine {
         auto  msaaSamples = static_cast<VkSampleCountFlagBits>(m_Specification.Samples);
         bool  useMSAA = (m_Specification.Samples != 1);
 
-        m_ColorFormat = context->GetSwapChainImageFormat();
+        m_ColorFormat = context->GetOffscreenColorFormat();
         m_DepthFormat = context->GetDepthFormat();
 
         // ---------------------------------------------------------------
@@ -202,7 +207,7 @@ namespace Engine {
         // ---------------------------------------------------------------
         // 3. Depth image (attachment 2 in MSAA, or 1 in non-MSAA)
         // ---------------------------------------------------------------
-        CreateImage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        CreateImage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | (useMSAA ? 0 : VK_IMAGE_USAGE_SAMPLED_BIT),
                     useMSAA ? msaaSamples : VK_SAMPLE_COUNT_1_BIT,
                     m_DepthFormat,
                     m_DepthMSAAImage, m_DepthMSAAMemory);
@@ -213,6 +218,28 @@ namespace Engine {
                          VK_IMAGE_ASPECT_DEPTH_BIT);
 
         // ---------------------------------------------------------------
+        // 3b. Resolve Depth image (attachment 3 in MSAA) — 1x
+        //     Mesh 把 MSAA 深度 resolve 到这里 (VK_RESOLVE_MODE_MIN_BIT),
+        //     高斯 pass 读取它做遮挡. 用法含 SAMPLED_BIT 以便后续 b3 采样.
+        //     初始置于 READ_ONLY (与 color resolve 一致), 由 BeginMeshRenderPass
+        //     的 barrier 在每帧开始前过渡回 ATTACHMENT_OPTIMAL.
+        // ---------------------------------------------------------------
+        if (useMSAA) {
+            CreateImage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                        VK_SAMPLE_COUNT_1_BIT, m_DepthFormat,
+                        m_DepthResolveImage, m_DepthResolveMemory);
+            m_DepthResolveView = CreateView(m_DepthResolveImage, m_DepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+            TransitionLayout(m_DepthResolveImage, m_DepthFormat,
+                             VK_IMAGE_LAYOUT_UNDEFINED,
+                             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                             VK_IMAGE_ASPECT_DEPTH_BIT);
+            TransitionLayout(m_DepthResolveImage, m_DepthFormat,
+                             VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                             VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                             VK_IMAGE_ASPECT_DEPTH_BIT);
+        }
+
+        // ---------------------------------------------------------------
         // 4. Render Pass — 由 FramebufferSpecification::RenderPass 指定
         //    (Render pass is created and owned by VulkanContext / renderPassesMap)
         // ---------------------------------------------------------------
@@ -221,14 +248,15 @@ namespace Engine {
         // 5. Framebuffer
         // ---------------------------------------------------------------
         {
-            VkImageView views[3];
+            VkImageView views[4];
             uint32_t    count;
 
             if (useMSAA) {
                 views[0] = m_ColorMSAAView;
                 views[1] = m_ColorResolveView;
                 views[2] = m_DepthMSAAView;
-                count    = 3;
+                views[3] = m_DepthResolveView;   // 1x depth resolve (高斯遮挡用)
+                count    = 4;
             } else {
                 views[0] = m_ColorResolveView;  // non-MSAA: color is also the display target
                 views[1] = m_DepthMSAAView;
@@ -246,6 +274,33 @@ namespace Engine {
 
             if (vkCreateFramebuffer(device, &fbInfo, nullptr, &m_VulkanFramebuffer) != VK_SUCCESS)
                 throw std::runtime_error("VulkanFramebuffer: failed to create framebuffer!");
+        }
+
+        // ---------------------------------------------------------------
+        // 5b. Gaussian framebuffer — 始终 1x, [ResolveColor, ResolveDepth(1x)]
+        //     高斯 pass 不使用 MSAA, 直接复用离屏 FBO 的 1x resolve color 与
+        //     (MSAA? 1x depth resolve : 1x depth) 作为 1x 目标.
+        // ---------------------------------------------------------------
+        {
+            auto gaussianRP = VulkanContext::Get()->GetGaussianRenderPass();
+            if (gaussianRP && gaussianRP->GetVkRenderPass() != VK_NULL_HANDLE)
+            {
+                VkImageView gViews[2];
+                gViews[0] = m_ColorResolveView;                              // 1x color
+                gViews[1] = useMSAA ? m_DepthResolveView : m_DepthMSAAView;  // 1x depth
+
+                VkFramebufferCreateInfo fbInfo = {};
+                fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                fbInfo.renderPass      = gaussianRP->GetVkRenderPass();
+                fbInfo.attachmentCount = 2;
+                fbInfo.pAttachments    = gViews;
+                fbInfo.width           = m_Specification.Width;
+                fbInfo.height          = m_Specification.Height;
+                fbInfo.layers          = 1;
+
+                if (vkCreateFramebuffer(device, &fbInfo, nullptr, &m_GaussianFramebuffer) != VK_SUCCESS)
+                    throw std::runtime_error("VulkanFramebuffer: failed to create gaussian framebuffer!");
+            }
         }
 
         // ---------------------------------------------------------------
@@ -293,6 +348,7 @@ namespace Engine {
 
         if (m_ColorSampler        != VK_NULL_HANDLE) { vkDestroySampler(device, m_ColorSampler, nullptr); m_ColorSampler = VK_NULL_HANDLE; }
         if (m_VulkanFramebuffer   != VK_NULL_HANDLE) { vkDestroyFramebuffer(device, m_VulkanFramebuffer, nullptr); m_VulkanFramebuffer = VK_NULL_HANDLE; }
+        if (m_GaussianFramebuffer != VK_NULL_HANDLE) { vkDestroyFramebuffer(device, m_GaussianFramebuffer, nullptr); m_GaussianFramebuffer = VK_NULL_HANDLE; }
 
         if (m_ColorMSAAView       != VK_NULL_HANDLE) { vkDestroyImageView(device, m_ColorMSAAView, nullptr); m_ColorMSAAView = VK_NULL_HANDLE; }
         if (m_ColorMSAAImage      != VK_NULL_HANDLE) { vkDestroyImage(device, m_ColorMSAAImage, nullptr); m_ColorMSAAImage = VK_NULL_HANDLE; }
@@ -305,6 +361,10 @@ namespace Engine {
         if (m_DepthMSAAView       != VK_NULL_HANDLE) { vkDestroyImageView(device, m_DepthMSAAView, nullptr); m_DepthMSAAView = VK_NULL_HANDLE; }
         if (m_DepthMSAAImage      != VK_NULL_HANDLE) { vkDestroyImage(device, m_DepthMSAAImage, nullptr); m_DepthMSAAImage = VK_NULL_HANDLE; }
         if (m_DepthMSAAMemory     != VK_NULL_HANDLE) { vkFreeMemory(device, m_DepthMSAAMemory, nullptr); m_DepthMSAAMemory = VK_NULL_HANDLE; }
+
+        if (m_DepthResolveView     != VK_NULL_HANDLE) { vkDestroyImageView(device, m_DepthResolveView, nullptr); m_DepthResolveView = VK_NULL_HANDLE; }
+        if (m_DepthResolveImage    != VK_NULL_HANDLE) { vkDestroyImage(device, m_DepthResolveImage, nullptr); m_DepthResolveImage = VK_NULL_HANDLE; }
+        if (m_DepthResolveMemory   != VK_NULL_HANDLE) { vkFreeMemory(device, m_DepthResolveMemory, nullptr); m_DepthResolveMemory = VK_NULL_HANDLE; }
     }
 
     // ========================================================================
@@ -313,7 +373,8 @@ namespace Engine {
     void VulkanFramebuffer::EnsureImGuiTexture()
     {
         if (m_ImGuiTextureRegistered) return;
-        if (m_ColorSampler == VK_NULL_HANDLE || m_ColorResolveView == VK_NULL_HANDLE) return;
+        if (m_ColorSampler == VK_NULL_HANDLE || m_ColorResolveView == VK_NULL_HANDLE)
+            return;
 
         // Register resolve image with ImGui — after the render pass it's in
         // SHADER_READ_ONLY_OPTIMAL layout (set in finalLayout of resolve attachment)

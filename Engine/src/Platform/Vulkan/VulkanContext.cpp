@@ -49,13 +49,151 @@ namespace Engine {
     {
         initVulkan();
     }
+    
+    void VulkanContext::initVulkan() {
+        createInstance();
+        setupDebugMessenger();
+        createSurface();
+        pickPhysicalDevice();
+        createLogicalDevice();
+        createSwapChain();
+        offscreenColorFormat = swapChainImageFormat;
+        depthImageFormat = findDepthFormat();
+        createImageViews();
+
+        // Clamp MSAA to device maximum
+        VkSampleCountFlagBits maxSamples = GetMaxUsableSampleCount();
+        if (m_MSAASamples > maxSamples) m_MSAASamples = maxSamples;
+
+        renderPassesMap["Shadow"] = std::make_shared<VulkanRenderPass>("Shadow", offscreenColorFormat, VK_FORMAT_D32_SFLOAT,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
+        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",offscreenColorFormat,depthImageFormat,std::make_shared<VkDevice>(device), m_MSAASamples);
+        renderPassesMap["ImGui"]=std::make_shared<VulkanRenderPass>("ImGui",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
+        renderPassesMap["Gaussian"] = std::make_shared<VulkanRenderPass>("Gaussian", offscreenColorFormat, depthImageFormat,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
+
+        createCommandPool();
+        createDepthResources();
+        createMSAAResources();
+       
+        // ImGui pass: 只需要 swapchain image，不需要 depth
+        createSwapChainFramebuffers();
+        createDescriptorPool();
+        createCommandBuffers();
+        createSemaphores();
+    }
+
+    void VulkanContext::cleanupSwapChain() {
+        vkDeviceWaitIdle(device);
+
+        for (VkFramebuffer framebuffer : swapChainFramebuffers) {
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+        }
+        swapChainFramebuffers.clear();
+        renderPassesMap["ImGui"]->cleanup();
+
+        // Destroy MSAA resources
+        if (m_ColorImageViewMSAA != VK_NULL_HANDLE) { vkDestroyImageView(device, m_ColorImageViewMSAA, nullptr); m_ColorImageViewMSAA = VK_NULL_HANDLE; }
+        if (m_ColorImageMSAA != VK_NULL_HANDLE)      { vkDestroyImage(device, m_ColorImageMSAA, nullptr); m_ColorImageMSAA = VK_NULL_HANDLE; }
+        if (m_ColorImageMemoryMSAA != VK_NULL_HANDLE) { vkFreeMemory(device, m_ColorImageMemoryMSAA, nullptr); m_ColorImageMemoryMSAA = VK_NULL_HANDLE; }
+        if (m_DepthImageViewMSAA != VK_NULL_HANDLE)   { vkDestroyImageView(device, m_DepthImageViewMSAA, nullptr); m_DepthImageViewMSAA = VK_NULL_HANDLE; }
+        if (m_DepthImageMSAA != VK_NULL_HANDLE)        { vkDestroyImage(device, m_DepthImageMSAA, nullptr); m_DepthImageMSAA = VK_NULL_HANDLE; }
+        if (m_DepthImageMemoryMSAA != VK_NULL_HANDLE)  { vkFreeMemory(device, m_DepthImageMemoryMSAA, nullptr); m_DepthImageMemoryMSAA = VK_NULL_HANDLE; }
+        
+        vkDestroyImageView(device, depthImageView, nullptr);
+        vkDestroyImage(device, depthImage, nullptr);
+        vkFreeMemory(device, depthImageMemory, nullptr);
+        
+        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+            vkDestroyImageView(device, swapChainImageViews[i], nullptr);
+        }
+        vkDestroySwapchainKHR(device, swapChain, nullptr);
+    }
+
+    void VulkanContext::recreateSwapChain() {
+        vkDeviceWaitIdle(device);
+
+        cleanupSwapChain();
+
+        createSwapChain();
+        createImageViews();
+        renderPassesMap["ImGui"]=std::make_shared<VulkanRenderPass>("ImGui",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
+        
+        // Recreate ImGui main pipeline with the new render pass (old one was destroyed)
+        {
+            ImGui_ImplVulkan_PipelineInfo pipelineInfo = {};
+            pipelineInfo.RenderPass = renderPassesMap["ImGui"]->GetVkRenderPass();
+            pipelineInfo.Subpass = 0;
+            pipelineInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+            ImGui_ImplVulkan_CreateMainPipeline(&pipelineInfo);
+        }
+        
+        createDepthResources();
+        createMSAAResources();
+
+        // Mesh framebuffers are owned by VulkanFramebuffer (offscreen), as on init.
+        // ImGui pass: 只需要 swapchain image，不需要 depth
+        createSwapChainFramebuffers();
+        createCommandBuffers();
+
+        // 通知 Renderer 更新深度纹理 descriptor
+        Renderer::OnSwapchainRecreated();
+    }
+
+    void VulkanContext::cleanup() {
+        vkDeviceWaitIdle(device);
+        cleanupSwapChain();
+        
+        vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
+        vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
+        vkDestroyCommandPool(device, commandPool, nullptr);
+        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+
+        renderPassesMap["Mesh"]->cleanup();
+        renderPassesMap["Gaussian"]->cleanup();
+
+        // 清理 Shadow renderpass (阴影贴图 image/view/sampler/framebuffer 已迁至 ShadowRenderer::Exit)
+        if (auto rp = renderPassesMap["Shadow"]) rp->cleanup();
+
+        vkDestroyDevice(device, nullptr);
+        if (enableValidationLayers) {
+            DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
+        }
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+        vkDestroyInstance(instance, nullptr);
+
+        glfwDestroyWindow(window);
+
+        glfwTerminate();
+    }
+    
     void VulkanContext::BeginFrame(glm::mat4 projView)
     {
         vkQueueWaitIdle(presentQueue);
-        vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(), imageAvailableSemaphore, VK_NULL_HANDLE, &currentImageIndex);
+        VkResult acquireResult = vkAcquireNextImageKHR(
+            device,
+            swapChain,
+            std::numeric_limits<uint64_t>::max(),
+            imageAvailableSemaphore,
+            VK_NULL_HANDLE,
+            &currentImageIndex);
 
-        updateGlobalUniforms(projView);
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            recreateSwapChain();
+            acquireResult = vkAcquireNextImageKHR(
+                device,
+                swapChain,
+                std::numeric_limits<uint64_t>::max(),
+                imageAvailableSemaphore,
+                VK_NULL_HANDLE,
+                &currentImageIndex);
+        }
 
+        if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
+        {
+            throw std::runtime_error("failed to acquire swap chain image!");
+        }
+        
         vkResetCommandBuffer(commandBuffers[currentImageIndex], 0);//清空命令
 
         VkCommandBufferBeginInfo beginInfo = {};
@@ -109,14 +247,40 @@ namespace Engine {
                 0, 0, nullptr, 0, nullptr, 1, &barrier);
         }
 
+        // 1x 深度 resolve 附件 (仅 MSAA 模式存在): 上一帧高斯 pass 后处于 READ_ONLY,
+        // 本帧 mesh 需要写 (depth resolve), 故开始前过渡回 DEPTH_STENCIL_ATTACHMENT_OPTIMAL.
+        if (offscreenFB->IsMSAA() && offscreenFB->GetDepthResolveImage() != VK_NULL_HANDLE)
+        {
+            VkImageMemoryBarrier barrier = {};
+            barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.oldLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            barrier.newLayout                       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image                           = offscreenFB->GetDepthResolveImage();
+            barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+            barrier.subresourceRange.baseMipLevel   = 0;
+            barrier.subresourceRange.levelCount     = 1;
+            barrier.subresourceRange.baseArrayLayer = 0;
+            barrier.subresourceRange.layerCount     = 1;
+            barrier.srcAccessMask                   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            barrier.dstAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+            vkCmdPipelineBarrier(commandBuffers[currentImageIndex],
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &barrier);
+        }
+
         renderPassInfo.renderPass = offscreenFB->GetRenderPass();
         renderPassInfo.framebuffer = offscreenFB->GetVulkanFramebuffer();
         renderPassInfo.renderArea.extent = offscreenFB->GetExtent();
 
+        // Keep the storage alive until vkCmdBeginRenderPass consumes pClearValues.
+        VkClearValue clearValues[3] = {};
         if (offscreenFB->IsMSAA())
         {
-            // MSAA: [MSAA Color, Resolve Color, MSAA Depth] — 3 clear values
-            VkClearValue clearValues[3] = {};
+            // Only attachments 0 and 2 use CLEAR; resolve depth (3) uses DONT_CARE.
             clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };   // MSAA Color
             clearValues[1].color = { 0.0f, 0.0f, 0.0f, 1.0f };   // Resolve (ignored, DONT_CARE)
             clearValues[2].depthStencil = { 1.0f, 0 };             // MSAA Depth
@@ -125,7 +289,6 @@ namespace Engine {
         }
         else
         {
-            VkClearValue clearValues[2] = {};
             clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
             clearValues[1].depthStencil = { 1.0f, 0 };
             renderPassInfo.clearValueCount = 2;
@@ -162,7 +325,7 @@ namespace Engine {
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = GetCurrentRenderPass()->GetVkRenderPass();
         
-        renderPassInfo.framebuffer = GetCurrentRenderPass()->GetFramebuffer(currentImageIndex);
+        renderPassInfo.framebuffer = swapChainFramebuffers[currentImageIndex];
         renderPassInfo.renderArea.offset = { 0, 0 };
         renderPassInfo.renderArea.extent = swapChainExtent;
 
@@ -183,7 +346,7 @@ namespace Engine {
         vkCmdEndRenderPass(cmd);
     }
 
-    void VulkanContext::BeginShadowRenderPass(VkFramebuffer shadowFB)
+    void VulkanContext::BeginShadowRenderPass(VkFramebuffer shadowFB, VkExtent2D extent)
     {
         // ========================================
         // Shadow RenderPass: 仅写深度 (CLEAR depth=1.0)
@@ -195,7 +358,7 @@ namespace Engine {
         renderPassInfo.renderPass = renderPassesMap["Shadow"]->GetVkRenderPass();
         renderPassInfo.framebuffer = shadowFB;
         renderPassInfo.renderArea.offset = { 0, 0 };
-        renderPassInfo.renderArea.extent = m_ShadowExtent;
+        renderPassInfo.renderArea.extent = extent;
 
         VkClearValue clearValue = {};
         clearValue.depthStencil = { 1.0f, 0 };
@@ -208,15 +371,15 @@ namespace Engine {
         VkViewport viewport = {};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
-        viewport.width = (float)m_ShadowExtent.width;
-        viewport.height = (float)m_ShadowExtent.height;
+        viewport.width = (float)extent.width;
+        viewport.height = (float)extent.height;
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
         vkCmdSetViewport(commandBuffers[currentImageIndex], 0, 1, &viewport);
 
         VkRect2D scissor = {};
         scissor.offset = { 0, 0 };
-        scissor.extent = m_ShadowExtent;
+        scissor.extent = extent;
         vkCmdSetScissor(commandBuffers[currentImageIndex], 0, 1, &scissor);
     }
     void VulkanContext::DrawImGui()
@@ -227,6 +390,30 @@ namespace Engine {
     }
     void VulkanContext::EndFrame()
     {
+        VkImageMemoryBarrier presentBarrier = {};
+        presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        presentBarrier.dstAccessMask = 0;
+        presentBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        presentBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        presentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        presentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        presentBarrier.image = swapChainImages[currentImageIndex];
+        presentBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        presentBarrier.subresourceRange.baseMipLevel = 0;
+        presentBarrier.subresourceRange.levelCount = 1;
+        presentBarrier.subresourceRange.baseArrayLayer = 0;
+        presentBarrier.subresourceRange.layerCount = 1;
+
+        vkCmdPipelineBarrier(
+            commandBuffers[currentImageIndex],
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &presentBarrier);
+
         if (vkEndCommandBuffer(commandBuffers[currentImageIndex]) != VK_SUCCESS) {
             throw std::runtime_error("failed to record command buffer!");
         }
@@ -253,7 +440,8 @@ namespace Engine {
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
-        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+        VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        if (submitResult != VK_SUCCESS) {
             throw std::runtime_error("failed to submit draw command buffer!");
         }
 
@@ -268,151 +456,18 @@ namespace Engine {
         presentInfo.pImageIndices = &currentImageIndex;
         presentInfo.pResults = nullptr; // Optional
 
-        vkQueuePresentKHR(presentQueue, &presentInfo);
+        VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+        {
+            recreateSwapChain();
+        }
+        else if (presentResult != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to present swap chain image!");
+        }
 
         // 重置标记
         currentRenderPassName = "";
-    }
-
-    void VulkanContext::initVulkan() {
-        createInstance();
-        setupDebugMessenger();
-        createSurface();
-        pickPhysicalDevice();
-        createLogicalDevice();
-        createSwapChain();
-        depthImageFormat = findDepthFormat();
-        createImageViews();
-
-        // Clamp MSAA to device maximum
-        VkSampleCountFlagBits maxSamples = GetMaxUsableSampleCount();
-        if (m_MSAASamples > maxSamples) m_MSAASamples = maxSamples;
-
-        //createMeshRenderPass();
-        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), m_MSAASamples);
-        renderPassesMap["ImGui"]=std::make_shared<VulkanRenderPass>("ImGui",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
-
-        createDescriptorSetLayout();
-        createCommandPool();
-        createDepthResources();
-        createMSAAResources();
-        createShadowResources();   // 创建阴影贴图资源 (image/view/sampler/renderpass/framebuffer)
-
-        // ImGui pass: 只需要 swapchain image，不需要 depth
-        renderPassesMap["ImGui"]->createFramebuffers(swapChainExtent, swapChainImageViews, VK_NULL_HANDLE);
-        createUniformBuffer();
-        createDescriptorPool();
-        createDescriptorSets();   // 需在 createShadowResources() 之后 (binding 4 写入阴影图)
-        createCommandBuffers();
-        createSemaphores();
-    }
-
-    void VulkanContext::cleanupSwapChain() {
-        for (auto& renderPass : renderPassesMap) {
-            // Shadow render pass 与 swapchain 无关, 仅在 init 创建一次, 不随 swapchain 销毁/重建
-            if (renderPass.first == "Shadow") continue;
-            renderPass.second->cleanup();
-        }
-
-        vkDeviceWaitIdle(device);
-
-        // Destroy light SSBO
-        m_LightSSBO.Destroy();
-        
-        // Destroy IBL SH buffer
-        m_IBL_SHBuffer.Destroy();
-        
-        // Destroy MSAA resources
-        if (m_ColorImageViewMSAA != VK_NULL_HANDLE) { vkDestroyImageView(device, m_ColorImageViewMSAA, nullptr); m_ColorImageViewMSAA = VK_NULL_HANDLE; }
-        if (m_ColorImageMSAA != VK_NULL_HANDLE)      { vkDestroyImage(device, m_ColorImageMSAA, nullptr); m_ColorImageMSAA = VK_NULL_HANDLE; }
-        if (m_ColorImageMemoryMSAA != VK_NULL_HANDLE) { vkFreeMemory(device, m_ColorImageMemoryMSAA, nullptr); m_ColorImageMemoryMSAA = VK_NULL_HANDLE; }
-        if (m_DepthImageViewMSAA != VK_NULL_HANDLE)   { vkDestroyImageView(device, m_DepthImageViewMSAA, nullptr); m_DepthImageViewMSAA = VK_NULL_HANDLE; }
-        if (m_DepthImageMSAA != VK_NULL_HANDLE)        { vkDestroyImage(device, m_DepthImageMSAA, nullptr); m_DepthImageMSAA = VK_NULL_HANDLE; }
-        if (m_DepthImageMemoryMSAA != VK_NULL_HANDLE)  { vkFreeMemory(device, m_DepthImageMemoryMSAA, nullptr); m_DepthImageMemoryMSAA = VK_NULL_HANDLE; }
-        
-        vkDestroyImageView(device, depthImageView, nullptr);
-        vkDestroyImage(device, depthImage, nullptr);
-        vkFreeMemory(device, depthImageMemory, nullptr);
-        
-        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
-        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-            vkDestroyImageView(device, swapChainImageViews[i], nullptr);
-        }
-        vkDestroySwapchainKHR(device, swapChain, nullptr);
-    }
-
-    void VulkanContext::recreateSwapChain() {
-        vkDeviceWaitIdle(device);
-
-        cleanupSwapChain();
-
-        createSwapChain();
-        createImageViews();
-        //createMeshRenderPass();
-        renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), m_MSAASamples);
-        renderPassesMap["ImGui"]=std::make_shared<VulkanRenderPass>("ImGui",swapChainImageFormat,depthImageFormat,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
-        
-        // Recreate ImGui main pipeline with the new render pass (old one was destroyed)
-        {
-            ImGui_ImplVulkan_PipelineInfo pipelineInfo = {};
-            pipelineInfo.RenderPass = renderPassesMap["ImGui"]->GetVkRenderPass();
-            pipelineInfo.Subpass = 0;
-            pipelineInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-            ImGui_ImplVulkan_CreateMainPipeline(&pipelineInfo);
-        }
-        
-        createDepthResources();
-        createMSAAResources();
-
-        if (m_MSAASamples != VK_SAMPLE_COUNT_1_BIT)
-            renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView,
-                                                        m_ColorImageViewMSAA, m_DepthImageViewMSAA);
-        else
-            renderPassesMap["Mesh"]->createFramebuffers(swapChainExtent, swapChainImageViews, depthImageView);
-        // ImGui pass: 只需要 swapchain image，不需要 depth
-        renderPassesMap["ImGui"]->createFramebuffers(swapChainExtent, swapChainImageViews, VK_NULL_HANDLE);
-        createCommandBuffers();
-
-        // 通知 Renderer 更新深度纹理 descriptor
-        Renderer::OnSwapchainRecreated();
-    }
-
-    void VulkanContext::cleanup() {
-        vkDeviceWaitIdle(device);
-        cleanupSwapChain();
-        
-        uniformBuffers.clear();
-        vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
-        vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
-        vkDestroyCommandPool(device, commandPool, nullptr);
-        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-
-        // 清理阴影贴图资源 (与 swapchain 无关, cleanupSwapChain 不会销毁)
-        if (m_ShadowResourcesCreated)
-        {
-            for (uint32_t s = 0; s < MAX_SHADOW_MAPS; s++)
-            {
-                if (m_ShadowFramebuffers[s] != VK_NULL_HANDLE) vkDestroyFramebuffer(device, m_ShadowFramebuffers[s], nullptr);
-                if (m_ShadowViews[s]       != VK_NULL_HANDLE) vkDestroyImageView(device, m_ShadowViews[s], nullptr);
-                if (m_ShadowImages[s]      != VK_NULL_HANDLE) vkDestroyImage(device, m_ShadowImages[s], nullptr);
-                if (m_ShadowMemory[s]      != VK_NULL_HANDLE) vkFreeMemory(device, m_ShadowMemory[s], nullptr);
-            }
-            if (auto rp = renderPassesMap["Shadow"]) rp->cleanup();
-            if (m_ShadowSampler != VK_NULL_HANDLE) vkDestroySampler(device, m_ShadowSampler, nullptr);
-            m_ShadowResourcesCreated = false;
-        }
-
-        vkDestroyDevice(device, nullptr);
-        if (enableValidationLayers) {
-            DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
-        }
-        vkDestroySurfaceKHR(instance, surface, nullptr);
-        vkDestroyInstance(instance, nullptr);
-
-        glfwDestroyWindow(window);
-
-        glfwTerminate();
     }
 
     /// <summary>
@@ -458,6 +513,9 @@ namespace Engine {
         }
 
         //创建vk实例
+
+
+
         if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
             throw std::runtime_error("failed to create instance!");
         }
@@ -885,6 +943,28 @@ namespace Engine {
         std::cout << "\033[33mimage views created.\033[0m" << std::endl;
     }
 
+    void VulkanContext::createSwapChainFramebuffers() {
+        swapChainFramebuffers.resize(swapChainImageViews.size());
+        VkRenderPass imguiRenderPass = renderPassesMap["ImGui"]->GetVkRenderPass();
+
+        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+            VkImageView attachment = swapChainImageViews[i];
+
+            VkFramebufferCreateInfo framebufferInfo = {};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = imguiRenderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = &attachment;
+            framebufferInfo.width = swapChainExtent.width;
+            framebufferInfo.height = swapChainExtent.height;
+            framebufferInfo.layers = 1;
+
+            if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create ImGui swap chain framebuffer!");
+            }
+        }
+    }
+
 
     void VulkanContext::createCommandPool() {
         QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
@@ -1161,128 +1241,44 @@ namespace Engine {
         EndSingleTimeCommands(cmd);
     }
 
-    // ============================================================
-    // Shadow map resources (方向光阴影贴图)
-    // 创建 MAX_SHADOW_MAPS 张深度图 + sampler + Shadow render pass + framebuffer
-    // 与 swapchain 无关, 仅在 init 时创建一次 (窗口 resize 不重建)
-    // ============================================================
-    void VulkanContext::createShadowResources()
+
+    void VulkanContext::BeginGaussianRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB)
     {
-        if (m_ShadowResourcesCreated) return;
-        m_ShadowResourcesCreated = true;
+        // ========================================
+        // Gaussian RenderPass: LOAD 不清屏, 在 mesh 结果上合成 splat
+        // ========================================
+        currentRenderPassName = "Gaussian";
 
-        VkFormat shadowFormat = VK_FORMAT_D32_SFLOAT;
+        VkRenderPassBeginInfo renderPassInfo = {};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPassesMap["Gaussian"]->GetVkRenderPass();
+        renderPassInfo.framebuffer = offscreenFB->GetGaussianVulkanFramebuffer();
+        renderPassInfo.renderArea.offset = { 0, 0 };
+        renderPassInfo.renderArea.extent = offscreenFB->GetExtent();
 
-        // --- 1. 创建 Shadow render pass (仅深度附件), 注册进 renderPassesMap["Shadow"] ---
-        {
-            renderPassesMap["Shadow"] = std::make_shared<VulkanRenderPass>(
-                "Shadow", swapChainImageFormat, shadowFormat,
-                std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
-        }
+        // 高斯始终 1x 两附件 (color + depth), 均为 LOAD, clear 值被忽略.
+        VkClearValue clearValues[2] = {};
+        clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };   // Color (LOAD, 忽略)
+        clearValues[1].depthStencil = { 1.0f, 0 };           // Depth (LOAD, 忽略)
+        renderPassInfo.clearValueCount = 2;
+        renderPassInfo.pClearValues = clearValues;
 
-        // --- 2. 创建 sampler ---
-        {
-            VkSamplerCreateInfo samplerInfo = {};
-            samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-            samplerInfo.magFilter = VK_FILTER_LINEAR;
-            samplerInfo.minFilter = VK_FILTER_LINEAR;
-            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-            samplerInfo.minLod = 0.0f;
-            samplerInfo.maxLod = 1.0f;
-            samplerInfo.compareEnable = VK_FALSE; // 硬阴影, 后续 PCF 再开
-            samplerInfo.compareOp = VK_COMPARE_OP_NEVER;
-            samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-            samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-            if (vkCreateSampler(device, &samplerInfo, nullptr, &m_ShadowSampler) != VK_SUCCESS)
-                throw std::runtime_error("failed to create shadow sampler!");
-        }
+        VkViewport viewport = {};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float)offscreenFB->GetWidth();
+        viewport.height = (float)offscreenFB->GetHeight();
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(commandBuffers[currentImageIndex], 0, 1, &viewport);
 
-        // --- 3. 创建 MAX_SHADOW_MAPS 张深度图 + view + framebuffer ---
-        VkImageMemoryBarrier depthBarrierTemplate = {};
-        for (uint32_t s = 0; s < MAX_SHADOW_MAPS; s++)
-        {
-            // 3a. image
-            VkImageCreateInfo imageInfo = {};
-            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-            imageInfo.imageType = VK_IMAGE_TYPE_2D;
-            imageInfo.extent = { m_ShadowExtent.width, m_ShadowExtent.height, 1 };
-            imageInfo.mipLevels = 1;
-            imageInfo.arrayLayers = 1;
-            imageInfo.format = shadowFormat;
-            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkRect2D scissor = {};
+        scissor.offset = { 0, 0 };
+        scissor.extent = offscreenFB->GetExtent();
+        vkCmdSetScissor(commandBuffers[currentImageIndex], 0, 1, &scissor);
 
-            if (vkCreateImage(device, &imageInfo, nullptr, &m_ShadowImages[s]) != VK_SUCCESS)
-                throw std::runtime_error("failed to create shadow image!");
-
-            VkMemoryRequirements memReq;
-            vkGetImageMemoryRequirements(device, m_ShadowImages[s], &memReq);
-            VkMemoryAllocateInfo allocInfo = {};
-            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            allocInfo.allocationSize = memReq.size;
-            allocInfo.memoryTypeIndex = FindMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            if (vkAllocateMemory(device, &allocInfo, nullptr, &m_ShadowMemory[s]) != VK_SUCCESS)
-                throw std::runtime_error("failed to allocate shadow image memory!");
-            vkBindImageMemory(device, m_ShadowImages[s], m_ShadowMemory[s], 0);
-
-            // 3b. image view
-            VkImageViewCreateInfo viewInfo = {};
-            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            viewInfo.image = m_ShadowImages[s];
-            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = shadowFormat;
-            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            viewInfo.subresourceRange.baseMipLevel = 0;
-            viewInfo.subresourceRange.levelCount = 1;
-            viewInfo.subresourceRange.baseArrayLayer = 0;
-            viewInfo.subresourceRange.layerCount = 1;
-            if (vkCreateImageView(device, &viewInfo, nullptr, &m_ShadowViews[s]) != VK_SUCCESS)
-                throw std::runtime_error("failed to create shadow image view!");
-
-            // 3c. layout transition → DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-            {
-                VkImageMemoryBarrier barrier = {};
-                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.image = m_ShadowImages[s];
-                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-                barrier.subresourceRange.baseMipLevel = 0;
-                barrier.subresourceRange.levelCount = 1;
-                barrier.subresourceRange.baseArrayLayer = 0;
-                barrier.subresourceRange.layerCount = 1;
-                barrier.srcAccessMask = 0;
-                barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-                VkCommandBuffer cmd = BeginSingleTimeCommands();
-                vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-                    0, 0, nullptr, 0, nullptr, 1, &barrier);
-                EndSingleTimeCommands(cmd);
-            }
-
-            // 3d. framebuffer
-            VkFramebufferCreateInfo fbInfo = {};
-            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            fbInfo.renderPass = renderPassesMap["Shadow"]->GetVkRenderPass();
-            fbInfo.attachmentCount = 1;
-            fbInfo.pAttachments = &m_ShadowViews[s];
-            fbInfo.width = m_ShadowExtent.width;
-            fbInfo.height = m_ShadowExtent.height;
-            fbInfo.layers = 1;
-            if (vkCreateFramebuffer(device, &fbInfo, nullptr, &m_ShadowFramebuffers[s]) != VK_SUCCESS)
-                throw std::runtime_error("failed to create shadow framebuffer!");
-        }
     }
     VkFormat VulkanContext::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
         for (VkFormat format : candidates) {
@@ -1298,76 +1294,6 @@ namespace Engine {
         }
 
         throw std::runtime_error("failed to find supported format!");
-    }
-
-    void VulkanContext::createUniformBuffer() {
-        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
-
-        size_t imageCount = swapChainImages.size();
-        uniformBuffers.clear();
-        uniformBuffers.reserve(imageCount);
-
-        for (size_t i = 0; i < imageCount; i++) {
-            uniformBuffers.emplace_back(bufferSize,
-                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        }
-    }
-
-    void VulkanContext::createDescriptorSetLayout() {
-        std::array<VkDescriptorSetLayoutBinding, 6> bindings = {};
-
-        // Binding 0: Global UBO (projView + camera position)
-        bindings[0].binding = 0;
-        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        bindings[0].descriptorCount = 1;
-        bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings[0].pImmutableSamplers = nullptr;
-
-        // Binding 1: Light SSBO (all scene lights)
-        bindings[1].binding = 1;
-        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[1].descriptorCount = 1;
-        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings[1].pImmutableSamplers = nullptr;
-
-        // Binding 2: SH Irradiance UBO (9 × vec4 = 144 bytes)
-        bindings[2].binding = 2;
-        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        bindings[2].descriptorCount = 1;
-        bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings[2].pImmutableSamplers = nullptr;
-
-        // Binding 3: Prefiltered environment cubemap
-        bindings[3].binding = 3;
-        bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[3].descriptorCount = 1;
-        bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings[3].pImmutableSamplers = nullptr;
-
-        // Binding 4: Shadow maps (方向光阴影贴图数组, 大小 = MAX_SHADOW_MAPS)
-        // 由 createShadowResources() 创建资源后, 在 createDescriptorSets() 中写入
-        bindings[4].binding = 4;
-        bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[4].descriptorCount = MAX_SHADOW_MAPS;
-        bindings[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings[4].pImmutableSamplers = nullptr;
-
-        // Binding 5: Shadow data UBO (光视矩阵 + 光源→阴影图映射 + bias)
-        bindings[5].binding = 5;
-        bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        bindings[5].descriptorCount = 1;
-        bindings[5].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings[5].pImmutableSamplers = nullptr;
-
-        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-
-        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
     }
 
     void VulkanContext::createDescriptorPool() {
@@ -1391,119 +1317,6 @@ namespace Engine {
         }
     }
 
-    void VulkanContext::createDescriptorSets() {
-        size_t imageCount = swapChainImages.size();
-
-        // 预先创建 Light SSBO (确保 descriptor 不会被绑定到 null buffer)
-        VkDeviceSize lightSSBOSize = 32 * 48; // MAX_LIGHTS * sizeof(GPULight) = 1536 bytes
-        m_LightSSBO = VulkanBuffer(lightSSBOSize,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        // 预先创建 SH IBL buffer (9 × vec4 = 144 bytes)，初始化为 0
-        m_IBL_SHBuffer = VulkanBuffer(9 * sizeof(glm::vec4),
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        // 预先创建 Shadow data UBO (光视矩阵 + 映射 + bias)
-        m_ShadowUBO = VulkanBuffer(sizeof(ShadowUBO),
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-        std::vector<VkDescriptorSetLayout> layouts(imageCount, descriptorSetLayout);
-
-        VkDescriptorSetAllocateInfo allocInfo = {};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(imageCount);
-        allocInfo.pSetLayouts = layouts.data();
-
-        descriptorSets.resize(imageCount);
-        if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate descriptor set!");
-        }
-
-        // 注意: binding 3 (cubemap) 不在此处写入 — cubemap 在 EditorLayer::OnAttach
-        // 加载完成后通过 SetEnvironmentMap() 更新，避免无效的 VK_NULL_HANDLE 导致验证层报错
-
-        for (size_t i = 0; i < imageCount; i++)
-        {
-            std::array<VkWriteDescriptorSet, 5> descriptorWrites = {};
-
-            // Binding 0: Global UBO
-            VkDescriptorBufferInfo uboInfo = {};
-            uboInfo.buffer = uniformBuffers[i].GetBuffer();
-            uboInfo.offset = 0;
-            uboInfo.range = sizeof(UniformBufferObject);
-            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet = descriptorSets[i];
-            descriptorWrites[0].dstBinding = 0;
-            descriptorWrites[0].dstArrayElement = 0;
-            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &uboInfo;
-
-            // Binding 1: Light SSBO
-            VkDescriptorBufferInfo lightSSBOInfo = {};
-            lightSSBOInfo.buffer = m_LightSSBO.GetBuffer();
-            lightSSBOInfo.offset = 0;
-            lightSSBOInfo.range = m_LightSSBO.GetSize();
-            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet = descriptorSets[i];
-            descriptorWrites[1].dstBinding = 1;
-            descriptorWrites[1].dstArrayElement = 0;
-            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pBufferInfo = &lightSSBOInfo;
-
-            // Binding 2: SH Irradiance UBO
-            VkDescriptorBufferInfo shInfo = {};
-            shInfo.buffer = m_IBL_SHBuffer.GetBuffer();
-            shInfo.offset = 0;
-            shInfo.range = m_IBL_SHBuffer.GetSize();
-            descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[2].dstSet = descriptorSets[i];
-            descriptorWrites[2].dstBinding = 2;
-            descriptorWrites[2].dstArrayElement = 0;
-            descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[2].descriptorCount = 1;
-            descriptorWrites[2].pBufferInfo = &shInfo;
-
-            // Binding 4: Shadow maps (数组, 大小 = MAX_SHADOW_MAPS)
-            // 所有 slot 都写入合法 image view (未使用的 slot 复用第 0 张, 避免 VK_NULL_HANDLE 触发验证层报错)
-            std::array<VkDescriptorImageInfo, MAX_SHADOW_MAPS> shadowImageInfos = {};
-            for (uint32_t s = 0; s < MAX_SHADOW_MAPS; s++)
-            {
-                shadowImageInfos[s].sampler = m_ShadowSampler;
-                shadowImageInfos[s].imageView = m_ShadowViews[s]; // 已创建满 MAX_SHADOW_MAPS 张
-                shadowImageInfos[s].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            }
-            descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[3].dstSet = descriptorSets[i];
-            descriptorWrites[3].dstBinding = 4;
-            descriptorWrites[3].dstArrayElement = 0;
-            descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[3].descriptorCount = MAX_SHADOW_MAPS;
-            descriptorWrites[3].pImageInfo = shadowImageInfos.data();
-
-            // Binding 5: Shadow data UBO
-            VkDescriptorBufferInfo shadowUBOInfo = {};
-            shadowUBOInfo.buffer = m_ShadowUBO.GetBuffer();
-            shadowUBOInfo.offset = 0;
-            shadowUBOInfo.range = m_ShadowUBO.GetSize();
-            descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[4].dstSet = descriptorSets[i];
-            descriptorWrites[4].dstBinding = 5;
-            descriptorWrites[4].dstArrayElement = 0;
-            descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrites[4].descriptorCount = 1;
-            descriptorWrites[4].pBufferInfo = &shadowUBOInfo;
-
-            // Binding 3 (cubemap) 由 SetEnvironmentMap() 在 cubemap 加载完成后单独更新
-            vkUpdateDescriptorSets(device, 5, descriptorWrites.data(), 0, nullptr);
-        }
-    }
-    
     VkCommandBuffer VulkanContext::BeginSingleTimeCommands() {
         VkCommandBufferAllocateInfo allocInfo = {};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1566,7 +1379,6 @@ namespace Engine {
             throw std::runtime_error("failed to allocate command buffers!");
         }
 
-
     }
     void VulkanContext::createSemaphores() {
         VkSemaphoreCreateInfo semaphoreInfo = {};
@@ -1597,57 +1409,10 @@ namespace Engine {
 
     //}
 
-    void VulkanContext::updateGlobalUniforms(glm::mat4 projView)
-    {
-        UniformBufferObject ubo{};
-        ubo.projView = projView;
-
-        uniformBuffers[currentImageIndex].SetData(&ubo, sizeof(ubo));
-    }
-
-    void VulkanContext::UpdateGlobalCameraUniforms(const glm::vec4& cameraPos)
-    {
-        uniformBuffers[currentImageIndex].SetData(&cameraPos, sizeof(glm::vec4), offsetof(UniformBufferObject, cameraPosition));
-    }
-
     void VulkanContext::OnWindowResized(int width, int height) {
         if (width == 0 || height == 0) return;
 
         recreateSwapChain();
     }
 
-    void VulkanContext::SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData)
-    {
-        m_EnvMapDescriptor = envMapInfo;
-
-        // 此函数由 EditorLayer::OnAttach 在 descriptor sets 创建完成后调用，
-        // 因此 descriptorSets 不会为空
-        if (descriptorSets.empty())
-        {
-            EG_CORE_WARN("SetEnvironmentMap called before descriptor sets created, ignoring.");
-            return;
-        }
-
-        // Update SH buffer data (shared across all frames)
-        if (m_IBL_SHBuffer.IsValid() && !shData.empty())
-        {
-            m_IBL_SHBuffer.SetData(shData.data(), shData.size() * sizeof(glm::vec4));
-        }
-
-        // Update cubemap descriptor binding in all descriptor sets
-        for (size_t i = 0; i < descriptorSets.size(); i++)
-        {
-            VkWriteDescriptorSet write = {};
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = descriptorSets[i];
-            write.dstBinding = 3;
-            write.dstArrayElement = 0;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.descriptorCount = 1;
-            write.pImageInfo = &m_EnvMapDescriptor;
-
-            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
-        }
     }
-
-}

@@ -107,13 +107,14 @@ namespace Engine {
         virtual void Init() override;
         virtual void BeginFrame(glm::mat4 projView) override;
         virtual void EndFrame() override;
-		void BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB);
-        void BeginShadowRenderPass(VkFramebuffer shadowFB);
+        void BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB);
+        void BeginGaussianRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB);
+        void BeginShadowRenderPass(VkFramebuffer shadowFB, VkExtent2D extent);
         void BeginUIRenderPass();
         void EndRenderPass();
         void DrawImGui();
         
-        void UpdateGlobalCameraUniforms(const glm::vec4& cameraPos);
+
 
 		void OnWindowResized(int width, int height);
 
@@ -149,34 +150,21 @@ namespace Engine {
             return renderPassesMap[renderPassName];
         }
         VkCommandBuffer GetCurrentCommandBuffer() { return commandBuffers[currentImageIndex]; }
-        VkDescriptorSet GetCurrentDescriptorSet() { return descriptorSets[currentImageIndex]; }
-        VkDescriptorSetLayout GetGlobalDescriptorSetLayout() { return descriptorSetLayout; }
+        uint32_t GetCurrentImageIndex() const { return currentImageIndex; }
         VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
 		VkFormat GetSwapChainImageFormat() { return swapChainImageFormat; }
+		VkFormat GetOffscreenColorFormat() { return offscreenColorFormat; }
 		VkFormat GetDepthFormat() { return depthImageFormat; }
 		VkImageView GetDepthImageView() { return depthImageView; }
 
-		// Shadow maps (方向光阴影贴图, 数组 MAX_SHADOW_MAPS)
-		VkImageView GetShadowMapView(uint32_t index) { return (index < MAX_SHADOW_MAPS) ? m_ShadowViews[index] : VK_NULL_HANDLE; }
-		VkSampler   GetShadowSampler() { return m_ShadowSampler; }
-		VkFramebuffer GetShadowFramebuffer(uint32_t index) { return (index < MAX_SHADOW_MAPS) ? m_ShadowFramebuffers[index] : VK_NULL_HANDLE; }
+		// Shadow renderpass (阴影贴图 image/view/sampler/framebuffer 已迁至 ShadowRenderer)
 		std::shared_ptr<VulkanRenderPass> GetShadowRenderPass() { return renderPassesMap["Shadow"]; }
-		VkExtent2D  GetShadowMapExtent() { return m_ShadowExtent; }
+		// Gaussian splat 合成 renderpass (渲染到 offscreen FBO, LOAD 不清屏, 与 offscreen 兼容)
+		std::shared_ptr<VulkanRenderPass> GetGaussianRenderPass() { return renderPassesMap["Gaussian"]; }
 		VkSampleCountFlagBits GetMSAASamples() const { return m_MSAASamples; }
 		void SetMSAASamples(VkSampleCountFlagBits samples) { m_MSAASamples = samples; }
 
-		// 获取 Light SSBO (由 Renderer 更新数据)
-		VkBuffer GetLightSSBO() { return m_LightSSBO.GetBuffer(); }
-		VkDeviceMemory GetLightSSBOMemory() { return m_LightSSBO.GetMemory(); }
-		VkDeviceSize GetLightSSBOSize() { return m_LightSSBO.GetSize(); }
 
-		// IBL: set environment map (cubemap + SH coefficients) after initialization
-		void SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData);
-
-		// Shadow UBO (set=0, binding=5): 光视矩阵 + 光源→阴影图映射 + bias
-		VkBuffer GetShadowUBO() { return m_ShadowUBO.GetBuffer(); }
-		VkDeviceMemory GetShadowUBOMemory() { return m_ShadowUBO.GetMemory(); }
-		VkDeviceSize GetShadowUBOSize() { return m_ShadowUBO.GetSize(); }
 
 		static VulkanContext* Get() { return s_Instance; }
 
@@ -189,31 +177,13 @@ namespace Engine {
         VkDevice device;
         VkSwapchainKHR swapChain;
         std::unordered_map<std::string,std::shared_ptr<VulkanRenderPass>> renderPassesMap;
-        VkDescriptorSetLayout descriptorSetLayout;
         VkCommandPool commandPool;
         VkDescriptorPool descriptorPool;
-        std::vector<VkDescriptorSet> descriptorSets;
 
-        std::vector<VulkanBuffer> uniformBuffers;
-        VulkanBuffer m_LightSSBO;
-		VulkanBuffer m_ShadowUBO;   // 阴影数据 UBO (set=0 binding=5)
-
-        // IBL: SH coefficients buffer + cached environment map descriptor
-        VulkanBuffer m_IBL_SHBuffer;
-        VkDescriptorImageInfo m_EnvMapDescriptor{};
 		VkImage depthImage;
 		VkDeviceMemory depthImageMemory;
 		VkImageView depthImageView;
 		VkFormat depthImageFormat;
-
-		// Shadow map resources (方向光阴影贴图)
-		VkExtent2D m_ShadowExtent = { 2048, 2048 };
-		VkImage     m_ShadowImages[MAX_SHADOW_MAPS] = {};
-		VkDeviceMemory m_ShadowMemory[MAX_SHADOW_MAPS] = {};
-		VkImageView m_ShadowViews[MAX_SHADOW_MAPS] = {};
-		VkSampler   m_ShadowSampler = VK_NULL_HANDLE;
-		VkFramebuffer m_ShadowFramebuffers[MAX_SHADOW_MAPS] = {};
-		bool        m_ShadowResourcesCreated = false;
 
 		// MSAA resources
 		VkSampleCountFlagBits m_MSAASamples = VK_SAMPLE_COUNT_4_BIT;
@@ -228,9 +198,10 @@ namespace Engine {
         VkQueue presentQueue;
         std::vector<VkImage> swapChainImages;
         std::vector<VkImageView> swapChainImageViews;
+        std::vector<VkFramebuffer> swapChainFramebuffers;
         VkFormat swapChainImageFormat;
+        VkFormat offscreenColorFormat;
         VkExtent2D swapChainExtent;
-        //std::vector<VkFramebuffer> swapChainFramebuffers;
         std::vector<VkCommandBuffer> commandBuffers;
         VkSemaphore imageAvailableSemaphore;
         VkSemaphore renderFinishedSemaphore;
@@ -253,17 +224,14 @@ namespace Engine {
         void createLogicalDevice();
         void createSwapChain();
         void createImageViews();
-        void createDescriptorSetLayout();
+        void createSwapChainFramebuffers();
         void createCommandPool();
 		void createDepthResources();
 		void createMSAAResources();
-		void createUniformBuffer();
         void createDescriptorPool();
-        void createDescriptorSets();
         void createCommandBuffers();
         void createSemaphores();
-		void createShadowResources();   // 创建阴影贴图 (image/view/sampler/renderpass/framebuffer)
-
+		
         std::vector<const char*> getRequiredExtensions();
         bool checkValidationLayerSupport();
         void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);  
@@ -279,7 +247,7 @@ namespace Engine {
         VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
         bool hasStencilComponent(VkFormat format);
 
-        void updateGlobalUniforms(glm::mat4 projView);
+
     };
 
 }

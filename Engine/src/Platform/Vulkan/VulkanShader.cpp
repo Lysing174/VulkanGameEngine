@@ -2,8 +2,10 @@
 #include "VulkanShader.h"
 #include "Engine/Core/Application.h"
 #include "Platform/Vulkan/VulkanContext.h" 
+#include "Engine/Renderer/Renderer.h"   // Renderer::GetDescriptorSetLayout (中立的 set → layout 解析)
 
 #include <fstream>
+#include <algorithm>
 
 namespace Engine {
 
@@ -272,18 +274,37 @@ namespace Engine {
 			pushConstantRanges.push_back(range);
 		}
 
-		// --- Pipeline Layout ---
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        VkDescriptorSetLayout globalLayout = VulkanContext::Get()->GetGlobalDescriptorSetLayout();
-
-		// set=0: Global, set=1: Material
-		// 如果 MaterialBindings 为空, 只绑定 globalLayout
+		// --- Pipeline Layout (由 ShaderConfig.SetLayouts 驱动, 紧密排列, 无空 set 占位) ---
+		// ShaderConfig::SetLayouts 是按“局部 set 序号”顺序排列的全局 set 列表 (见 GlobalBindings.h):
+		//   例: PBR 为 { MATERIAL_SET, LIGHT_SET, ENV_SET } = {1,2,3} → pipeline layout 仅含 3 个 set,
+		//       局部 0=material(shader 自身持有), 1=light(ShadowRenderer), 2=env(EnvRenderer).
+		// 各 set 的实际 VkDescriptorSetLayout 由拥有它的子系统经 Renderer::GetDescriptorSetLayout 解析;
+		// material set 由 shader 自身持有 (无 material binding 时不计入该 set).
+		// 因已紧密排列, GLSL 中 layout(set=N) 的 N 必须与此向量下标一致 (shader 侧自行紧凑编号).
 		std::vector<VkDescriptorSetLayout> setLayouts;
-		setLayouts.push_back(globalLayout);
-		if (!config.MaterialBindings.empty())
-			setLayouts.push_back(descriptorSetLayout);
+		setLayouts.reserve(config.SetLayouts.size());
 
+		for (uint32_t s : config.SetLayouts)
+		{
+			if (s == config.MaterialSetIndex && !config.MaterialBindings.empty())
+			{
+				setLayouts.push_back(descriptorSetLayout);   // material set 由 shader 自身持有
+			}
+			else
+			{
+				VkDescriptorSetLayout layout = Renderer::GetDescriptorSetLayout(s);
+				if (layout != VK_NULL_HANDLE)
+					setLayouts.push_back(layout);
+				else
+				{
+					EG_CORE_WARN("VulkanPipeline::Create - shader '{0}' 所需 set={1} 的 layout 尚未就绪", shader.GetName(), s);
+					setLayouts.push_back(VK_NULL_HANDLE);
+				}
+			}
+		}
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
         pipelineLayoutInfo.pSetLayouts = setLayouts.data();
         pipelineLayoutInfo.pushConstantRangeCount = static_cast<uint32_t>(pushConstantRanges.size());

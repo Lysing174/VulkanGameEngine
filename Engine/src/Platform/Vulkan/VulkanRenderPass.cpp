@@ -3,7 +3,7 @@
 
 namespace Engine
 {
-    VulkanRenderPass::VulkanRenderPass(std::string passName,VkFormat swapChainImageFormat,VkFormat depthImageFormat,std::shared_ptr<VkDevice> device,
+    VulkanRenderPass::VulkanRenderPass(std::string passName,VkFormat colorFormat,VkFormat depthImageFormat,std::shared_ptr<VkDevice> device,
                                        VkSampleCountFlagBits msaaSamples)
     {
         m_Name = passName;
@@ -14,18 +14,19 @@ namespace Engine
         {
             // ========================================================
             // ImGui Pass — renders UI on top of cleared swapchain
-            // Single color attachment (swapchain image), CLEAR + UNDEFINED
+            // Single color attachment (swapchain image), CLEAR + UNDEFINED.
+            // EndFrame performs the explicit COLOR_ATTACHMENT -> PRESENT transition.
             // Works for both offscreen (mesh → offscreen FBO) and inline
             // ========================================================
             VkAttachmentDescription colorAttachment = {};
-            colorAttachment.format = swapChainImageFormat;
+            colorAttachment.format = colorFormat;
             colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
             colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
             colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
             colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
             VkAttachmentReference colorAttachmentRef = {};
             colorAttachmentRef.attachment = 0;
@@ -39,7 +40,7 @@ namespace Engine
             VkSubpassDependency dependency = {};
             dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
             dependency.dstSubpass = 0;
-            dependency.srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             dependency.srcAccessMask = 0;
             dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -67,13 +68,13 @@ namespace Engine
             {
                 // ========================================================
                 // MSAA Path — Vulkan 1.2 core API (RenderPass2)
-                // Attachments: [0]=MSAA Color, [1]=Resolve Color, [2]=MSAA Depth
+                // Attachments: [0]=MSAA Color, [1]=Resolve Color, [2]=MSAA Depth, [3]=Resolve Depth
                 // ========================================================
 
                 // Attachment 0: MSAA Color
                 VkAttachmentDescription2 colorAttachment = {};
                 colorAttachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
-                colorAttachment.format = swapChainImageFormat;
+                colorAttachment.format = colorFormat;
                 colorAttachment.samples = msaaSamples;
                 colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
                 colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -90,7 +91,7 @@ namespace Engine
                 // Attachment 1: Resolve (for ImGui display)
                 VkAttachmentDescription2 resolveAttachment = {};
                 resolveAttachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
-                resolveAttachment.format = swapChainImageFormat;
+                resolveAttachment.format = colorFormat;
                 resolveAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
                 resolveAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
                 resolveAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -121,6 +122,30 @@ namespace Engine
                 depthAttachmentRef.attachment = 2;
                 depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+                // Attachment 3: Resolve Depth (1x) — 由 subpass 的 depthStencilResolve 写入,
+                // 供高斯 pass 读取做遮挡.
+                VkAttachmentDescription2 resolveDepthAttachment = {};
+                resolveDepthAttachment.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+                resolveDepthAttachment.format = depthImageFormat;
+                resolveDepthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+                resolveDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+                resolveDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                resolveDepthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+                resolveDepthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+                resolveDepthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                resolveDepthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+                VkAttachmentReference2 resolveDepthRef = {};
+                resolveDepthRef.sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+                resolveDepthRef.attachment = 3;
+                resolveDepthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+                VkSubpassDescriptionDepthStencilResolve depthStencilResolve = {};
+                depthStencilResolve.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
+                depthStencilResolve.pDepthStencilResolveAttachment = &resolveDepthRef;
+                depthStencilResolve.depthResolveMode = VK_RESOLVE_MODE_MIN_BIT;
+                depthStencilResolve.stencilResolveMode = VK_RESOLVE_MODE_NONE;
+
                 VkSubpassDescription2 subpass = {};
                 subpass.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
                 subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -128,26 +153,35 @@ namespace Engine
                 subpass.pColorAttachments = &colorAttachmentRef;
                 subpass.pResolveAttachments = &resolveAttachmentRef;
                 subpass.pDepthStencilAttachment = &depthAttachmentRef;
+                subpass.pNext = &depthStencilResolve;
 
-                VkSubpassDependency2 dependency = {};
-                dependency.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
-                dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-                dependency.dstSubpass = 0;
-                dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-                dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-                dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-                dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                VkSubpassDependency2 dependencies[2] = {};
+                dependencies[0].sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+                dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+                dependencies[0].dstSubpass = 0;
+                dependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                dependencies[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+                dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-                VkAttachmentDescription2 attachments[] = { colorAttachment, resolveAttachment, depthAttachment };
+                dependencies[1].sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+                dependencies[1].srcSubpass = 0;
+                dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+                dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+                dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+                VkAttachmentDescription2 attachments[] = { colorAttachment, resolveAttachment, depthAttachment, resolveDepthAttachment };
 
                 VkRenderPassCreateInfo2 renderPassInfo = {};
                 renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
-                renderPassInfo.attachmentCount = 3;
+                renderPassInfo.attachmentCount = static_cast<uint32_t>(sizeof(attachments) / sizeof(attachments[0]));
                 renderPassInfo.pAttachments = attachments;
                 renderPassInfo.subpassCount = 1;
                 renderPassInfo.pSubpasses = &subpass;
-                renderPassInfo.dependencyCount = 1;
-                renderPassInfo.pDependencies = &dependency;
+                renderPassInfo.dependencyCount = 2;
+                renderPassInfo.pDependencies = dependencies;
 
                 if (vkCreateRenderPass2(*device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
                     throw std::runtime_error("failed to create mesh render pass!");
@@ -157,11 +191,11 @@ namespace Engine
             {
                 // ========================================================
                 // Non-MSAA Path — Vulkan 1.0 API
-                // Attachments: [0]=Color(SwapChain), [1]=Depth
+                // Attachments: [0]=Offscreen Color, [1]=Offscreen Depth
                 // ========================================================
 
                 VkAttachmentDescription colorAttachment = {};
-                colorAttachment.format = swapChainImageFormat;
+                colorAttachment.format = colorFormat;
                 colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
                 colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
                 colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -194,13 +228,20 @@ namespace Engine
                 subpass.pColorAttachments = &colorAttachmentRef;
                 subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
-                VkSubpassDependency dependency = {};
-                dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-                dependency.dstSubpass = 0;
-                dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-                dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-                dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-                dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                VkSubpassDependency dependencies[2] = {};
+                dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+                dependencies[0].dstSubpass = 0;
+                dependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                dependencies[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+                dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+                dependencies[1].srcSubpass = 0;
+                dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+                dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+                dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
                 VkAttachmentDescription attachments[] = { colorAttachment, depthAttachment };
 
@@ -210,13 +251,87 @@ namespace Engine
                 renderPassInfo.pAttachments = attachments;
                 renderPassInfo.subpassCount = 1;
                 renderPassInfo.pSubpasses = &subpass;
-                renderPassInfo.dependencyCount = 1;
-                renderPassInfo.pDependencies = &dependency;
+                renderPassInfo.dependencyCount = 2;
+                renderPassInfo.pDependencies = dependencies;
 
                 if (vkCreateRenderPass(*device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
                     throw std::runtime_error("failed to create mesh render pass!");
                 }
             }
+        }
+        else if (passName == "Gaussian")
+        {
+            // ========================================================
+            // Gaussian Splat 合成 Pass — 始终 1x (无 MSAA).
+            // 渲染进离屏 FBO 的 1x framebuffer: [0]=ResolveColor(LOAD/STORE,
+            //   final=SHADER_READ_ONLY 供 ImGui 显示), [1]=ResolveDepth(1x, LOAD, READ_ONLY).
+            // 在 mesh 结果之上合成高斯 splat; 深度用于遮挡 (待 shader/采样接入).
+            // ========================================================
+            // Attachment 0: 1x Color (LOAD 保留 mesh 结果, STORE 供 ImGui)
+            VkAttachmentDescription colorAttachment = {};
+            colorAttachment.format = colorFormat;
+            colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            colorAttachment.initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkAttachmentReference colorAttachmentRef = {};
+            colorAttachmentRef.attachment = 0;
+            colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+            // Attachment 1: 1x Depth (LOAD, READ_ONLY — 高斯不写深度, 仅读遮挡)
+            VkAttachmentDescription depthAttachment = {};
+            depthAttachment.format = depthImageFormat;
+            depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+            VkAttachmentReference depthAttachmentRef = {};
+            depthAttachmentRef.attachment = 1;
+            depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+            VkSubpassDescription subpass = {};
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.colorAttachmentCount = 1;
+            subpass.pColorAttachments = &colorAttachmentRef;
+            subpass.pDepthStencilAttachment = &depthAttachmentRef;
+
+            VkSubpassDependency dependencies[2] = {};
+            dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[0].dstSubpass = 0;
+            dependencies[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dependencies[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
+
+            dependencies[1].srcSubpass = 0;
+            dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+            VkAttachmentDescription attachments[] = { colorAttachment, depthAttachment };
+            VkRenderPassCreateInfo renderPassInfo = {};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            renderPassInfo.attachmentCount = 2;
+            renderPassInfo.pAttachments = attachments;
+            renderPassInfo.subpassCount = 1;
+            renderPassInfo.pSubpasses = &subpass;
+            renderPassInfo.dependencyCount = 2;
+            renderPassInfo.pDependencies = dependencies;
+
+            if (vkCreateRenderPass(*device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create gaussian render pass!");
+            }
+            
         }
         else if (passName=="Shadow")
         {
@@ -244,13 +359,20 @@ namespace Engine
             subpass.pColorAttachments = nullptr;
             subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
-            VkSubpassDependency dependency = {};
-            dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-            dependency.dstSubpass = 0;
-            dependency.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-            dependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            dependency.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-            dependency.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            VkSubpassDependency dependencies[2] = {};
+            dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[0].dstSubpass = 0;
+            dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+            dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+            dependencies[1].srcSubpass = 0;
+            dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[1].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
             VkRenderPassCreateInfo renderPassInfo = {};
             renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -258,8 +380,8 @@ namespace Engine
             renderPassInfo.pAttachments = &depthAttachment;
             renderPassInfo.subpassCount = 1;
             renderPassInfo.pSubpasses = &subpass;
-            renderPassInfo.dependencyCount = 1;
-            renderPassInfo.pDependencies = &dependency;
+            renderPassInfo.dependencyCount = 2;
+            renderPassInfo.pDependencies = dependencies;
 
             if (vkCreateRenderPass(*device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create shadow render pass!");
@@ -276,52 +398,11 @@ namespace Engine
 
     void VulkanRenderPass::cleanup()
     {
-        for (size_t i = 0; i < swapchainFrameBuffers.size(); i++) 
-        {
-            vkDestroyFramebuffer(*device, swapchainFrameBuffers[i], nullptr);
-        }
         vkDestroyRenderPass(*device, renderPass, nullptr);
 
     }
     
     
-    void VulkanRenderPass::createFramebuffers(VkExtent2D swapChainExtent, 
-                                              const std::vector<VkImageView>& swapChainImageViews, 
-                                              VkImageView depthImageView,
-                                              VkImageView colorMSAA,
-                                              VkImageView depthMSAA)
-    {
-        swapchainFrameBuffers.resize(swapChainImageViews.size());
-        bool hasDepth = (depthImageView != VK_NULL_HANDLE);
-        bool useMSAA = (colorMSAA != VK_NULL_HANDLE && depthMSAA != VK_NULL_HANDLE);
-
-        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-            std::vector<VkImageView> attachments;
-            if (useMSAA) {
-                // MSAA: [MSAA Color, Resolve(SwapChain), MSAA Depth] — 3 attachments
-                attachments = { colorMSAA, swapChainImageViews[i], depthMSAA };
-            } else if (hasDepth) {
-                // No MSAA, with depth: [Color(SwapChain), Depth] — 2 attachments
-                attachments = { swapChainImageViews[i], depthImageView };
-            } else {
-                // No MSAA, no depth : [Color(SwapChain)] — 1 attachment
-                attachments = { swapChainImageViews[i] };
-            }
-
-            VkFramebufferCreateInfo framebufferInfo = {};
-            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebufferInfo.renderPass = renderPass;
-            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-            framebufferInfo.pAttachments = attachments.data();
-            framebufferInfo.width = swapChainExtent.width;
-            framebufferInfo.height = swapChainExtent.height;
-            framebufferInfo.layers = 1;
-
-            if (vkCreateFramebuffer(*device, &framebufferInfo, nullptr, &swapchainFrameBuffers[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create framebuffer!");
-            }
-        }
-    }
     
     
     

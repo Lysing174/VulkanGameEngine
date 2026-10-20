@@ -14,6 +14,18 @@ namespace Engine {
 		EG_CORE_INFO("Created Vulkan Compute Shader Module from: {0}", spvPath);
 	}
 
+	// 构造函数重载: 额外接收 ShaderConfig (set 绑定 / push constant), 供后续 compute pipeline layout 创建.
+	VulkanComputeShader::VulkanComputeShader(const std::string& spvPath, const ShaderConfig& config)
+		: m_SpvPath(spvPath)
+		, m_Config(config)
+	{
+		size_t found = spvPath.find_last_of("/\\");
+		m_Name = spvPath.substr(found + 1);
+		auto code = ReadFile(spvPath);
+		m_ShaderModule = CreateShaderModule(code);
+		EG_CORE_INFO("Created Vulkan Compute Shader Module (config) from: {0}", spvPath);
+	}
+
 	VulkanComputeShader::~VulkanComputeShader()
 	{
 		DestroyResources();

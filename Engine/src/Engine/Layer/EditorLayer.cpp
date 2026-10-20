@@ -14,7 +14,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
-// glTF PBR model 路径统一由 ModelLibrary 按 models/ 之后的相对路径管理
+// glTF PBR model 路径统一由 AssetLibrary<Model> 按 models/ 之后的相对路径管理
 // (见 EditorLayer::OnAttach 中的 HELMET_PATH / BUST_PATH)
 
 namespace Engine {
@@ -41,6 +41,10 @@ namespace Engine {
         auto* modelLibrary = Renderer::GetModelLibrary();
         modelLibrary->ScanDirectory("models");
 
+        // 扫描高斯资产库 (建立资产清单 + 持久化 .meta UUID)，不预加载二进制。
+        // 实际 GaussianModel 在取用时按 UUID 懒加载，避免启动把所有 splat 读进内存。
+        Renderer::GetGaussianModelLibrary()->ScanDirectory("gaussians");
+
         m_ActiveScene = std::make_shared<Scene>();
 
         m_CubeEntity = m_ActiveScene->CreateEntity("Red Cube");
@@ -60,7 +64,7 @@ namespace Engine {
         transform.Translation = { 0.0f, 30.0f, 0.0f };
         transform.Scale = { 2.0f, 2.0f, 2.0f };
 
-        // 模型来源用相对路径反查 ModelLibrary 中的 UUID (组件只存 UUID)
+        // 模型来源用相对路径反查 AssetLibrary<Model> 中的 UUID (组件只存 UUID)
         const std::string HELMET_PATH = "helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
         const std::string BUST_PATH   = "marble_bust/marble_bust_01_4k.gltf";
     	const std::string CUBE_PATH   = "helmat/models/Box/glTF-Embedded/Box.gltf";
@@ -90,6 +94,19 @@ namespace Engine {
     	CubeEntity.GetComponent<TransformComponent>().Scale={15.0f,1.0f,15.0f};
     	CubeEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
  
+    	// 高斯 splat 合成 pipeline (1x, 与 "Gaussian" renderpass 匹配)
+    	{
+    	    auto gaussianShader = Renderer::GetShaderLibrary()->Get("GaussianSplat.vert.spv");
+    	    gaussianShader->CreatePipeline(nullptr, "Gaussian");
+    		Entity gaussianEntity=m_ActiveScene->CreateEntity("Gaussian");
+    		UUID plantID = Renderer::GetGaussianModelLibrary()->FindIDByPath("plant.ply");
+    		gaussianEntity.AddComponent<GaussianComponent>(plantID);
+    		gaussianEntity.GetComponent<TransformComponent>().Translation={0.0f,2.0f,0.0f};
+    		gaussianEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
+    		gaussianEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,3.1415926f};
+
+    	}
+
     	
         Entity cameraEntity = m_ActiveScene->CreateEntity("Main Camera");
         cameraEntity.AddComponent<CameraComponent>();
@@ -119,7 +136,7 @@ namespace Engine {
         Renderer::SetOffscreenFramebuffer(fb);
 
         // Initialize camera projection to match actual FBO dimensions
-        m_EditorCamera.SetViewportSize((float)fbSpec.Width, (float)fbSpec.Height);
+        m_EditorCamera.SetViewportSize(m_ViewportSize.x, m_ViewportSize.y);
 
         // ============================================================
         // Initialize Environment Image (HDR → cubemap → mipmap → SH)
@@ -127,12 +144,12 @@ namespace Engine {
         m_EnvironmentImage = std::make_shared<EnvironmentImage>("HDRs/citrus_orchard_road_puresky.hdr");
         m_EnvironmentImage->Initialize();
 
-        // Pass IBL data to VulkanContext (SH + prefiltered cubemap)
+        // Pass IBL data to EnvRenderer (set3: SH + prefiltered cubemap), via Renderer wrapper
         {
             auto envMapInfo = m_EnvironmentImage->GetCubeMap()->GetDescriptorImageInfo();
             envMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             auto shData = m_EnvironmentImage->GetSHData();
-            VulkanContext::Get()->SetEnvironmentMap(envMapInfo, shData);
+            Renderer::SetEnvironmentMap(envMapInfo, shData);
         }
 
         // Setup skybox rendering
@@ -219,11 +236,8 @@ namespace Engine {
         // 场景 A: 编辑器模式 (我们现在主要用这个)
         // 使用 EditorCamera 渲染，不运行物理模拟
         // 渲染生命周期由本 Layer 驱动：BeginScene → 收集 → RunMeshPass
-        //Renderer::BeginScene(m_EditorCamera);
-        m_ActiveScene->OnUpdateEditor(m_EditorCamera);  // 仅收集光源 / Mesh 数据
-    	Renderer::EndShadowCollection(); // 依据各阴影光的范围盒结算光视矩阵
-        //Renderer::RunMeshPass();                          // 录制 Mesh Pass
-
+    	m_ActiveScene->OnUpdateEditor(m_EditorCamera);  // 仅收集光源 / Mesh 数据
+    	        
         // 场景 B: 游戏运行模式 (当你按下 Play 按钮时切换到这个)
         // 使用场景内的 CameraComponent 渲染，运行物理模拟和脚本
         // m_ActiveScene->OnUpdateRuntime(ts);
@@ -383,6 +397,7 @@ namespace Engine {
 			uint64_t texID = fb->GetColorAttachmentRendererID();
 			ImGui::Image((ImTextureID)texID, viewportSize, ImVec2{0, 0}, ImVec2{1, 1});
 		}
+    	else EG_CORE_WARN("Offscreen framebuffer not initialized!");
 
 		// ---- Gizmo (绘在 Scene 视口之上) ----
 		// 必须在 Scene 窗口内调用, 这样 gizmo 才会画进当前窗口的 drawlist 并叠在图像之上

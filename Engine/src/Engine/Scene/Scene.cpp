@@ -128,9 +128,6 @@ namespace Engine {
 	void Scene::RenderEditorScene(EditorCamera& camera)
 	{
 		// 仅收集本帧需提交的数据 (光源 / Mesh)
-		// BeginScene / RunMeshPass 由上层 (EditorLayer) 驱动
-		Renderer::BeginLightCollection();
-		Renderer::BeginShadowCollection();
 
 		// 收集点光源
 		auto pointLightView = m_Registry.view<TransformComponent, PointLightComponent>();
@@ -168,6 +165,21 @@ namespace Engine {
 				transform.GetTransform(),
 				filter.GetMeshID(),
 				renderer,
+				(int)entity
+			);
+		}
+
+		// 收集高斯 (每帧, 类似 Mesh)
+		auto gaussianView = m_Registry.view<TransformComponent, GaussianComponent>();
+		for (auto entity : gaussianView)
+		{
+			auto [transform, gaussian] = gaussianView.get<TransformComponent, GaussianComponent>(entity);
+			if (!gaussian.HasGaussian())
+				continue;
+
+			Renderer::SubmitGaussian(
+				transform.GetTransform(),
+				gaussian.GetGaussianID(),
 				(int)entity
 			);
 		}
@@ -223,5 +235,10 @@ namespace Engine {
 	void Scene::OnComponentAdded<PointLightComponent>(Entity entity, PointLightComponent& component)
 	{
 	}
-	
+
+	template<>
+	void Scene::OnComponentAdded<GaussianComponent>(Entity entity, GaussianComponent& component)
+	{
+	}
+
 }

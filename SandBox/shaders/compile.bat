@@ -12,28 +12,38 @@ set GLSLC=glslc
 echo Compiling Shaders...
 
 rem --- 编译 PosColor Shader ---
-echo [1/4] Compiling PosColor...
-%GLSLC% PosColorShader.vert -o PosColor.vert.spv
-%GLSLC% PosColorShader.frag -o PosColor.frag.spv
+echo [1/7] Compiling PosColor...
 
 rem --- 编译 Mesh Shader ---
-echo [2/4] Compiling Mesh...
+echo [2/7] Compiling Mesh...
 %GLSLC% MeshShader.vert -o Mesh.vert.spv
 %GLSLC% MeshShader.frag -o Mesh.frag.spv
 
 rem --- 编译 Skybox Shader ---
-echo [3/4] Compiling Skybox...
+echo [3/7] Compiling Skybox...
 %GLSLC% Skybox.vert -o Skybox.vert.spv
 %GLSLC% Skybox.frag -o Skybox.frag.spv
 
 rem --- 编译 Shadow Shader (方向光阴影贴图) ---
-echo [4/4] Compiling Shadow...
+echo [4/7] Compiling Shadow...
 %GLSLC% Shadow.vert -o Shadow.vert.spv
 %GLSLC% Shadow.frag -o Shadow.frag.spv
 
 rem --- 编译 GGX Prefilter Compute Shader ---
-echo [4/4] Compiling GGXPrefilter...
+echo [5/7] Compiling GGXPrefilter...
 %GLSLC% GGXPrefilter.comp -o GGXPrefilter.comp.spv
+
+rem --- 编译 GaussianSplat Shader ---
+echo [6/7] Compiling GaussianSplat...
+%GLSLC% GaussianSplat.vert -o GaussianSplat.vert.spv
+%GLSLC% GaussianSplat.frag -o GaussianSplat.frag.spv
+
+rem --- 编译 Gaussian Compute Shaders ---
+echo [7/7] Compiling Gaussian Compute...
+%GLSLC% GaussianDist.comp -o GaussianDist.comp.spv
+%GLSLC% GaussianSortUpsweep.comp -o GaussianSortUpsweep.comp.spv
+%GLSLC% GaussianSortSpine.comp -o GaussianSortSpine.comp.spv
+%GLSLC% GaussianSortDownsweep.comp -o GaussianSortDownsweep.comp.spv
 
 
 rem 检查是否有错误 (如果 glslc 返回非0，暂停看报错)

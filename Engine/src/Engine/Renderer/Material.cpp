@@ -88,7 +88,11 @@ namespace Engine {
             // 只在配置中存在 MaterialBindings 时才绑定 DescriptorSet
             if (!config.MaterialBindings.empty())
             {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Shader->GetPipelineLayout(), 1, 1, &m_DescriptorSet, 0, nullptr);
+                // material set 在本 shader pipeline layout 中的局部序号 (紧密排列后不再固定为 1)
+                int materialLocal = config.GetLocalSetIndex(config.MaterialSetIndex);
+                if (materialLocal >= 0)
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Shader->GetPipelineLayout(),
+                        (uint32_t)materialLocal, 1, &m_DescriptorSet, 0, nullptr);
             }
 
             // 只在配置中存在 fragment push constant range 时才推送颜色
@@ -96,7 +100,7 @@ namespace Engine {
             {
                 if (pcRange.StageFlags & VK_SHADER_STAGE_FRAGMENT_BIT && pcRange.Size == sizeof(glm::vec4))
                 {
-                    vkCmdPushConstants(cmd, m_Shader->GetPipelineLayout(), VK_SHADER_STAGE_FRAGMENT_BIT, pcRange.Offset, sizeof(glm::vec4), &m_UniformData.AlbedoColor);
+                    vkCmdPushConstants(cmd, m_Shader->GetPipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT, pcRange.Offset, sizeof(glm::vec4), &m_UniformData.AlbedoColor);
                     break;
                 }
             }

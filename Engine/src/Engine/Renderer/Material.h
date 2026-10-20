@@ -1,13 +1,15 @@
 ﻿#pragma once
 
-#include "Shader.h"
-#include "Texture.h"
+#include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include <memory>
 
 namespace Engine {
 
     class VulkanUniformBuffer; // forward declare
+    class Shader;     // forward declare: 仅以 shared_ptr 持有, 避免与 Shader.h 循环包含
+    class Texture2D;  // forward declare: 仅以 shared_ptr 持有
+
 
     // 对应 Shader 中的 layout(set = 1, binding = 5) uniform MaterialUBO
     // 注意: 字段顺序必须与 shader 中完全一致
