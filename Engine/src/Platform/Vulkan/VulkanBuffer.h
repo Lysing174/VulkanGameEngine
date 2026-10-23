@@ -22,6 +22,7 @@ namespace Engine {
 		VulkanBuffer& operator=(const VulkanBuffer&) = delete;
 
 		void SetData(const void* data, VkDeviceSize size, VkDeviceSize offset = 0);
+		void SetDataStaged(const void* data, VkDeviceSize size, VkDeviceSize offset = 0);
 
 		// Release ownership: transfer handles out, caller is responsible for destruction
 		struct Handles { VkBuffer Buffer; VkDeviceMemory Memory; VkDeviceSize Size; };
@@ -35,7 +36,8 @@ namespace Engine {
 		void Destroy();
 
 		// Copy GPU buffer via single-time command (staging → device-local)
-		static void CopyBuffer(VulkanBuffer& src, VulkanBuffer& dst, VkDeviceSize size);
+		static void CopyBuffer(VulkanBuffer& src, VulkanBuffer& dst, VkDeviceSize size,
+			VkDeviceSize srcOffset = 0, VkDeviceSize dstOffset = 0);
 
 	private:
 		VkBuffer m_Buffer = VK_NULL_HANDLE;

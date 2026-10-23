@@ -56,6 +56,7 @@ namespace Engine {
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
+        createTimestampQueries();
         createSwapChain();
         offscreenColorFormat = swapChainImageFormat;
         depthImageFormat = findDepthFormat();
@@ -142,6 +143,9 @@ namespace Engine {
     void VulkanContext::cleanup() {
         vkDeviceWaitIdle(device);
         cleanupSwapChain();
+
+        if (m_TimestampQueryPool != VK_NULL_HANDLE)
+            vkDestroyQueryPool(device, m_TimestampQueryPool, nullptr);
         
         vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
         vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
@@ -204,6 +208,85 @@ namespace Engine {
         //开始录制命令
         vkBeginCommandBuffer(commandBuffers[currentImageIndex], &beginInfo);
 
+        if (m_TimestampQueryPool != VK_NULL_HANDLE)
+            vkCmdResetQueryPool(GetCurrentCommandBuffer(), m_TimestampQueryPool, 0,
+                static_cast<uint32_t>(RenderStageCount * 2));
+        m_TimedStages.fill(false);
+
+    }
+
+    void VulkanContext::createTimestampQueries()
+    {
+        uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
+        const auto indices = findQueueFamilies(physicalDevice);
+        m_TimestampValidBits = queueFamilies[indices.graphicsFamily].timestampValidBits;
+
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+        m_TimestampPeriod = properties.limits.timestampPeriod;
+        if (m_TimestampValidBits == 0 || m_TimestampPeriod <= 0.0f)
+            return;
+
+        VkQueryPoolCreateInfo queryInfo{};
+        queryInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        queryInfo.queryCount = static_cast<uint32_t>(RenderStageCount * 2);
+        if (vkCreateQueryPool(device, &queryInfo, nullptr, &m_TimestampQueryPool) != VK_SUCCESS)
+        {
+            m_TimestampQueryPool = VK_NULL_HANDLE;
+            EG_CORE_WARN("GPU timestamp queries unavailable; GPU timings disabled");
+        }
+    }
+
+    void VulkanContext::BeginGpuTiming(RenderStage stage)
+    {
+        if (m_TimestampQueryPool == VK_NULL_HANDLE) return;
+        vkCmdWriteTimestamp(GetCurrentCommandBuffer(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            m_TimestampQueryPool, static_cast<uint32_t>(stage) * 2);
+    }
+
+    void VulkanContext::EndGpuTiming(RenderStage stage)
+    {
+        if (m_TimestampQueryPool == VK_NULL_HANDLE) return;
+        vkCmdWriteTimestamp(GetCurrentCommandBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            m_TimestampQueryPool, static_cast<uint32_t>(stage) * 2 + 1);
+        m_TimedStages[static_cast<size_t>(stage)] = true;
+    }
+
+    void VulkanContext::readGpuTimings()
+    {
+        m_GpuTimings = {};
+        m_GpuTimings.Supported = m_TimestampQueryPool != VK_NULL_HANDLE;
+        if (!m_GpuTimings.Supported) return;
+
+        bool hasTimings = false;
+        bool allAvailable = true;
+        const uint64_t timestampMask = m_TimestampValidBits == 64
+            ? UINT64_MAX : (uint64_t{1} << m_TimestampValidBits) - 1;
+        for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
+        {
+            if (!m_TimedStages[stageIndex]) continue;
+            hasTimings = true;
+            struct TimestampResult
+            {
+                uint64_t Value;
+                uint64_t Available;
+            } timestamps[2] = {};
+            const VkResult result = vkGetQueryPoolResults(device, m_TimestampQueryPool,
+                static_cast<uint32_t>(stageIndex * 2), 2, sizeof(timestamps), timestamps,
+                sizeof(TimestampResult), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            if (result != VK_SUCCESS || !timestamps[0].Available || !timestamps[1].Available)
+            {
+                allAvailable = false;
+                continue;
+            }
+            const uint64_t elapsed = (timestamps[1].Value - timestamps[0].Value) & timestampMask;
+            m_GpuTimings.Milliseconds[stageIndex] = static_cast<double>(elapsed) * m_TimestampPeriod / 1000000.0;
+        }
+        m_GpuTimings.Valid = hasTimings && allAvailable;
     }
 
     void VulkanContext::BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB)
@@ -390,6 +473,8 @@ namespace Engine {
     }
     void VulkanContext::EndFrame()
     {
+        readGpuTimings();//读本帧各阶段耗时
+        
         VkImageMemoryBarrier presentBarrier = {};
         presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;

@@ -2,6 +2,7 @@
 #include "Application.h"
 #include "Engine/Renderer/Renderer.h"
 #include "Input.h"
+#include <chrono>
 
 #include <GLFW/glfw3.h>
 namespace Engine {
@@ -87,6 +88,7 @@ namespace Engine {
 	{
 		while (m_Running)
 		{
+			const auto cpuFrameStart = std::chrono::steady_clock::now();
 			glfwPollEvents();
 
 			//计算时间
@@ -116,7 +118,16 @@ namespace Engine {
 			}
 			Renderer::EndRenderQueueSubmit();
 			
+			const double cpuUpdateMs = std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - cpuFrameStart).count();
+			
+			//读上一帧gpu耗时到renderer里
 			Renderer::BeginScene(m_EditorLayer->GetEditorCamera());
+			
+			const double cpuWaitGpuTimeMs=std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - cpuFrameStart).count()-cpuUpdateMs;
+			const auto cpuRecordingStart = std::chrono::steady_clock::now();
+			
 			Renderer::RunShadowPass();   // 先渲阴影贴图 (在 Mesh pass 之前)
 			Renderer::RunMeshPass();
 			
@@ -129,8 +140,12 @@ namespace Engine {
 			// 现在录制 ImGui Pass 并提交整帧
 			Renderer::RunImGuiPass();
 			
-			Renderer::EndScene();
+			// CPU: 事件、场景更新、资源提交、命令录制与 ImGui 构建；不计 acquire/present 等待。
+			Renderer::SetCpuTime(cpuUpdateMs + std::chrono::duration<double, std::milli>(
+			std::chrono::steady_clock::now() - cpuRecordingStart).count(),cpuWaitGpuTimeMs);
 
+			Renderer::EndScene();
+			
 		}
 	}
 

@@ -206,9 +206,36 @@ namespace Engine {
     	m_FrameTime = dt;
     	m_FpsAccumulator += dt;
     	m_FrameCount++;
+		const auto& statistics = Renderer::GetStatistics();
+		if (statistics.HasCompletedFrame)
+		{
+			m_CpuTimeAccumulator += statistics.CpuTimeMs;
+			m_CpuWaitGpuTimeAccumulator += statistics.CpuWaitGpuTimeMs;
+			++m_CpuTimingFrameCount;
+			if (statistics.GPU.Valid)
+			{
+				for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
+					m_GpuTimeAccumulator[stageIndex] += statistics.GPU.Milliseconds[stageIndex];
+				++m_GpuTimingFrameCount;
+			}
+		}
     	if (m_FpsAccumulator >= 0.5f)
     	{
     		m_Fps = m_FrameCount / m_FpsAccumulator;
+			m_Statistics = statistics;
+			m_Statistics.CpuTimeMs = m_CpuTimingFrameCount > 0
+				? m_CpuTimeAccumulator / m_CpuTimingFrameCount : 0.0;
+    		m_Statistics.CpuWaitGpuTimeMs = m_CpuTimingFrameCount > 0
+							? m_CpuWaitGpuTimeAccumulator / m_CpuTimingFrameCount : 0.0;
+    		m_Statistics.GPU.Valid = m_GpuTimingFrameCount > 0;
+			for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
+				m_Statistics.GPU.Milliseconds[stageIndex] = m_GpuTimingFrameCount > 0
+					? m_GpuTimeAccumulator[stageIndex] / m_GpuTimingFrameCount : 0.0;
+			m_CpuTimeAccumulator = 0.0;
+    		m_CpuWaitGpuTimeAccumulator = 0.0;
+			m_GpuTimeAccumulator.fill(0.0);
+			m_CpuTimingFrameCount = 0;
+			m_GpuTimingFrameCount = 0;
     		m_FrameCount = 0;
     		m_FpsAccumulator = 0.0f;
     	}
@@ -353,10 +380,45 @@ namespace Engine {
 	void EditorLayer::RenderStats()
 	{
 		ImGui::Begin("Stats");
-		ImGui::Text("FPS: %.1f", m_Fps);
-		ImGui::Text("Frame Time: %.2f ms", m_FrameTime * 1000.0f);
+		ImGui::Text("FPS (average for 0.5s): %.1f", m_Fps);
+		ImGui::Text("Frame Time: %.2f ms", m_Statistics.CpuTimeMs+m_Statistics.CpuWaitGpuTimeMs);
 		ImGui::Separator();
-		ImGui::Text("Renderer Stats: (not ready yet)");
+		if (ImGui::BeginTable("RendererStatistics", 2, ImGuiTableFlags_Resizable))
+		{
+			ImGui::TableNextColumn();
+			ImGui::Text("Scene Gaussians: %llu", static_cast<unsigned long long>(m_Statistics.SceneGaussianCount));
+			ImGui::Text("Drawn Gaussians*: %llu", static_cast<unsigned long long>(m_Statistics.DrawnGaussianCount));
+			ImGui::Text("Gaussian Data: %.2f MiB", m_Statistics.GaussianDataBytes / (1024.0 * 1024.0));
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Scene gaussians x sizeof(GaussianDataGPU).\nExcludes sorting buffers, transforms and allocation overhead.");
+			ImGui::Text("Scene Vertices: %llu", static_cast<unsigned long long>(m_Statistics.SceneVertexCount));
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Mesh vertices per scene instance; excludes skybox, Gaussian quads and repeated shadow draws.");
+			ImGui::Text("Drawn Vertices*: %llu", static_cast<unsigned long long>(m_Statistics.DrawnVertexCount));
+			ImGui::Text("Lights: %llu (Point: %llu, Directional: %llu)",
+				static_cast<unsigned long long>(m_Statistics.PointLightCount + m_Statistics.DirectLightCount),
+				static_cast<unsigned long long>(m_Statistics.PointLightCount),
+				static_cast<unsigned long long>(m_Statistics.DirectLightCount));
+			ImGui::TextDisabled("* Scene totals until culling is implemented.");
+
+			ImGui::TableNextColumn();
+			ImGui::Text("CPU work (avr): %.3f ms", m_Statistics.CpuTimeMs);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Events, scene update, resource submission, command recording and ImGui building.\nExcludes frame acquisition and presentation waits.");
+			ImGui::Text("CPU waitting GPU time (avr): %.3f ms", m_Statistics.CpuWaitGpuTimeMs);
+			const std::array<const char*, RenderStageCount> stageNames = {
+				"Shadow pass (avr)", "Mesh pass (avr)", "Gaussian sort (avr)", "Gaussian pass (avr)"
+			};
+			for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
+			{
+				if (m_Statistics.GPU.Valid)
+					ImGui::Text("%s (GPU): %.3f ms", stageNames[stageIndex], m_Statistics.GPU.Milliseconds[stageIndex]);
+				else
+					ImGui::Text("%s (GPU): %s", stageNames[stageIndex], m_Statistics.GPU.Supported ? "pending" : "N/A");
+			}
+			ImGui::TextDisabled("Timings averaged; refresh every 0.5 s.");
+			ImGui::EndTable();
+		}
 		ImGui::End();
 	}
 

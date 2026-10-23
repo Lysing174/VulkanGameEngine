@@ -1,5 +1,6 @@
 #pragma once
 #include "Engine/Renderer/GraphicsContext.h"
+#include "Engine/Renderer/RendererStats.h"
 //#include "Engine/Renderer/Renderer.h"
 #define GLFW_INCLUDE_VULKAN
 
@@ -113,6 +114,9 @@ namespace Engine {
         void BeginUIRenderPass();
         void EndRenderPass();
         void DrawImGui();
+        void BeginGpuTiming(RenderStage stage);
+        void EndGpuTiming(RenderStage stage);
+        const GpuTimings& GetGpuTimings() const { return m_GpuTimings; }
         
 
 
@@ -195,6 +199,11 @@ namespace Engine {
 		VkImageView m_DepthImageViewMSAA = VK_NULL_HANDLE;
 
         VkQueue graphicsQueue;
+        VkQueryPool m_TimestampQueryPool = VK_NULL_HANDLE;
+        float m_TimestampPeriod = 0.0f;
+        uint32_t m_TimestampValidBits = 0;
+        std::array<bool, RenderStageCount> m_TimedStages = {};
+        GpuTimings m_GpuTimings;
         VkQueue presentQueue;
         std::vector<VkImage> swapChainImages;
         std::vector<VkImageView> swapChainImageViews;
@@ -231,6 +240,8 @@ namespace Engine {
         void createDescriptorPool();
         void createCommandBuffers();
         void createSemaphores();
+        void createTimestampQueries();
+        void readGpuTimings();
 		
         std::vector<const char*> getRequiredExtensions();
         bool checkValidationLayerSupport();

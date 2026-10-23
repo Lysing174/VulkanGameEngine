@@ -11,6 +11,7 @@
 #include <Platform/Vulkan/VulkanBuffer.h>
 #include <Platform/Vulkan/VulkanImage.h>
 #include <array>
+#include "Engine/Renderer/RendererStats.h"
 
 namespace Engine {
 	
@@ -34,6 +35,12 @@ namespace Engine {
 		static void RunShadowPass(){ShadowRenderer::Run();}  // 录制 Shadow Pass (对每个阴影光: 渲深度到阴影贴图)
 		static void RunImGuiPass();   // 录制 ImGui Pass (开 pass → 画 ImGui → end pass)
 		static void EndScene();       // 提交命令缓冲并呈现 (RunImGuiPass 之后调用)
+		static const RendererStatistics& GetStatistics() { return s_Statistics; }
+		static void SetCpuTime(double cpuTimeMs,double cpuWaitGpuTimeMs)
+		{
+			s_FrameStatistics.CpuTimeMs = cpuTimeMs;
+			s_FrameStatistics.CpuWaitGpuTimeMs = cpuWaitGpuTimeMs;
+		}
 
 		static void OnSwapchainRecreated(); // Swapchain 重建后通知各子系统
 
@@ -69,6 +76,8 @@ namespace Engine {
 		static void SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData);
 
 	private:
+		static RendererStatistics s_FrameStatistics;
+		static RendererStatistics s_Statistics;
 		static API s_API;
 		static std::unique_ptr<AssetLibrary<Model>> s_ModelLibrary;
 		static std::unique_ptr<ShaderLibrary> s_ShaderLibrary;
@@ -235,6 +244,7 @@ namespace Engine {
 			static void MarkGaussianDirty() { s_GaussiansDirty = true; }
 
 			static AssetLibrary<GaussianModel>* GetModelLibrary() { return s_ModelLibrary.get(); }
+			static uint32_t GetTotalGaussianCount() { return s_TotalGaussianCount; }
 
 			// 供高斯 shader 的 pipeline layout 解析 (Renderer::GetDescriptorSetLayout(GAUSSIAN_SET))
 			static VkDescriptorSetLayout GetGaussianDescriptorLayout() { return s_GaussianDescriptorLayout; }
@@ -252,12 +262,11 @@ namespace Engine {
 			
 			// GPU 缓冲 (set1)
 			static VulkanBuffer s_GaussianSSBO;        // b1: 全部场景高斯 (storage, 变长)
-			static VulkanBuffer s_SortedIndexSSBO;     // b2: 排序后索引 (storage, compute 填充; 未排序前填恒等)
 			static VulkanBuffer s_ModelTransformSSBO;  // b4: 每实例 model 变换 (storage, 固定一项/实例)
 			static VulkanBuffer s_FrameInfoUBO;        // b0: 帧信息 UBO (固定 192B)
 		// compute 基数排序用 ping-pong 缓冲 (compute shader 的 set0)
 		static VulkanBuffer s_KeysBuffers[2];        // Dist 写 keys[0]; 每 pass 交换, 末态 keys[0] 为有序键(绘制未直接使用)
-		static VulkanBuffer s_ValuesBuffers[2];      // Dist 写 values[0](=恒等索引); 排序后末态 values[0] = 有序索引
+		static VulkanBuffer s_ValuesBuffers[2];      // Dist 写 values[0](=恒等索引); 四轮排序后 values[0] 直接供绘制 b2 读取
 		static VulkanBuffer s_GlobalHistogramSSBO;   // Upsweep/Spine 全局直方图 (1024 uint = 4pass*256, 每帧 vkCmdFillBuffer 清零)
 		static VulkanBuffer s_PartitionHistogramSSBO; // 每 partition(512元素) 直方图 (numPartitions*256 uint)
 

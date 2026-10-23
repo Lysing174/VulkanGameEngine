@@ -21,6 +21,7 @@ namespace Engine {
         template<typename T>
         Mesh(const std::vector<T>& vertices, const std::vector<uint32_t>& indices, std::vector<Submesh> submeshs = {})
         {
+            m_VertexCount = static_cast<uint32_t>(vertices.size());
             uint32_t size = (uint32_t)vertices.size() * sizeof(T);
             m_VertexBuffer = VertexBuffer::Create(vertices);
             m_IndexBuffer = IndexBuffer::Create(indices, (uint32_t)indices.size());
@@ -33,12 +34,14 @@ namespace Engine {
 
         void SetSubmeshes(const std::vector<Submesh>& submeshes) { m_Submeshes = submeshes; }
         const std::vector<Submesh>& GetSubmeshes() const { return m_Submeshes; }
+        uint32_t GetVertexCount() const { return m_VertexCount; }
         std::shared_ptr<VertexBuffer> GetVertexBuffer() const { return m_VertexBuffer; }
         std::shared_ptr<IndexBuffer> GetIndexBuffer() const { return m_IndexBuffer; }
 
         static Mesh CreateCube();
 
     private:
+        uint32_t m_VertexCount = 0;
         std::vector<Submesh> m_Submeshes;
 
         std::shared_ptr<VertexBuffer> m_VertexBuffer;

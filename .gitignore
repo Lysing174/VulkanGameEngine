@@ -1,6 +1,7 @@
 # vs文件
 .vs/
 *.sln
+*.sln.DotSettings.user
 *.vcxproj
 *.vcxproj.user
 *.vcxproj.filters
@@ -22,3 +23,5 @@ c2puml_output/
 Thumbs.db
 
 *.zip
+.idea/
+paper_reproduction/

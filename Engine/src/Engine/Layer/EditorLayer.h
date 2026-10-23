@@ -4,6 +4,7 @@
 #include "Engine/Scene/Entity.h"
 #include "Engine/Renderer/EditorCamera.h"
 #include "Engine/Renderer/EnvironmentImage.h"
+#include "Engine/Renderer/RendererStats.h"
 #include "Editor/SceneHierarchyPanel.h"
 #include <chrono>
 #include <memory>
@@ -61,6 +62,12 @@ namespace Engine {
         float m_FrameTime = 0.0f;
         float m_FpsAccumulator = 0.0f;
         int m_FrameCount = 0;
+        RendererStatistics m_Statistics;
+        double m_CpuTimeAccumulator = 0.0;
+        double m_CpuWaitGpuTimeAccumulator = 0.0;
+        std::array<double, RenderStageCount> m_GpuTimeAccumulator = {};
+        uint32_t m_CpuTimingFrameCount = 0;
+        uint32_t m_GpuTimingFrameCount = 0;
 
         SceneHierarchyPanel m_SceneHierarchyPanel;
 

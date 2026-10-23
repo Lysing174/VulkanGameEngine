@@ -13,7 +13,7 @@ class Material;
 
 	// ============================================================
 	// Descriptor Set 编号 — 单一事实来源 (后续 Phase 才真正接入 shader/pipeline)
-	//   set 0: GaussianRenderer (高斯 SSBO / 排序索引 / 实例变换)
+	//   set 0: GaussianRenderer (b0(FrameInfo UBO) / b1(Gaussian) / b2(SortedIndex) / b4(ModelTransform))
 	//   set 1: Material        (逐材质 UBO + 贴图, 保持不变)
 	//   set 2: LightRenderer   (光源 SSBO + 阴影 UBO + 阴影贴图)
 	//   set 3: Env             (SH IBL UBO + 环境 cubemap)

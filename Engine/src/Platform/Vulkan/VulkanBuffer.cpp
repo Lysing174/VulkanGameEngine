@@ -76,6 +76,10 @@ namespace Engine {
 
 	void VulkanBuffer::SetData(const void* data, VkDeviceSize size, VkDeviceSize offset)
 	{
+		if (size == 0) return;
+		if (data == nullptr || offset > m_Size || size > m_Size - offset)
+			throw std::invalid_argument("VulkanBuffer::SetData: invalid upload range or data!");
+
 		VkDevice device = VulkanContext::Get()->GetDevice();
 
 		// 映射整块内存 (offset=0, size=VK_WHOLE_SIZE): 这样映射末端 = 整个内存对象末尾,
@@ -84,7 +88,8 @@ namespace Engine {
 		// 若只映射 [offset, offset+size) 一段再用 VK_WHOLE_SIZE flush, 映射末端非 atom 倍数
 		// 且不等内存末尾 → 触发 01389.
 		void* mapped;
-		vkMapMemory(device, m_Memory, 0, VK_WHOLE_SIZE, 0, &mapped);
+		if (vkMapMemory(device, m_Memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
+			throw std::runtime_error("VulkanBuffer::SetData: failed to map buffer memory!");
 		memcpy((uint8_t*)mapped + offset, data, (size_t)size);
 
 		// 整块映射 + flush 整块内存: 映射末端即内存末尾, VK_WHOLE_SIZE 合法, 无需按 atom 对齐.
@@ -93,9 +98,23 @@ namespace Engine {
 		range.memory = m_Memory;
 		range.offset = 0;
 		range.size = VK_WHOLE_SIZE;
-		vkFlushMappedMemoryRanges(device, 1, &range);
+		VkResult flushResult = vkFlushMappedMemoryRanges(device, 1, &range);
 
 		vkUnmapMemory(device, m_Memory);
+		if (flushResult != VK_SUCCESS)
+			throw std::runtime_error("VulkanBuffer::SetData: failed to flush buffer memory!");
+	}
+
+	void VulkanBuffer::SetDataStaged(const void* data, VkDeviceSize size, VkDeviceSize offset)
+	{
+		if (size == 0) return;
+		if (data == nullptr || offset > m_Size || size > m_Size - offset)
+			throw std::invalid_argument("VulkanBuffer::SetDataStaged: invalid upload range or data!");
+
+		VulkanBuffer staging(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		staging.SetData(data, size);
+		CopyBuffer(staging, *this, size, 0, offset);
 	}
 
 	VulkanBuffer::Handles VulkanBuffer::Release()
@@ -120,14 +139,34 @@ namespace Engine {
 		}
 	}
 
-	void VulkanBuffer::CopyBuffer(VulkanBuffer& src, VulkanBuffer& dst, VkDeviceSize size)
+	void VulkanBuffer::CopyBuffer(VulkanBuffer& src, VulkanBuffer& dst, VkDeviceSize size,
+		VkDeviceSize srcOffset, VkDeviceSize dstOffset)
 	{
+		if (size == 0) return;
+		if (srcOffset > src.GetSize() || size > src.GetSize() - srcOffset ||
+			dstOffset > dst.GetSize() || size > dst.GetSize() - dstOffset)
+			throw std::invalid_argument("VulkanBuffer::CopyBuffer: invalid copy range!");
+
 		auto* ctx = VulkanContext::Get();
 		VkCommandBuffer cmd = ctx->BeginSingleTimeCommands();
 
 		VkBufferCopy copyRegion = {};
+		copyRegion.srcOffset = srcOffset;
+		copyRegion.dstOffset = dstOffset;
 		copyRegion.size = size;
 		vkCmdCopyBuffer(cmd, src.GetBuffer(), dst.GetBuffer(), 1, &copyRegion);
+
+		VkBufferMemoryBarrier barrier{};
+		barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.buffer = dst.GetBuffer();
+		barrier.offset = dstOffset;
+		barrier.size = size;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			0, 0, nullptr, 1, &barrier, 0, nullptr);
 
 		ctx->EndSingleTimeCommands(cmd);
 	}

@@ -60,6 +60,43 @@ namespace {
 		}
 		return changed;
 	}
+
+	// 渲染一个高斯资产下拉框。当前选中值由 outID(资产 UUID) 表示，
+	// 选中后写回 outID。返回 true 表示用户改变了选择。
+	// 额外项：第一项 "<None>" 表示空 UUID (不渲染)。
+	bool GaussianAssetCombo(const char* label, Engine::UUID& outID)
+	{
+		auto* gaussianLibrary = Engine::Renderer::GetGaussianModelLibrary();
+		if (!gaussianLibrary) return false;
+
+		const auto& assets = gaussianLibrary->GetAssets();
+
+		// 构建选项：第 0 项为 None，其余为资产名
+		std::vector<const char*> items;
+		items.push_back("<None>");
+		for (const auto& a : assets)
+			items.push_back(a.second.c_str());
+
+		// 当前选中 index：None=0，否则按 UUID 匹配
+		int current = 0;
+		if ((uint64_t)outID != 0)
+		{
+			for (size_t i = 0; i < assets.size(); i++)
+			{
+				if (assets[i].first == outID) { current = (int)i + 1; break; }
+			}
+		}
+
+		bool changed = ImGui::Combo(label, &current, items.data(), (int)items.size());
+		if (changed)
+		{
+			if (current == 0)
+				outID = Engine::UUID(0);
+			else
+				outID = assets[current - 1].first;
+		}
+		return changed;
+	}
 }
 
 namespace Engine {
@@ -295,6 +332,7 @@ namespace Engine {
 			//DisplayAddComponentEntry<ScriptComponent>("Script");
 			DisplayAddComponentEntry<MeshRendererComponent>("Mesh Renderer");
 			DisplayAddComponentEntry<MeshFilterComponent>("Mesh Filter");
+			DisplayAddComponentEntry<GaussianComponent>("Gaussian");
 			DisplayAddComponentEntry<PointLightComponent>("Point Light");
 			DisplayAddComponentEntry<DirectLightComponent>("Directional Light");
 			//DisplayAddComponentEntry<Rigidbody2DComponent>("Rigidbody 2D");
@@ -389,6 +427,29 @@ namespace Engine {
 			{
 				ModelAssetCombo("Material", component.MaterialID);
 			
+			});
+
+		DrawComponent<GaussianComponent>("Gaussian", entity, [](auto& component)
+			{
+				GaussianAssetCombo("Gaussian", component.GaussianID);
+
+				auto gaussianLibrary = Renderer::GetGaussianModelLibrary();
+				if (gaussianLibrary && component.HasGaussian())
+				{
+					auto model = gaussianLibrary->Get(component.GaussianID);
+					if (model)
+					{
+						ImGui::Text("Gaussian Count: %d", (int)model->GetGaussianCount());
+					}
+					else
+					{
+						ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "File not found.");
+					}
+				}
+				else
+				{
+					ImGui::TextDisabled("<None>");
+				}
 			});
 
 		DrawComponent<PointLightComponent>("Point Light", entity, [](auto& component)

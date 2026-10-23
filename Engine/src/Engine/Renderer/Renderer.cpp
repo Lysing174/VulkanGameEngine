@@ -14,6 +14,8 @@
 
 
 namespace Engine {
+    RendererStatistics Renderer::s_FrameStatistics;
+    RendererStatistics Renderer::s_Statistics;
     Renderer::API Renderer::s_API = Renderer::API::Vulkan;
 	std::vector<MeshRenderCommandRequest> Renderer::s_MeshRenderQueue;
     std::unique_ptr<ShaderLibrary> Renderer::s_ShaderLibrary = std::make_unique<ShaderLibrary>();
@@ -24,7 +26,6 @@ namespace Engine {
 	VkDescriptorSetLayout Renderer::GaussianRenderer::s_GaussianDescriptorLayout = VK_NULL_HANDLE;
 	VkDescriptorSet       Renderer::GaussianRenderer::s_GaussianDescriptorSet = VK_NULL_HANDLE;
 	VulkanBuffer         Renderer::GaussianRenderer::s_GaussianSSBO;
-	VulkanBuffer         Renderer::GaussianRenderer::s_SortedIndexSSBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_ModelTransformSSBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_FrameInfoUBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_KeysBuffers[2];
@@ -136,6 +137,7 @@ namespace Engine {
     // ============================================================
 	void Renderer::BeginRenderQueueSubmit()
     {
+        s_FrameStatistics = {};
     	s_MeshRenderQueue.clear();
     	ShadowRenderer::BeginShadowCollection();
     	ShadowRenderer::BeginLightCollection();
@@ -148,6 +150,12 @@ namespace Engine {
     	ShadowRenderer::EndShadowCollection();
     	// 高斯: 收集完毕, 若签名变化(高斯资产集合变更)则重建并上传 SSBO
     	GaussianRenderer::EndGaussianCollection();
+
+		s_FrameStatistics.SceneGaussianCount = GaussianRenderer::GetTotalGaussianCount();
+		s_FrameStatistics.GaussianDataBytes = s_FrameStatistics.SceneGaussianCount * sizeof(GaussianDataGPU);
+		// TODO(culling): 改为剔除后实际提交绘制的高斯和顶点数量，暂用全场景数量。
+		s_FrameStatistics.DrawnGaussianCount = s_FrameStatistics.SceneGaussianCount;
+		s_FrameStatistics.DrawnVertexCount = s_FrameStatistics.SceneVertexCount;
 	}
 	void Renderer::BeginScene(const EditorCamera& camera)
 	{
@@ -158,13 +166,16 @@ namespace Engine {
         s_SceneData.ProjectionMatrix[1][1] *= -1; // Vulkan Y-flip
 
     	glm::mat4 projView = s_SceneData.ProjectionMatrix * s_SceneData.ViewMatrix;
-    	VulkanContext::Get()->BeginFrame(projView);
+    	VulkanContext::Get()->BeginFrame(projView);//此处从query pool读取上一帧gpu耗时
     	// 注意: set0 为高斯专属, 此处不再绑定全局 set; mesh/skybox 在各自 pass 内绑定 set1/2/3.
 	}
 
 	void Renderer::RunMeshPass()
 	{
+		auto* context = VulkanContext::Get();
+		context->BeginGpuTiming(RenderStage::Mesh);
 		MeshRenderer::Run();
+		context->EndGpuTiming(RenderStage::Mesh);
 		// 高斯 splat 合成 pass: 在 offscreen FBO 上 LOAD, 在 mesh 结果之上合成 (shader 加载 / 1x depth 就绪前为 no-op)
 		GaussianRenderer::Run();
 	}
@@ -190,6 +201,10 @@ namespace Engine {
 	void Renderer::EndScene()
 	{
     	VulkanContext::Get()->EndFrame();
+    	    	
+    	s_FrameStatistics.GPU = VulkanContext::Get()->GetGpuTimings();
+    	s_FrameStatistics.HasCompletedFrame = true;
+    	s_Statistics = s_FrameStatistics;
 	}
 
     void Renderer::SubmitMesh(const glm::mat4& transform, const UUID& meshID, const MeshRendererComponent& rendererComponent, int entityID)
@@ -203,6 +218,7 @@ namespace Engine {
         auto meshModel = Renderer::GetModelLibrary()->Load(meshID);
         auto mesh = meshModel ? meshModel->GetMesh() : nullptr;
         if (!mesh) { return; }
+		s_FrameStatistics.SceneVertexCount += mesh->GetVertexCount();
 
         // 材质来源 model (可能与 mesh 不同，支持跨模型自由组合)
         auto matModel = Renderer::GetModelLibrary()->Load(rendererComponent.MaterialID);
@@ -288,6 +304,7 @@ namespace Engine {
 	
 	void Renderer::SubmitPointLight(const glm::vec3& position, const glm::vec3& color, float intensity, float range)
     {
+		++s_FrameStatistics.PointLightCount;
     	ShadowRenderer::SubmitPointLight(position, color, intensity, range);
     }
 
@@ -308,6 +325,7 @@ namespace Engine {
 
 	uint32_t Renderer::SubmitDirectLight(const glm::vec3& direction, const glm::vec3& color, float intensity)
     {
+		++s_FrameStatistics.DirectLightCount;
     	return ShadowRenderer::SubmitDirectLight(direction, color, intensity);
     }
 
@@ -436,6 +454,8 @@ namespace Engine {
         auto shadowShader = GetShaderLibrary()->Get("Shadow.vert.spv");
         if (!shadowShader) return;
 
+        context->BeginGpuTiming(RenderStage::Shadow);
+
         VkPipelineLayout layout = shadowShader->GetPipelineLayout();
 
         // 通过 shader 绑定 Shadow pipeline (按 RenderPass 名查找)
@@ -470,6 +490,7 @@ namespace Engine {
 
             VulkanRenderer::EndRenderPass();
         }
+        context->EndGpuTiming(RenderStage::Shadow);
     }
 
     void Renderer::ShadowRenderer::OnSwapchainRecreated()
@@ -991,7 +1012,6 @@ namespace Engine {
 		s_GaussianDescriptorLayout = VK_NULL_HANDLE;
 
 		s_GaussianSSBO.Destroy();
-		s_SortedIndexSSBO.Destroy();
 		s_ModelTransformSSBO.Destroy();
 		s_FrameInfoUBO.Destroy();
 		s_KeysBuffers[0].Destroy(); s_KeysBuffers[1].Destroy();
@@ -1115,6 +1135,8 @@ namespace Engine {
 	{
 		auto* context = VulkanContext::Get();
 		VkDevice device = context->GetDevice();
+		if (vkDeviceWaitIdle(device) != VK_SUCCESS)
+			throw std::runtime_error("failed to wait before recreating gaussian resources!");
 
 		// 统计总高斯数 (按各资产 GetGaussianCount)
 		s_TotalGaussianCount = 0;
@@ -1131,7 +1153,6 @@ namespace Engine {
 			s_GaussianDescriptorSet = VK_NULL_HANDLE;
 		}
 		s_GaussianSSBO.Destroy();
-		s_SortedIndexSSBO.Destroy();
 		s_ModelTransformSSBO.Destroy();
 		s_KeysBuffers[0].Destroy(); s_KeysBuffers[1].Destroy();
 		s_ValuesBuffers[0].Destroy(); s_ValuesBuffers[1].Destroy();
@@ -1149,29 +1170,25 @@ namespace Engine {
 		}
 
 		VkBufferUsageFlags storageUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-		s_GaussianSSBO       = VulkanBuffer(s_TotalGaussianCount * sizeof(GaussianDataGPU), storageUsage,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		// 排序结果写入 s_SortedIndexSSBO: 需 TRANSFER_DST (由 compute 末态拷贝)
-		s_SortedIndexSSBO    = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		s_GaussianSSBO       = VulkanBuffer(s_TotalGaussianCount * sizeof(GaussianDataGPU), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		s_ModelTransformSSBO = VulkanBuffer(s_GaussianSubmitList.size() * sizeof(glm::mat4), storageUsage,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		// ping-pong keys/values: values 需 TRANSFER_SRC (拷入 sorted); 二者均可被 compute 读写
-		VkBufferUsageFlags sortUsage = storageUsage | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-		s_KeysBuffers[0]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), sortUsage,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		s_KeysBuffers[1]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), sortUsage,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		s_ValuesBuffers[0]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), sortUsage,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		s_ValuesBuffers[1]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), sortUsage,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		// ping-pong keys/values: values[0] 接收初始索引上传, 四轮排序后直接供绘制读取
+		s_KeysBuffers[0]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		s_KeysBuffers[1]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		s_ValuesBuffers[0]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		s_ValuesBuffers[1]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		// 全局直方图: 每帧 vkCmdFillBuffer 清零, 需 TRANSFER_DST
 		s_GlobalHistogramSSBO = VulkanBuffer(1024 * sizeof(uint32_t), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		uint32_t numPartitions = (s_TotalGaussianCount + 511) / 512;
 		s_PartitionHistogramSSBO = VulkanBuffer(numPartitions * 256 * sizeof(uint32_t), storageUsage,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 		// 分配 DS (set0)
 		VkDescriptorSetAllocateInfo allocInfo = {};
@@ -1201,7 +1218,7 @@ namespace Engine {
 		writes[1].pBufferInfo = &gaussianInfo;
 
 		VkDescriptorBufferInfo sortedInfo{};
-		sortedInfo.buffer = s_SortedIndexSSBO.GetBuffer(); sortedInfo.offset = 0; sortedInfo.range = s_SortedIndexSSBO.GetSize();
+		sortedInfo.buffer = s_ValuesBuffers[0].GetBuffer(); sortedInfo.offset = 0; sortedInfo.range = s_ValuesBuffers[0].GetSize();
 		writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[2].dstSet = s_GaussianDescriptorSet;
 		writes[2].dstBinding = 2; writes[2].dstArrayElement = 0;
 		writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[2].descriptorCount = 1;
@@ -1269,12 +1286,12 @@ namespace Engine {
 			for (auto& g : gpuData) gpu.push_back(g);
 		}
 		if (gpu.size() > s_TotalGaussianCount) gpu.resize(s_TotalGaussianCount);
-		s_GaussianSSBO.SetData(gpu.data(), gpu.size() * sizeof(GaussianDataGPU));
+		s_GaussianSSBO.SetDataStaged(gpu.data(), gpu.size() * sizeof(GaussianDataGPU));
 
 		// 排序索引初始化为恒等 (compute 基数排序前的安全回退)
 		std::vector<uint32_t> identity(s_TotalGaussianCount);
 		for (uint32_t i = 0; i < s_TotalGaussianCount; i++) identity[i] = i;
-		s_SortedIndexSSBO.SetData(identity.data(), identity.size() * sizeof(uint32_t));
+		s_ValuesBuffers[0].SetDataStaged(identity.data(), identity.size() * sizeof(uint32_t));
 
 		UpdateModelTransforms();
 
@@ -1423,8 +1440,11 @@ namespace Engine {
 	void Renderer::GaussianRenderer::ComputeSort(VkCommandBuffer cmd)
 	{
 		if (s_TotalGaussianCount == 0) return;
-		auto* context = VulkanContext::Get();
-		VkDevice device = context->GetDevice();
+		InsertBarrier(cmd,
+			VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+			VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
 		// 每帧清零全局直方图 (4 个 pass 各写其独立 256 区间, 互不重叠)
 		vkCmdFillBuffer(cmd, s_GlobalHistogramSSBO.GetBuffer(), 0, s_GlobalHistogramSSBO.GetSize(), 0);
@@ -1438,7 +1458,7 @@ namespace Engine {
 		vkCmdPushConstants(cmd, s_DistPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(DistPC), &distPC);
 		vkCmdDispatch(cmd, (s_TotalGaussianCount + 255) / 256, 1, 1);
 		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
 		uint32_t numPartitions = (s_TotalGaussianCount + 511) / 512;
 		uint32_t src = 0;
@@ -1451,7 +1471,7 @@ namespace Engine {
 			vkCmdPushConstants(cmd, s_UpsweepPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(upPC), upPC);
 			vkCmdDispatch(cmd, numPartitions, 1, 1);
 			InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
 			// Spine: 全局直方图 exclusive prefix sum + 各 partition 偏移
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_SpineShader->GetPipeline());
@@ -1460,7 +1480,7 @@ namespace Engine {
 			vkCmdPushConstants(cmd, s_SpinePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spinePC), spinePC);
 			vkCmdDispatch(cmd, 1, 1, 1);
 			InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
 			// Downsweep: 确定性 scatter (稳定排序, 避免闪烁)
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_DownsweepShader->GetPipeline());
@@ -1469,19 +1489,13 @@ namespace Engine {
 			vkCmdPushConstants(cmd, s_DownsweepPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(downPC), downPC);
 			vkCmdDispatch(cmd, numPartitions, 1, 1);
 			InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
 			src = 1 - src;
 		}
 
-		// 经 4 次交换, src 回到 0: 有序索引在 values[0] -> 拷贝到绘制用的 s_SortedIndexSSBO
+		// 经 4 次交换, src 回到 0: vertex shader 直接读取 values[0]
 		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-						  VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-		VkBufferCopy copyRegion{};
-		copyRegion.size = s_TotalGaussianCount * sizeof(uint32_t);
-		vkCmdCopyBuffer(cmd, s_ValuesBuffers[0].GetBuffer(), s_SortedIndexSSBO.GetBuffer(), 1, &copyRegion);
-		// 拷贝结果供绘制 (vertex shader 读取 s_SortedIndexSSBO)
-		InsertBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
 						  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
 	}
 
@@ -1496,9 +1510,12 @@ namespace Engine {
 
 		// 每帧刷新 splat 参数 UBO (不含相机矩阵; 相机矩阵经 push constant 传入)
 		UpdateFrameInfoUBO();
+		UpdateModelTransforms();
 
-		// 1) GPU 基数排序: 计算深度键并稳定排序, 结果写入 s_SortedIndexSSBO (render pass 之外执行)
+		// 1) GPU 基数排序: 计算深度键并稳定排序, 结果保留在 s_ValuesBuffers[0] (render pass 之外执行)
+		context->BeginGpuTiming(RenderStage::GaussianSort);
 		ComputeSort(cmd);
+		context->EndGpuTiming(RenderStage::GaussianSort);
 
 		auto gaussianShader = GetShaderLibrary()->Get("GaussianSplat.vert.spv");
 		//VkPipeline pipeline = gaussianShader->GetPipeline("Gaussian");
@@ -1534,6 +1551,7 @@ namespace Engine {
     		EG_CORE_WARN("GaussianRenderer::Run - 深度采样器或 1x 深度视图未就绪, 跳过遮挡测试");
     	}
     	
+		context->BeginGpuTiming(RenderStage::Gaussian);
     	context->BeginGaussianRenderPass(offscreenFB);
 
 		//vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -1547,10 +1565,11 @@ namespace Engine {
 
 
 
-		// 6 顶点 (一个 quad) / 实例 = 总高斯数; 实例顺序由排序后的 s_SortedIndexSSBO 决定
+		// 6 顶点 (一个 quad) / 实例 = 总高斯数; 实例顺序由排序后的 s_ValuesBuffers[0] 决定
 		vkCmdDraw(cmd, 6, s_TotalGaussianCount, 0, 0);
 
 		VulkanRenderer::EndRenderPass();
+		context->EndGpuTiming(RenderStage::Gaussian);
 	}
 
 void Renderer::MeshRenderer::SetSkyboxData(const std::shared_ptr<Shader>& shader, const std::shared_ptr<Mesh>& mesh)
