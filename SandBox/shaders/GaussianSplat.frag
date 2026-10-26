@@ -2,11 +2,12 @@
 #extension GL_ARB_separate_shader_objects : enable
 
 layout(location = 0) in vec4 fragColor;      // rgb + base opacity
-layout(location = 1) in vec2 fragPosition;    // offset from center (in sqrt8 units)
+layout(location = 1) in vec2 fragPosition;    // center minus fragment position, in pixels
 layout(location = 2) in vec2 fragScreenUV;    // screen UV for depth lookup
-layout(location = 3) in vec3 fragViewCenter;   // 椭球中心 E (view space)
+layout(location = 3) flat in vec3 fragViewCenter;   // 椭球中心 E (view space)
 layout(location = 4) in vec4 fragInvSigma0;    // Σ_view⁻¹: (M00, M01, M02, M11)
 layout(location = 5) in vec4 fragInvSigma1;    // (M12, M22, c=EᵀME - r², _pad)
+layout(location = 6) flat in vec3 fragConic;
 
 // 相机矩阵经 push constant 传入 (与 vertex 共用同一 block)
 layout(push_constant) uniform CameraData {
@@ -21,17 +22,30 @@ layout(set = 0, binding = 3) uniform sampler2D u_DepthMap;
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    /* Original sqrt(8) radial cutoff, retained for comparison.
     // 高斯到中心的平方距离 (sqrt8 单位)
     float A = dot(fragPosition, fragPosition);
 
     // 丢弃高斯范围外的片元
     if (A > 8.0) discard;
+    */
+
+    vec2 d = fragPosition;
+    float power = -0.5 * (fragConic.x * d.x * d.x + fragConic.z * d.y * d.y)
+        - fragConic.y * d.x * d.y;
+    if (power > 0.0)
+        discard;
+    float opacity = min(0.99, fragColor.a * exp(power));
+    if (opacity < 1.0 / 255.0)
+        discard;
 
     float sceneDepth = texture(u_DepthMap, fragScreenUV).r;
 
     // 默认完全可见; 仅在有 mesh 几何的像素上做遮挡
     float occlusion = 1.0;
 
+    // Original ellipsoid intersection visibility, retained for future experiments.
+    /*
     if (sceneDepth < 1.0)
     {
         // ===== 重建 view-space mesh 表面点 X_m (透视投影反推) =====
@@ -93,10 +107,24 @@ void main() {
         // mesh 在椭球远端之后 (meshViewZ <= z_far)  → 完全可见
         // 中间 → 线性过渡
     }
+    */
 
+    // Match LMG: accept the center if z_gaussian <= z_mesh + 0.1.
+    // Convert Vulkan depth to positive camera-space z; depth=1 means no mesh.
+    if (sceneDepth < 1.0)
+    {
+        float meshDepth = camera.projectionMatrix[3][2]
+            / (sceneDepth + camera.projectionMatrix[2][2]);
+        float gaussianDepth = -fragViewCenter.z;
+        if (gaussianDepth > meshDepth + 0.1)
+            discard;
+    }
+
+    /* Original alpha evaluation for the rotated quad.
     // 基础高斯 opacity * 遮挡
     float opacity = exp(-0.5 * A) * fragColor.a;
     opacity *= occlusion;
+    */
 
     outColor = vec4(fragColor.rgb, opacity);
 }

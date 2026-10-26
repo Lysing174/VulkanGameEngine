@@ -42,7 +42,7 @@ namespace Engine {
 	struct AssetDirTraits<Model>
 	{
 		static const char* Directory() { return "models"; }
-		static std::vector<std::string> Extensions() { return { ".gltf", ".glb" }; }
+		static std::vector<std::string> Extensions() { return { ".gltf", ".glb", ".obj" }; }
 	};
 
 	template<>

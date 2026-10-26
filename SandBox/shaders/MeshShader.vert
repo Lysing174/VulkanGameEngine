@@ -18,6 +18,7 @@ layout(push_constant) uniform PushConsts {
     layout(offset = 64)  vec4  pcAlbedoColor;    // FRAGMENT (未在此阶段使用)
     layout(offset = 80)  uint  pcLightCount;     // FRAGMENT
     layout(offset = 84)  uint  pcLightIndices[4];// FRAGMENT
+    layout(offset = 100) uint  pcHasEnvironmentMap;
     layout(offset = 112) mat4  projView;         // VERTEX
     layout(offset = 176) vec4  cameraPosition;   // FRAGMENT
 } pc;

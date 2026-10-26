@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
+#include <stdexcept>
 
 namespace Engine {
 
@@ -56,6 +57,11 @@ namespace Engine {
             while (vertex.hasProperty("f_rest_" + std::to_string(shRestCount)))
                 shRestCount++;
 
+            if (shRestCount % 3 != 0)
+                throw std::runtime_error("PLY SH coefficient count must be divisible by 3");
+            const int shRestPerChannel = shRestCount / 3;
+            const int shRestToLoad = std::min(shRestPerChannel, static_cast<int>(SH_BASIS) - 1);
+
             std::vector<std::vector<float>> shRestData(shRestCount);
             for (int k = 0; k < shRestCount; k++)
                 shRestData[k] = vertex.getProperty<float>("f_rest_" + std::to_string(k));
@@ -98,7 +104,11 @@ namespace Engine {
                     g.normal = { nx[i], ny[i], nz[i] };
 
                 if (hasSHDC)
-                    g.shDC = { fdc0[i], fdc1[i], fdc2[i] };
+                {
+                    g.sh[0] = fdc0[i];
+                    g.sh[1] = fdc1[i];
+                    g.sh[2] = fdc2[i];
+                }
 
                 if (!opacity.empty())
                     g.opacity = opacity[i];
@@ -109,9 +119,12 @@ namespace Engine {
                 if (hasRotation)
                     g.rotation = { r0[i], r1[i], r2[i], r3[i] };
 
-                g.shRest.resize(shRestCount);
-                for (int k = 0; k < shRestCount; k++)
-                    g.shRest[k] = shRestData[k][i];
+                // PLY stores all R coefficients, then G, then B; GPU data is basis-major RGB.
+                for (int basis = 0; basis < shRestToLoad; basis++)
+                {
+                    for (int channel = 0; channel < 3; channel++)
+                        g.sh[3 * (basis + 1) + channel] = shRestData[channel * shRestPerChannel + basis][i];
+                }
             }
 
             EG_CORE_INFO("Loaded Gaussian model: {0} ({1} gaussians, {2} SH rest coefficients)",
@@ -128,8 +141,6 @@ namespace Engine {
         uint32_t count = GetGaussianCount();
         std::vector<GaussianDataGPU> gpuData(count);
 
-        const float SH_C0 = 0.28209479177387814f;
-
         for (uint32_t i = 0; i < count; i++)
         {
             const GaussianData& g = m_Gaussians[i];
@@ -137,11 +148,10 @@ namespace Engine {
             // Position + sigmoid opacity
             gpuData[i].posAndOpacity = glm::vec4(g.position, 1.0f / (1.0f + std::exp(-g.opacity)));
 
-            // SH DC → color: C0 = 0.28209479177, color = 0.5 + C0 * shDC
-            gpuData[i].color = glm::vec4(
-                glm::clamp(0.5f + SH_C0 * g.shDC, 0.0f, 1.0f),
-                0.0f
-            );
+            // 完整球谐系数: 直接拷贝 (CPU 侧已按 [基函数 k][通道 c] 排布).
+            // 颜色不再在 CPU 烘焙, 由 shader 用视线方向实时 SH 求值.
+            for (uint32_t s = 0; s < SH_TOTAL; s++)
+                gpuData[i].sh[s] = g.sh[s];
 
             // Precompute 3D covariance from scale + rotation
             // scale needs exp(), rotation needs normalize

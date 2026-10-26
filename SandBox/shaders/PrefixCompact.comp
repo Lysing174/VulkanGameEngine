@@ -1,0 +1,55 @@
+#version 460
+
+layout(local_size_x = 512) in;
+
+// Set 0 follows the descriptor contract in PrefixCull.comp.
+// Dispatch ceil(N/512) AFTER PrefixScan and its compute memory barrier.
+// Each visible input writes groupOffset + localRank, preserving input order.
+// b7/b8 must be distinct from b4/b5 and are the existing keys[0]/values[0].
+// Only [0, workInfo.counts.x) is valid afterward; the tail is left untouched.
+// Insert compute write -> compute read/write before sorting. Four radix passes
+// keep the final indices in values[0]; draw exactly workInfo.counts.x instances.
+// Projected data remains indexed by the original Gaussian ID, not compact rank.
+
+layout(push_constant) uniform PrefixInfo
+{
+    uint elementCount;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+} prefixInfo;
+
+layout(std430, set = 0, binding = 4) readonly buffer PrefixScratchBuffer
+{
+    uvec2 prefixScratch[];
+};
+
+layout(std430, set = 0, binding = 5) readonly buffer PrefixGroupBuffer
+{
+    uint groupData[];
+};
+
+layout(std430, set = 0, binding = 7) writeonly buffer KeysOut
+{
+    uint keysOut[];
+};
+
+layout(std430, set = 0, binding = 8) writeonly buffer ValuesOut
+{
+    uint valuesOut[];
+};
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+    if (id >= prefixInfo.elementCount)
+        return;
+
+    uvec2 entry = prefixScratch[id];
+    if (entry.y == 0xFFFFFFFFu)
+        return;
+
+    uint destination = groupData[gl_WorkGroupID.x] + entry.y;
+    keysOut[destination] = entry.x;
+    valuesOut[destination] = id;
+}

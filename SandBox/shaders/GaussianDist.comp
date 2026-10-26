@@ -13,7 +13,7 @@ layout(push_constant) uniform PushConstants
 struct GaussianDataGPU
 {
     vec4  posAndOpacity;  // xyz = position, w = opacity
-    vec4  color;          // rgb, w = unused
+    float sh[48];         // 完整三阶球谐系数 (16 基函数 × 3 通道)
     float cov3d[6];
     uint  modelIndex;     // index into model transform SSBO
     float _pad1;

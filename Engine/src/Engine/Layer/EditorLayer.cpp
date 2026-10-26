@@ -31,8 +31,7 @@ namespace Engine {
     	
         m_EditorCamera = EditorCamera(45.0f, 1.778f, 0.1f, 1000.0f);
 
-        m_CubeMesh = std::make_shared<Mesh>(Mesh::CreateCube());
-        auto shader = Renderer::GetShaderLibrary()->Get("Mesh.vert.spv");
+        auto shader = Renderer::GetShaderLibrary()->Get("MeshShader.vert.spv");
         m_RedMaterial = std::make_shared<Material>(shader);
         m_RedMaterial->SetAlbedoColor(glm::vec4(0, 1, 1, 1));
 
@@ -51,16 +50,8 @@ namespace Engine {
         m_CubeEntity.AddComponent<MeshFilterComponent>();   // 空 UUID → 不渲染
     	m_CubeEntity.AddComponent<MeshRendererComponent>();
 
-        // Set MSAA samples before creating pipeline (must match render pass sample count)
-        shader->SetSamples(VulkanContext::Get()->GetMSAASamples());
-        shader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout(), "Mesh");
         auto& transform = m_CubeEntity.GetComponent<TransformComponent>();
 
-        // Shadow pass pipeline (方向光阴影贴图, 深度-only, 与 "Shadow" render pass 匹配)
-        {
-            auto shadowShader = Renderer::GetShaderLibrary()->Get("Shadow.vert.spv");
-            shadowShader->CreatePipeline(m_CubeMesh->GetVertexBuffer()->GetLayout(), "Shadow");
-        }
         transform.Translation = { 0.0f, 30.0f, 0.0f };
         transform.Scale = { 2.0f, 2.0f, 2.0f };
 
@@ -68,11 +59,13 @@ namespace Engine {
         const std::string HELMET_PATH = "helmat/models/DamagedHelmet/glTF-Embedded/DamagedHelmet.gltf";
         const std::string BUST_PATH   = "marble_bust/marble_bust_01_4k.gltf";
     	const std::string CUBE_PATH   = "helmat/models/Box/glTF-Embedded/Box.gltf";
+    	const std::string PLAYROOM_PATH = "playroom/playroom.obj";
 
         UUID helmetID = modelLibrary->FindIDByPath(HELMET_PATH);
         UUID bustID   = modelLibrary->FindIDByPath(BUST_PATH);
     	UUID cubeID   = modelLibrary->FindIDByPath(CUBE_PATH);
-
+		UUID playroomID = modelLibrary->FindIDByPath(PLAYROOM_PATH);
+    	
         Entity HelmetEntity = m_ActiveScene->CreateEntity("Helmet");
         HelmetEntity.AddComponent<MeshFilterComponent>(helmetID);
         HelmetEntity.AddComponent<MeshRendererComponent>(helmetID);
@@ -93,11 +86,15 @@ namespace Engine {
     	CubeEntity.GetComponent<TransformComponent>().Translation={0.0f,-3.5f,0.0f};
     	CubeEntity.GetComponent<TransformComponent>().Scale={15.0f,1.0f,15.0f};
     	CubeEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
- 
-    	// 高斯 splat 合成 pipeline (1x, 与 "Gaussian" renderpass 匹配)
+    	
+    	Entity PlayroomEntity = m_ActiveScene->CreateEntity("Playroom");
+    	PlayroomEntity.AddComponent<MeshFilterComponent>(playroomID);
+    	PlayroomEntity.AddComponent<MeshRendererComponent>(playroomID);
+    	PlayroomEntity.GetComponent<TransformComponent>().Translation={0.0f,2.0f,0.0f};
+    	PlayroomEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
+    	PlayroomEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,3.1415926f};
+    	// 高斯 splat 合成 pipeline 已在 Renderer::Init 中创建
     	{
-    	    auto gaussianShader = Renderer::GetShaderLibrary()->Get("GaussianSplat.vert.spv");
-    	    gaussianShader->CreatePipeline(nullptr, "Gaussian");
     		Entity gaussianEntity=m_ActiveScene->CreateEntity("Gaussian");
     		UUID plantID = Renderer::GetGaussianModelLibrary()->FindIDByPath("plant.ply");
     		gaussianEntity.AddComponent<GaussianComponent>(plantID);
@@ -149,17 +146,10 @@ namespace Engine {
             auto envMapInfo = m_EnvironmentImage->GetCubeMap()->GetDescriptorImageInfo();
             envMapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             auto shData = m_EnvironmentImage->GetSHData();
-            Renderer::SetEnvironmentMap(envMapInfo, shData);
+            //Renderer::SetEnvironmentMap(envMapInfo, shData);
+    		Renderer::RemoveEnvironmentMap();
         }
 
-        // Setup skybox rendering
-        {
-            auto skyboxShader = Renderer::GetShaderLibrary()->Get("Skybox.vert.spv");
-            auto skyboxMesh   = std::make_shared<Mesh>(Mesh::CreateCube());
-            skyboxShader->SetSamples(VulkanContext::Get()->GetMSAASamples());
-            skyboxShader->CreatePipeline(skyboxMesh->GetVertexBuffer()->GetLayout(), "Mesh");
-            Renderer::SetSkyboxData(skyboxShader, skyboxMesh);
-        }
     }
 
     void EditorLayer::InitDockspace()
@@ -387,7 +377,7 @@ namespace Engine {
 		{
 			ImGui::TableNextColumn();
 			ImGui::Text("Scene Gaussians: %llu", static_cast<unsigned long long>(m_Statistics.SceneGaussianCount));
-			ImGui::Text("Drawn Gaussians*: %llu", static_cast<unsigned long long>(m_Statistics.DrawnGaussianCount));
+			ImGui::Text("Drawn Gaussians: %llu", static_cast<unsigned long long>(m_Statistics.DrawnGaussianCount));
 			ImGui::Text("Gaussian Data: %.2f MiB", m_Statistics.GaussianDataBytes / (1024.0 * 1024.0));
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("Scene gaussians x sizeof(GaussianDataGPU).\nExcludes sorting buffers, transforms and allocation overhead.");
@@ -399,7 +389,7 @@ namespace Engine {
 				static_cast<unsigned long long>(m_Statistics.PointLightCount + m_Statistics.DirectLightCount),
 				static_cast<unsigned long long>(m_Statistics.PointLightCount),
 				static_cast<unsigned long long>(m_Statistics.DirectLightCount));
-			ImGui::TextDisabled("* Scene totals until culling is implemented.");
+			ImGui::TextDisabled("* Mesh vertex count uses the scene total.");
 
 			ImGui::TableNextColumn();
 			ImGui::Text("CPU work (avr): %.3f ms", m_Statistics.CpuTimeMs);

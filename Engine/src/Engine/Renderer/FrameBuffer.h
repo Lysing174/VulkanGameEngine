@@ -15,6 +15,7 @@ namespace Engine {
 
         uint32_t Samples = 1; // 多重采样，通常 1 用于编辑器 FBO
         bool SwapChainTarget = false; // 是否是主交换链的目标 (如果你用这个类管理主屏幕)
+        bool Readback = false;        // 是否需要 CPU 回读颜色附件 (额外加 TRANSFER_SRC usage)
 
         // VkRenderPass — 必须在 Create() 前由外部指定
         // 使用 void* 避免平台无关头文件依赖 Vulkan

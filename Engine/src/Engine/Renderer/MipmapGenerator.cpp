@@ -132,7 +132,7 @@ void MipmapGenerator::CreatePipelineLayout()
 // ===================================================================
 void MipmapGenerator::CreatePipeline()
 {
-	m_ComputeShader = std::make_unique<VulkanComputeShader>("shaders/GGXPrefilter.comp.spv");
+	m_ComputeShader = std::make_unique<VulkanComputeShader>("shaders/spv/GGXPrefilter.comp.spv");
 	m_ComputeShader->CreatePipeline(m_PipelineLayout);
 
 	EG_CORE_INFO("MipmapGenerator: compute pipeline created");

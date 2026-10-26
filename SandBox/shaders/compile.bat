@@ -1,59 +1,61 @@
 @echo off
-rem ========================================================
-rem  Vulkan Shader 自动编译脚本
-rem  注意：确保你的电脑安装了 Vulkan SDK 且配置了环境变量
-rem ========================================================
+setlocal
+rem Pass --no-pause when invoking from a terminal or build tool.
+pushd "%~dp0"
+if errorlevel 1 exit /b 1
 
-rem 设置编译器路径 (如果 glslc 就在 PATH 里，可以直接写 glslc)
-rem 如果不在 PATH 里，请修改为你 SDK 的实际路径，例如：
-rem set GLSLC="C:\VulkanSDK\1.3.xxx.x\Bin\glslc.exe"
-set GLSLC=glslc
+if not exist "spv" mkdir "spv"
+if errorlevel 1 goto :error
 
-echo Compiling Shaders...
+set "GLSLC=glslc"
+if defined VULKAN_SDK if exist "%VULKAN_SDK%\Bin\glslc.exe" set "GLSLC=%VULKAN_SDK%\Bin\glslc.exe"
 
-rem --- 编译 PosColor Shader ---
-echo [1/7] Compiling PosColor...
+echo Compiling shaders...
 
-rem --- 编译 Mesh Shader ---
-echo [2/7] Compiling Mesh...
-%GLSLC% MeshShader.vert -o Mesh.vert.spv
-%GLSLC% MeshShader.frag -o Mesh.frag.spv
+echo [1/6] Mesh
+call :Compile "MeshShader.vert" "MeshShader.vert.spv" || goto :error
+call :Compile "MeshShader.frag" "MeshShader.frag.spv" || goto :error
+call :Compile "UnlitShader.vert" "UnlitShader.vert.spv" || goto :error
+call :Compile "UnlitShader.frag" "UnlitShader.frag.spv" || goto :error
 
-rem --- 编译 Skybox Shader ---
-echo [3/7] Compiling Skybox...
-%GLSLC% Skybox.vert -o Skybox.vert.spv
-%GLSLC% Skybox.frag -o Skybox.frag.spv
+echo [2/6] Skybox
+call :Compile "Skybox.vert" "Skybox.vert.spv" || goto :error
+call :Compile "Skybox.frag" "Skybox.frag.spv" || goto :error
 
-rem --- 编译 Shadow Shader (方向光阴影贴图) ---
-echo [4/7] Compiling Shadow...
-%GLSLC% Shadow.vert -o Shadow.vert.spv
-%GLSLC% Shadow.frag -o Shadow.frag.spv
+echo [3/6] Shadow
+call :Compile "Shadow.vert" "Shadow.vert.spv" || goto :error
+call :Compile "Shadow.frag" "Shadow.frag.spv" || goto :error
 
-rem --- 编译 GGX Prefilter Compute Shader ---
-echo [5/7] Compiling GGXPrefilter...
-%GLSLC% GGXPrefilter.comp -o GGXPrefilter.comp.spv
+echo [4/6] GGX Prefilter
+call :Compile "GGXPrefilter.comp" "GGXPrefilter.comp.spv" || goto :error
 
-rem --- 编译 GaussianSplat Shader ---
-echo [6/7] Compiling GaussianSplat...
-%GLSLC% GaussianSplat.vert -o GaussianSplat.vert.spv
-%GLSLC% GaussianSplat.frag -o GaussianSplat.frag.spv
+echo [5/6] Gaussian Splat
+call :Compile "GaussianSplat.vert" "GaussianSplat.vert.spv" || goto :error
+call :Compile "GaussianSplat.frag" "GaussianSplat.frag.spv" || goto :error
 
-rem --- 编译 Gaussian Compute Shaders ---
-echo [7/7] Compiling Gaussian Compute...
-%GLSLC% GaussianDist.comp -o GaussianDist.comp.spv
-%GLSLC% GaussianSortUpsweep.comp -o GaussianSortUpsweep.comp.spv
-%GLSLC% GaussianSortSpine.comp -o GaussianSortSpine.comp.spv
-%GLSLC% GaussianSortDownsweep.comp -o GaussianSortDownsweep.comp.spv
-
-
-rem 检查是否有错误 (如果 glslc 返回非0，暂停看报错)
-if %errorlevel% neq 0 (
-    echo.
-    echo [ERROR] Shader compilation failed!
-    pause
-    exit /b %errorlevel%
-)
+echo [6/6] Gaussian Compute
+call :Compile "PrefixCull.comp" "PrefixCull.comp.spv" || goto :error
+call :Compile "PrefixScan.comp" "PrefixScan.comp.spv" || goto :error
+call :Compile "PrefixCompact.comp" "PrefixCompact.comp.spv" || goto :error
+call :Compile "GaussianSortUpsweep.comp" "GaussianSortUpsweep.comp.spv" || goto :error
+call :Compile "GaussianSortSpine.comp" "GaussianSortSpine.comp.spv" || goto :error
+call :Compile "GaussianSortDownsweep.comp" "GaussianSortDownsweep.comp.spv" || goto :error
 
 echo.
 echo [SUCCESS] All shaders compiled successfully!
-pause
+popd
+if /I not "%~1"=="--no-pause" pause
+exit /b 0
+
+:Compile
+echo   %~1
+"%GLSLC%" "%~1" -o "spv\%~2"
+exit /b %errorlevel%
+
+:error
+set "SHADER_EXIT_CODE=%errorlevel%"
+echo.
+echo [ERROR] Shader compilation failed. Check glslc output and VULKAN_SDK.
+popd
+if /I not "%~1"=="--no-pause" pause
+exit /b %SHADER_EXIT_CODE%

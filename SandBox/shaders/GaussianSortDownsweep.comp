@@ -22,9 +22,6 @@ layout(local_size_x = 512) in;
 layout(push_constant) uniform PushConstants
 {
     uint passNum;        // which 8-bit pass (0-3 for 32-bit keys)
-    uint elementCount;
-    uint numPartitions;
-    uint pad0;
 };
 
 layout(set = 0, binding = 0, std430) readonly buffer KeysIn      { uint keysIn[];   };
@@ -37,6 +34,12 @@ layout(set = 0, binding = 2, std430) readonly buffer PartitionHistogram
 };
 layout(set = 0, binding = 3, std430) writeonly buffer KeysOut    { uint keysOut[];   };
 layout(set = 0, binding = 4, std430) writeonly buffer ValuesOut  { uint valuesOut[]; };
+
+// 可见数量由 PrefixScan 写入 workInfo.counts.x (替代 CPU-pushed elementCount)
+layout(set = 0, binding = 5, std430) readonly buffer WorkInfoBuffer
+{
+    uvec4 counts; // x = visibleCount, y = partitionCount
+};
 
 // ---- Shared memory layout ----
 //
@@ -58,7 +61,7 @@ void main()
     uint laneId      = localId % 32u;            // 0..31
 
     uint myIdx = baseIdx + localId;
-    bool valid = (myIdx < elementCount);
+    bool valid = (myIdx < counts.x);
 
     // -----------------------------------------------------------------------
     // Phase 1 - Extract digit and store in shared memory

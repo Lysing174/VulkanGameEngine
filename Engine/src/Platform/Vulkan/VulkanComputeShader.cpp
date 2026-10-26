@@ -90,6 +90,16 @@ namespace Engine {
 		vkCmdDispatch(cmd, x, y, z);
 	}
 
+	void VulkanComputeShader::DispatchIndirect(VkCommandBuffer cmd, VkPipelineLayout layout,
+												VkDescriptorSet descSet, VkBuffer buffer, VkDeviceSize offset) const
+	{
+		EG_CORE_ASSERT(m_Pipeline != VK_NULL_HANDLE, "DispatchIndirect called before CreatePipeline!");
+
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_Pipeline);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &descSet, 0, nullptr);
+		vkCmdDispatchIndirect(cmd, buffer, offset);
+	}
+
 	VkShaderModule VulkanComputeShader::CreateShaderModule(const std::vector<char>& code)
 	{
 		VkShaderModuleCreateInfo createInfo{};

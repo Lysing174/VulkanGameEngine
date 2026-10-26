@@ -30,8 +30,8 @@ namespace Engine {
 		void OnSimulationStop() {}
 
 		void OnUpdateRuntime();
-		void OnUpdateSimulation(EditorCamera& camera);
-		void OnUpdateEditor(EditorCamera& camera);
+		void OnUpdateSimulation(const Camera& camera);
+		void OnUpdateEditor(const Camera& camera);
 		void OnViewportResize(uint32_t width, uint32_t height);
 
 		Entity DuplicateEntity(Entity entity) {}
@@ -60,7 +60,7 @@ namespace Engine {
 		void OnPhysics2DStart() {}
 		void OnPhysics2DStop() {}
 
-		void RenderEditorScene(EditorCamera& camera);
+		void RenderEditorScene(const Camera& camera);
 	private:
 		entt::registry m_Registry;
 		uint32_t m_ViewportWidth = 0, m_ViewportHeight = 0;

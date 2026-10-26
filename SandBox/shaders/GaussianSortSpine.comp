@@ -24,9 +24,9 @@ layout(local_size_x = 256) in;
 layout(push_constant) uniform PushConstants
 {
     uint passNum;
-    uint elementCount;
-    uint numPartitions;
     uint pad0;
+    uint pad1;
+    uint pad2;
 };
 
 layout(set = 0, binding = 1, std430) buffer GlobalHistogram
@@ -41,6 +41,12 @@ layout(set = 0, binding = 2, std430) buffer PartitionHistogram
     // [p * 256 + digit] = count in partition p for that digit (input)
     // After this shader: global output offset for (partition p, digit) (output)
     uint partitionHistogram[];
+};
+
+// 可见数量由 PrefixScan 写入 workInfo.counts.y (替代 CPU-pushed numPartitions)
+layout(set = 0, binding = 3, std430) readonly buffer WorkInfoBuffer
+{
+    uvec4 counts; // x = visibleCount, y = partitionCount
 };
 
 shared uint sInclusive[256];   // Kogge-Stone intermediate (inclusive sums)
@@ -96,7 +102,7 @@ void main()
     //   sExclusive[digit] is this digit's global starting offset.
     // -----------------------------------------------------------------------
     uint runningSum = 0u;
-    for (uint p = 0u; p < numPartitions; p++)
+    for (uint p = 0u; p < counts.y; p++)
     {
         uint count = partitionHistogram[p * 256u + digit];
         partitionHistogram[p * 256u + digit] = sExclusive[digit] + runningSum;

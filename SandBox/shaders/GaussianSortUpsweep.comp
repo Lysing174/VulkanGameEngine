@@ -11,9 +11,6 @@ layout(local_size_x = 512) in;
 layout(push_constant) uniform PushConstants
 {
     uint passNum;       // 0, 1, 2, 3 (which 8-bit chunk of the key)
-    uint elementCount;
-    uint pad0;
-    uint pad1;
 };
 
 layout(set = 0, binding = 0, std430) readonly buffer KeysIn
@@ -29,6 +26,12 @@ layout(set = 0, binding = 1, std430) buffer GlobalHistogram
 layout(set = 0, binding = 2, std430) buffer PartitionHistogram
 {
     uint partitionHistogram[];  // [workgroupId * 256 + digit] = count
+};
+
+// 可见数量由 PrefixScan 写入 workInfo.counts.x (替代 CPU-pushed elementCount)
+layout(set = 0, binding = 3, std430) readonly buffer WorkInfoBuffer
+{
+    uvec4 counts; // x = visibleCount, y = partitionCount
 };
 
 shared uint localHist[256];
@@ -47,7 +50,7 @@ void main()
 
     // Count elements in this partition
     uint myIdx = baseIdx + localId;
-    if (myIdx < elementCount)
+    if (myIdx < counts.x)
     {
         uint key = keysIn[myIdx];
         uint digit = (key >> (passNum * 8u)) & 0xFFu;

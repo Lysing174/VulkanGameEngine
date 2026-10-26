@@ -76,6 +76,7 @@ layout(push_constant) uniform PushConsts {
     layout(offset = 64)  vec4  pcAlbedoColor;    // FRAGMENT
     layout(offset = 80)  uint  pcLightCount;     // FRAGMENT
     layout(offset = 84)  uint  pcLightIndices[4];// FRAGMENT
+    layout(offset = 100) uint  pcHasEnvironmentMap;
     layout(offset = 112) mat4  projView;         // VERTEX (未在此阶段使用)
     layout(offset = 176) vec4  cameraPosition;   // FRAGMENT
 } pc;
@@ -324,25 +325,29 @@ void main()
     // -------------------------------------------------------------------
     // 7. Image-Based Lighting (IBL)
     // -------------------------------------------------------------------
-    float NdotV = max(dot(N, V), 0.0);
-    float ambientAO = mix(1.0, ao, u_Material.AOStrength);//ao有问题
+    vec3 ambient = vec3(0.0);
+    if (pc.pcHasEnvironmentMap != 0u)
+    {
+        float NdotV = max(dot(N, V), 0.0);
+        float ambientAO = mix(1.0, ao, u_Material.AOStrength);//ao有问题
 
-    // Diffuse IBL: SH irradiance
-    vec3 irradiance = EvalSHIrradiance(N);
-    vec3 diffuseIBL = irradiance * albedo * ambientAO;
+        // Diffuse IBL: SH irradiance
+        vec3 irradiance = EvalSHIrradiance(N);
+        vec3 diffuseIBL = irradiance * albedo * ambientAO;
 
-    // Specular IBL: prefiltered cubemap + analytical BRDF
-    vec3 R = reflect(-V, N);
-    float maxMipLevel = float(textureQueryLevels(u_PrefilteredEnvMap) - 1);
-    vec3 prefilteredColor = textureLod(u_PrefilteredEnvMap, R, roughness * maxMipLevel).rgb;
+        // Specular IBL: prefiltered cubemap + analytical BRDF
+        vec3 R = reflect(-V, N);
+        float maxMipLevel = float(textureQueryLevels(u_PrefilteredEnvMap) - 1);
+        vec3 prefilteredColor = textureLod(u_PrefilteredEnvMap, R, roughness * maxMipLevel).rgb;
 
-    float gloss = 1.0 - roughness;  // perceptual roughness → gloss
-    vec3 envBRDF = EnvDFGLazarov(F0, gloss, NdotV);
-    vec3 specularIBL = prefilteredColor * envBRDF * ambientAO;
+        float gloss = 1.0 - roughness;  // perceptual roughness → gloss
+        vec3 envBRDF = EnvDFGLazarov(F0, gloss, NdotV);
+        vec3 specularIBL = prefilteredColor * envBRDF * ambientAO;
 
-    // Energy conservation: modulate diffuse by (1 - envBRDF)
-    vec3 kD_ibl = (1.0 - envBRDF) * (1.0 - metallic);
-    vec3 ambient = kD_ibl * diffuseIBL + specularIBL;
+        // Energy conservation: modulate diffuse by (1 - envBRDF)
+        vec3 kD_ibl = (1.0 - envBRDF) * (1.0 - metallic);
+        ambient = kD_ibl * diffuseIBL + specularIBL;
+    }
 
     // -------------------------------------------------------------------
     // 8. Emissive

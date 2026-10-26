@@ -40,7 +40,7 @@ namespace Engine
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");
         return nullptr;
     }
-    std::shared_ptr<Texture2D> Texture2D::Create(const std::string& path, bool sRGB)
+    std::shared_ptr<Texture2D> Texture2D::Create(const std::string& path, bool sRGB, TextureSampling sampling)
     {
         switch (Renderer::GetAPI())
         {
@@ -48,7 +48,7 @@ namespace Engine
         case Renderer::API::Vulkan:
         {
             VkFormat format = sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-            return std::make_shared<VulkanTexture2D>(path, format);
+            return std::make_shared<VulkanTexture2D>(path, format, sampling);
         }
         }
         EG_CORE_ASSERT(false, "Unknown RendererAPI!");

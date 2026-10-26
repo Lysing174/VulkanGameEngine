@@ -35,6 +35,11 @@ namespace Engine {
 		void Dispatch(VkCommandBuffer cmd, VkPipelineLayout layout,
 					  VkDescriptorSet descSet, uint32_t x, uint32_t y, uint32_t z) const;
 
+		// Indirect dispatch: workgroup count is read from (buffer, offset) as a
+		// VkDispatchIndirectCommand {x, y, z}. Buffer must have INDIRECT_BUFFER usage.
+		void DispatchIndirect(VkCommandBuffer cmd, VkPipelineLayout layout,
+							  VkDescriptorSet descSet, VkBuffer buffer, VkDeviceSize offset) const;
+
 		// Accessors
 		VkPipeline GetPipeline() const { return m_Pipeline; }
 		VkShaderModule GetShaderModule() const { return m_ShaderModule; }

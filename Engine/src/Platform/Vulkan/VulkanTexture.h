@@ -9,7 +9,8 @@ namespace Engine {
     class VulkanTexture2D : public Texture2D
     {
     public:
-        VulkanTexture2D(const std::string& path, VkFormat format);
+        VulkanTexture2D(const std::string& path, VkFormat format,
+            TextureSampling sampling = TextureSampling::Default);
         VulkanTexture2D(const void* data, size_t size, VkFormat format);  // 从压缩内存数据创建 (PNG/JPG/BMP...)
         VulkanTexture2D(uint32_t width, uint32_t height, void* data, VkFormat format); // 从原始 RGBA 像素创建
         virtual ~VulkanTexture2D();

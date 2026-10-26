@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <map>
+#include <Engine/Renderer/Camera.h>
 #include <Engine/Renderer/EditorCamera.h>
 #include <Engine/Scene/Components.h>
 #include <Engine/Renderer/Shader.h>
@@ -25,12 +26,15 @@ namespace Engine {
 
 	public:
 		Renderer()=delete;
+		// Startup option: changing MSAA requires recreating render passes and framebuffers.
+		static constexpr bool EnableMSAA = false;
 		static void Init();
 		static void Shutdown();
 		static void BeginRenderQueueSubmit();
 		static void EndRenderQueueSubmit();
 		//static void RenderScene(const EditorCamera& camera);
-		static void BeginScene(const EditorCamera& camera);
+		// 任意相机 (EditorCamera / DatasetCamera ...) 均可驱动: 只取 view/proj/position/forward
+		static void BeginScene(const Camera& camera);
 		static void RunMeshPass();    // 录制 Mesh Pass (天空盒 → mesh → end pass)
 		static void RunShadowPass(){ShadowRenderer::Run();}  // 录制 Shadow Pass (对每个阴影光: 渲深度到阴影贴图)
 		static void RunImGuiPass();   // 录制 ImGui Pass (开 pass → 画 ImGui → end pass)
@@ -74,6 +78,8 @@ namespace Engine {
 
 		// IBL 环境贴图 (cubemap + SH), 转发给 EnvRenderer (EditorLayer 加载后调用)
 		static void SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData);
+		// Call between frames, before BeginScene; the environment image remains owned by its caller.
+		static void RemoveEnvironmentMap();
 
 	private:
 		static RendererStatistics s_FrameStatistics;
@@ -185,6 +191,11 @@ namespace Engine {
 			static void OnSwapchainRecreated();
 			// IBL: 设置环境贴图 (预滤波 cubemap) + SH 系数 (EditorLayer 加载完成后调用)
 			static void SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData);
+			static void RemoveEnvironmentMap();
+			static bool HasEnvironmentMap()
+			{
+				return s_EnvMapInfo.imageView != VK_NULL_HANDLE && s_EnvMapInfo.sampler != VK_NULL_HANDLE;
+			}
 
 			// set3 资源, 供 mesh/skybox pass 绑定
 			static VkDescriptorSetLayout GetDescriptorSetLayout() { return s_EnvDescriptorLayout; }
@@ -192,12 +203,16 @@ namespace Engine {
 
 		private:
 			static void CreateDescriptorSetLayout();  // set3: b0 SH UBO, b1 cubemap (combined image sampler)
-			static void CreateDescriptorSet();        // 分配并写入 set3 (b0 SH; b1 cubemap 待 SetEnvironmentMap)
+			static void CreateDescriptorSet();        // SH UBO + environment or fallback cubemap
+			static void CreateFallbackEnvironmentMap();
+			static void UpdateEnvironmentDescriptor();
 
 			static VulkanBuffer s_SHBuffer;             // set3 b0: SH 辐照度 (9 × vec4)
 			static VkDescriptorSetLayout s_EnvDescriptorLayout;
 			static VkDescriptorSet       s_EnvDescriptorSet;
 			static VkDescriptorImageInfo s_EnvMapInfo;  // 缓存 cubemap (sampler + imageView)
+			static std::unique_ptr<VulkanImage> s_FallbackEnvMap;
+			static VkSampler s_FallbackEnvSampler;
 			static bool s_EnvResourcesCreated;
 		};
 
@@ -273,23 +288,31 @@ namespace Engine {
 		// (绘制用相机矩阵经 push constant 传入, 不再单独占用 set/UBO)
 
 
-		// 4 个排序 compute shader (LoadCompute 加载) + 各自 set / pipeline layout / descriptor set
-		static std::shared_ptr<VulkanComputeShader> s_DistShader;
+		// 3 个排序 compute shader (LoadCompute 加载) + 各自 set / pipeline layout / descriptor set
 		static std::shared_ptr<VulkanComputeShader> s_UpsweepShader;
 		static std::shared_ptr<VulkanComputeShader> s_SpineShader;
 		static std::shared_ptr<VulkanComputeShader> s_DownsweepShader;
-		static VkDescriptorSetLayout s_DistSetLayout;
 		static VkDescriptorSetLayout s_UpsweepSetLayout;
 		static VkDescriptorSetLayout s_SpineSetLayout;
 		static VkDescriptorSetLayout s_DownsweepSetLayout;
-		static VkPipelineLayout s_DistPipelineLayout;
 		static VkPipelineLayout s_UpsweepPipelineLayout;
 		static VkPipelineLayout s_SpinePipelineLayout;
 		static VkPipelineLayout s_DownsweepPipelineLayout;
-		static VkDescriptorSet s_DistSet;
 		static VkDescriptorSet s_UpsweepSet[2];
 		static VkDescriptorSet s_SpineSet;
 		static VkDescriptorSet s_DownsweepSet[2];
+
+		// 视锥剔除前缀管线 (Cull/Scan/Compact 共用同一 set0 布局/DS) + 资源
+		static std::shared_ptr<VulkanComputeShader> s_PrefixCullShader;
+		static std::shared_ptr<VulkanComputeShader> s_PrefixScanShader;
+		static std::shared_ptr<VulkanComputeShader> s_PrefixCompactShader;
+		static VkDescriptorSetLayout s_PrefixDescriptorSetLayout; // b0..b8
+		static VkDescriptorSet       s_PrefixDescriptorSet;
+		static VkPipelineLayout      s_PrefixPipelineLayout;      // push const [0,128) compute
+		static VulkanBuffer s_ProjectedSplatsSSBO;  // b3: projected splats, 128 B/Gaussian
+		static VulkanBuffer s_PrefixScratchSSBO;    // b4: 8 B/高斯  (uvec2)
+		static VulkanBuffer s_PrefixGroupSSBO;      // b5: 4 B/group (ceil(N/512))
+		static VulkanBuffer s_WorkInfoSSBO;         // b6: 48 B, 含间接绘制/调度命令 (INDIRECT_BUFFER)
 
 			static VkDescriptorSetLayout s_GaussianDescriptorLayout;
 			static VkDescriptorSet       s_GaussianDescriptorSet;

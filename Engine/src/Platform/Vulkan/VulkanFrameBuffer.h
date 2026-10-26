@@ -26,6 +26,7 @@ namespace Engine {
         VkExtent2D     GetExtent()           const { return { m_Specification.Width, m_Specification.Height }; }
         bool           IsMSAA()              const { return m_Specification.Samples != 1; }
         VkImage        GetResolveImage()     const { return m_ColorResolveImage; }
+        VkFormat       GetColorFormat()      const { return m_ColorFormat; }
 
         // 1x framebuffer / 1x 深度 resolve — 供高斯 splat pass (始终 1x) 使用
         VkFramebuffer  GetGaussianVulkanFramebuffer() const { return m_GaussianFramebuffer; }

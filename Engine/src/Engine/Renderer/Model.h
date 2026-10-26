@@ -22,6 +22,7 @@ namespace Engine {
     private:
         void LoadModel(const std::string& path);
         void LoadGLTF(const std::string& path);
+        void LoadOBJ(const std::string& path);
         void LoadGLTFMaterials(const tinygltf::Model& model);
         std::shared_ptr<Texture2D> LoadGLTFTexture(const tinygltf::Model& model, int textureIndex, bool sRGB);
         void ProcessGLTFNode(int nodeIndex, const tinygltf::Model& model, const glm::mat4& parentTransform);

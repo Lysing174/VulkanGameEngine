@@ -11,29 +11,35 @@
 
 namespace Engine {
 
-    // CPU-side data (variable-length shRest)
+    // 球谐阶数 (degree). 3 = 三阶, 共 (3+1)^2 = 16 个基函数/通道, RGB 合计 48 个 float.
+    constexpr uint32_t SH_DEGREE = 3;
+    constexpr uint32_t SH_BASIS  = (SH_DEGREE + 1) * (SH_DEGREE + 1); // 16
+    constexpr uint32_t SH_TOTAL  = SH_BASIS * 3;                       // 48
+
+    // CPU-side data
     struct GaussianData
     {
         glm::vec3 position  = { 0.0f, 0.0f, 0.0f };
         glm::vec3 normal    = { 0.0f, 0.0f, 0.0f };
-        glm::vec3 shDC      = { 0.0f, 0.0f, 0.0f };     // f_dc_0, f_dc_1, f_dc_2
+        // 完整球谐系数: 按基函数索引 k (0..SH_BASIS-1), 每基函数 3 通道 (R,G,B) 连续存放.
+        // sh[3*k+0..2] = 基函数 k 的 RGB. k=0 对应 f_dc, k>=1 对应 f_rest.
+        // PLY channel-major coefficients are reordered on load; f_dc(3) + f_rest(45) = 48.
+        float     sh[SH_TOTAL] = {};
         float     opacity   = 0.0f;                      // raw opacity (needs sigmoid)
         glm::vec3 scale     = { 0.0f, 0.0f, 0.0f };      // scale_0, scale_1, scale_2 (needs exp)
         glm::vec4 rotation  = { 1.0f, 0.0f, 0.0f, 0.0f }; // rot_0=w, rot_1=x, rot_2=y, rot_3=z
-
-        // Higher-order SH coefficients (f_rest_0 ... f_rest_N)
-        std::vector<float> shRest;
     };
 
-    // GPU-side data for 3DGS splat rendering (fixed-size, std430 compatible)
-    // Precomputed: color (from SH DC + sigmoid opacity), 3D covariance (from scale + rotation)
+    // GPU-side data for 3DGS splat rendering (fixed-size, std430 compatible).
+    // 颜色不再在 CPU 烘焙: 完整球谐系数上传显存, 由 shader 用视线方向实时求值 (3DGS 原论文做法).
+    // 3D 协方差仍预计算 (from scale + rotation).
     struct GaussianDataGPU
     {
-        glm::vec4 posAndOpacity;   // xyz = position, w = sigmoid(opacity)
-        glm::vec4 color;           // rgb = SH DC color, w = unused
-        float cov3d[6];            // symmetric 3x3 upper triangle: M00,M01,M02,M11,M12,M22
-        uint32_t modelIndex;       // per-instance transform slot, filled at upload time (NOT asset state)
-        float _pad1;               // padding to 64 bytes
+        glm::vec4 posAndOpacity;        // 16 B  xyz = position, w = sigmoid(opacity)
+        float     sh[SH_TOTAL];         // 192 B 完整三阶球谐系数 (std430, 逐 float 紧密排列)
+        float     cov3d[6];             // 24 B  对称 3x3 上三角: M00,M01,M02,M11,M12,M22
+        uint32_t  modelIndex;           //  4 B  每实例变换槽位, 上传时填充 (非资产状态)
+        float     _pad1;                //  4 B  补齐到 240 B
     };
 
     // Gaussian asset: immutable CPU-side splat data loaded from disk (.ply/.splat).

@@ -1,0 +1,91 @@
+#version 460
+
+layout(local_size_x = 512) in;
+
+// Set 0 follows the descriptor contract in PrefixCull.comp.
+// Dispatch exactly (1, 1, 1), including N=0. Each tile scans 512 group counts;
+// there is no 512-group input limit. b5 is converted from counts to offsets.
+// Afterward insert compute write -> compute read/write before PrefixCompact.
+// Before indirect dispatch/draw, also synchronize compute shader writes with
+// DRAW_INDIRECT / INDIRECT_COMMAND_READ. b6 needs STORAGE_BUFFER | INDIRECT_BUFFER.
+
+layout(push_constant) uniform PrefixInfo
+{
+    uint elementCount; // N, identical to the Gaussian descriptor's entry count.
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+} prefixInfo;
+
+layout(std430, set = 0, binding = 5) buffer PrefixGroupBuffer
+{
+    uint groupData[];
+};
+
+// std430 size: 48 bytes. These records are fully overwritten on every dispatch.
+// counts:       offset 0:  visibleCount, sortPartitionCount, inputCount, inputGroups.
+// sortDispatch: offset 16: VkDispatchIndirectCommand (x,y,z), then padding.
+// draw:         offset 32: VkDrawIndirectCommand (6,visibleCount,0,0).
+// Sort shaders must read counts.xy instead of CPU-pushed N/partitionCount.
+layout(std430, set = 0, binding = 6) writeonly buffer GaussianWorkInfoBuffer
+{
+    uvec4 counts;
+    uvec4 sortDispatch;
+    uvec4 draw;
+} workInfo;
+
+shared uint groupPrefix[512];
+shared uint precedingCount;
+
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    uint groupCount = prefixInfo.elementCount / 512u;
+    if (prefixInfo.elementCount % 512u != 0u)
+        groupCount++;
+
+    if (lane == 0u)
+        precedingCount = 0u;
+    barrier();
+
+    for (uint base = 0u; base < groupCount; base += 512u)
+    {
+        uint group = base + lane;
+        uint count = 0u;
+        if (group < groupCount)
+            count = groupData[group];
+        groupPrefix[lane] = count;
+        barrier();
+
+        for (uint stride = 1u; stride < 512u; stride <<= 1u)
+        {
+            uint value = groupPrefix[lane];
+            if (lane >= stride)
+                value += groupPrefix[lane - stride];
+            barrier();
+            groupPrefix[lane] = value;
+            barrier();
+        }
+
+        uint tileBase = precedingCount;
+        if (group < groupCount)
+            groupData[group] = tileBase + groupPrefix[lane] - count;
+
+        // All lanes must finish reading the carry before lane 0 advances it.
+        barrier();
+        if (lane == 0u)
+            precedingCount = tileBase + groupPrefix[511];
+        barrier();
+    }
+
+    if (lane == 0u)
+    {
+        uint visibleCount = precedingCount;
+        uint partitions = visibleCount / 512u;
+        if (visibleCount % 512u != 0u)
+            partitions++;
+        workInfo.counts = uvec4(visibleCount, partitions, prefixInfo.elementCount, groupCount);
+        workInfo.sortDispatch = uvec4(partitions, 1u, 1u, 0u);
+        workInfo.draw = uvec4(6u, visibleCount, 0u, 0u);
+    }
+}

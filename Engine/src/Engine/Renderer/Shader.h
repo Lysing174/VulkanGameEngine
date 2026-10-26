@@ -125,6 +125,15 @@ namespace Engine {
 		return config;
 	}
 
+		static ShaderConfig Unlit()
+		{
+			// Keep the existing Material and mesh push-constant contracts, without lighting sets.
+			ShaderConfig config = DefaultPBR();
+			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
+			config.SetLayouts = { MATERIAL_SET };
+			return config;
+		}
+
 	// 简化 PBR: Albedo + MaterialUBO (无 NormalMap / ORM)
 	// 	static ShaderConfig SimplePBR()
 	// 	{

@@ -7,10 +7,14 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <filesystem>
 
 #define TINYGLTF_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #include <tiny_gltf.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
 
 namespace Engine {
 
@@ -59,19 +63,154 @@ namespace Engine {
 
 	void Model::LoadModel(const std::string& path)
 	{
-		// 仅加载 .gltf / .glb 文件
-		std::string pathLower = path;
-		std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
+		std::string extension = std::filesystem::path(path).extension().string();
+		std::transform(extension.begin(), extension.end(), extension.begin(),
+			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-		if (pathLower.find(".gltf") != std::string::npos ||
-			pathLower.find(".glb") != std::string::npos)
+		if (extension == ".gltf" || extension == ".glb")
 		{
 			LoadGLTF(path);
 		}
+		else if (extension == ".obj")
+		{
+			LoadOBJ(path);
+		}
 		else
 		{
-			EG_CORE_ERROR("Model::LoadModel: unsupported format, only .gltf/.glb is supported: {0}", path);
+			EG_CORE_ERROR("Model::LoadModel: unsupported format, supported formats are .gltf/.glb/.obj: {0}", path);
 		}
+	}
+
+	void Model::LoadOBJ(const std::string& path)
+	{
+		tinyobj::ObjReaderConfig config;
+		config.vertex_color = false;
+		tinyobj::ObjReader reader;
+		bool loaded = reader.ParseFromFile(path, config);
+		if (!reader.Warning().empty()) EG_CORE_WARN("OBJ warning: {0}", reader.Warning());
+		if (!loaded)
+		{
+			EG_CORE_ERROR("Failed to load OBJ file {0}: {1}", path, reader.Error());
+			return;
+		}
+
+		m_Directory = std::filesystem::path(path).parent_path().string();
+		for (const auto& objMaterial : reader.GetMaterials())
+		{
+			auto material = std::make_shared<Material>(m_BaseShader);
+			material->BeginBatchUpdate();
+			// SuGaR's textured OBJ path uses the baked RGB values without MTL tint.
+			material->SetAlbedoColor(glm::vec4(1.0f));
+			material->SetMetalness(objMaterial.metallic);
+			material->SetRoughness(objMaterial.roughness > 0.0f ? objMaterial.roughness
+				: std::sqrt(2.0f / (std::max)(objMaterial.shininess + 2.0f, 2.0f)));
+
+			auto loadTexture = [&](const std::string& name, const std::string& binding, bool sRGB,
+				TextureSampling sampling = TextureSampling::Default) {
+				if (name.empty()) return false;
+				auto texturePath = (std::filesystem::path(m_Directory) / name).string();
+				try
+				{
+					material->SetTexture(binding, Texture2D::Create(texturePath, sRGB, sampling));
+					return true;
+				}
+				catch (const std::exception& e)
+				{
+					EG_CORE_WARN("Failed to load texture {0}: {1}", texturePath, e.what());
+					return false;
+				}
+			};
+			material->SetHasAlbedoMap(loadTexture(objMaterial.diffuse_texname, "u_AlbedoMap", false,
+				TextureSampling::BilinearClamp));
+			material->SetUseNormalMap(loadTexture(objMaterial.normal_texname, "u_NormalMap", false));
+			material->SetHasEmissiveMap(loadTexture(objMaterial.emissive_texname, "u_EmissiveMap", true));
+			glm::vec3 emission(objMaterial.emission[0], objMaterial.emission[1], objMaterial.emission[2]);
+			if (glm::length(emission) > 0.0f)
+				material->SetEmissive(1.0f, emission);
+			material->EndBatchUpdate();
+			m_Materials.push_back(material);
+		}
+
+		const auto& attrib = reader.GetAttrib();
+		std::unordered_map<MeshVertex, uint32_t> uniqueVertices;
+		uint32_t defaultMaterial = static_cast<uint32_t>(m_Materials.size());
+		for (const auto& shape : reader.GetShapes())
+		{
+			bool firstFace = true;
+			for (size_t face = 0; face < shape.mesh.num_face_vertices.size(); ++face)
+			{
+				int materialID = shape.mesh.material_ids[face];
+				uint32_t materialIndex = materialID >= 0 ? static_cast<uint32_t>(materialID) : defaultMaterial;
+				if (materialIndex == m_Materials.size())
+				{
+					auto material = std::make_shared<Material>(m_BaseShader);
+					material->SetRoughness(1.0f);
+					m_Materials.push_back(material);
+				}
+				if (firstFace || m_GlobalSubmeshes.back().MaterialIndex != materialIndex)
+				{
+					Mesh::Submesh submesh{};
+					submesh.FirstIndex = static_cast<uint32_t>(m_GlobalIndices.size());
+					submesh.MaterialIndex = materialIndex;
+					submesh.Transform = glm::mat4(1.0f);
+					m_GlobalSubmeshes.push_back(submesh);
+					firstFace = false;
+				}
+
+				MeshVertex vertices[3]{};
+				for (size_t corner = 0; corner < 3; ++corner)
+				{
+					const auto& index = shape.mesh.indices[face * 3 + corner];
+					auto& vertex = vertices[corner];
+					vertex.pos = glm::vec3(attrib.vertices[index.vertex_index * 3],
+						attrib.vertices[index.vertex_index * 3 + 1], attrib.vertices[index.vertex_index * 3 + 2]);
+					if (index.normal_index >= 0)
+						vertex.normal = glm::vec3(attrib.normals[index.normal_index * 3],
+							attrib.normals[index.normal_index * 3 + 1], attrib.normals[index.normal_index * 3 + 2]);
+					if (index.texcoord_index >= 0)
+						vertex.texCoord = glm::vec2(attrib.texcoords[index.texcoord_index * 2],
+							1.0f - attrib.texcoords[index.texcoord_index * 2 + 1]);
+				}
+
+				glm::vec3 edge1 = vertices[1].pos - vertices[0].pos;
+				glm::vec3 edge2 = vertices[2].pos - vertices[0].pos;
+				glm::vec3 faceNormal = glm::cross(edge1, edge2);
+				faceNormal = glm::dot(faceNormal, faceNormal) > 0.0f
+					? glm::normalize(faceNormal) : glm::vec3(0.0f, 0.0f, 1.0f);
+				glm::vec2 uv1 = vertices[1].texCoord - vertices[0].texCoord;
+				glm::vec2 uv2 = vertices[2].texCoord - vertices[0].texCoord;
+				float determinant = uv1.x * uv2.y - uv1.y * uv2.x;
+				glm::vec3 tangent(0.0f);
+				if (std::abs(determinant) > 1e-8f)
+					tangent = (edge1 * uv2.y - edge2 * uv1.y) / determinant;
+				for (auto& vertex : vertices)
+				{
+					if (glm::dot(vertex.normal, vertex.normal) == 0.0f)
+						vertex.normal = faceNormal;
+					else
+						vertex.normal = glm::normalize(vertex.normal);
+					vertex.tangent = tangent - vertex.normal * glm::dot(vertex.normal, tangent);
+					if (glm::dot(vertex.tangent, vertex.tangent) < 1e-8f)
+					{
+						glm::vec3 axis = std::abs(vertex.normal.z) < 0.9f
+							? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+						vertex.tangent = glm::cross(axis, vertex.normal);
+					}
+					vertex.tangent = glm::normalize(vertex.tangent);
+					auto inserted = uniqueVertices.emplace(vertex, static_cast<uint32_t>(m_GlobalVertices.size()));
+					if (inserted.second) m_GlobalVertices.push_back(vertex);
+					m_GlobalIndices.push_back(inserted.first->second);
+				}
+				m_GlobalSubmeshes.back().IndexCount += 3;
+			}
+		}
+
+		if (m_GlobalIndices.empty())
+		{
+			EG_CORE_ERROR("OBJ file contains no mesh faces: {0}", path);
+			return;
+		}
+		m_Mesh = std::make_shared<Mesh>(m_GlobalVertices, m_GlobalIndices, m_GlobalSubmeshes);
 	}
 
 	// ------- 纹理加载 -------

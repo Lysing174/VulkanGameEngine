@@ -8,7 +8,7 @@
 namespace Engine {
 
     // 内部辅助：创建默认的 2D sampler
-    static VkSampler CreateDefaultSampler()
+    static VkSampler CreateDefaultSampler(TextureSampling sampling)
     {
         auto* ctx = VulkanContext::Get();
         auto device = ctx->GetDevice();
@@ -17,14 +17,17 @@ namespace Engine {
         vkGetPhysicalDeviceProperties(ctx->GetPhysicalDevice(), &properties);
 
         VkSamplerCreateInfo samplerInfo{};
+        const bool bilinearClamp = sampling == TextureSampling::BilinearClamp;
+        const VkSamplerAddressMode addressMode = bilinearClamp
+            ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
         samplerInfo.magFilter = VK_FILTER_LINEAR;
         samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        samplerInfo.anisotropyEnable = VK_TRUE;
-        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+        samplerInfo.addressModeU = addressMode;
+        samplerInfo.addressModeV = addressMode;
+        samplerInfo.addressModeW = addressMode;
+        samplerInfo.anisotropyEnable = bilinearClamp ? VK_FALSE : VK_TRUE;
+        samplerInfo.maxAnisotropy = bilinearClamp ? 1.0f : properties.limits.maxSamplerAnisotropy;
         samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
         samplerInfo.unnormalizedCoordinates = VK_FALSE;
         samplerInfo.compareEnable = VK_FALSE;
@@ -46,7 +49,7 @@ namespace Engine {
         std::unique_ptr<VulkanImage>& outImage,
         VkSampler& outSampler,
         VkDescriptorImageInfo& outDescInfo,
-        VkFormat format, stbi_uc* pixels)
+        VkFormat format, stbi_uc* pixels, TextureSampling sampling = TextureSampling::Default)
     {
         auto* ctx = VulkanContext::Get();
         VkDeviceSize imageSize = outWidth * outHeight * 4;
@@ -82,7 +85,7 @@ namespace Engine {
         // staging buffer 在作用域结束时自动销毁
 
         // 创建 Sampler
-        outSampler = CreateDefaultSampler();
+        outSampler = CreateDefaultSampler(sampling);
 
         // 填充 Descriptor Info
         outDescInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -90,7 +93,7 @@ namespace Engine {
         outDescInfo.sampler = outSampler;
     }
 
-    VulkanTexture2D::VulkanTexture2D(const std::string& path, VkFormat format)
+    VulkanTexture2D::VulkanTexture2D(const std::string& path, VkFormat format, TextureSampling sampling)
         : m_Path(path)
     {
         int width, height, channels;
@@ -106,7 +109,7 @@ namespace Engine {
         m_ImageFormat = format;
 
         CreateTextureFromPixels(m_Width, m_Height, m_Image,
-            m_Sampler, m_DescriptorImageInfo, m_ImageFormat, pixels);
+            m_Sampler, m_DescriptorImageInfo, m_ImageFormat, pixels, sampling);
 
         stbi_image_free(pixels);
     }

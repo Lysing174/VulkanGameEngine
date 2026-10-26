@@ -12,7 +12,7 @@ namespace Engine {
 		virtual ~VulkanRenderer() = default;
 
 		//static void BeginScene(const Camera& camera, const glm::mat4& transform);
-		static void BeginScene(const EditorCamera& camera);
+		static void BeginScene(const Camera& camera);
 		static void EndScene();
 		static void BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB);
 		static void BeginShadowRenderPass(VkFramebuffer shadowFB, VkExtent2D extent);

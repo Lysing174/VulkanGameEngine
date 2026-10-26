@@ -6,12 +6,16 @@
 
 namespace Engine {
 
-	// 从磁盘路径构造 Model：Model 需要 shader 创建 pipeline，使用默认 PBR shader
+	// OBJ uses baked textures; glTF keeps the default PBR shader.
 	template<>
 	std::shared_ptr<Model> AssetCreate<Model>(const std::string& fullPath)
 	{
-		auto shader = Renderer::GetShaderLibrary()->Get("Mesh.vert.spv");
-		EG_CORE_ASSERT(shader, "AssetCreate<Model>: default Mesh shader not found!");
+		std::string extension = std::filesystem::path(fullPath).extension().string();
+		std::transform(extension.begin(), extension.end(), extension.begin(),
+			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		const char* shaderName = extension == ".obj" ? "UnlitShader.vert.spv" : "MeshShader.vert.spv";
+		auto shader = Renderer::GetShaderLibrary()->Get(shaderName);
+		EG_CORE_ASSERT(shader, "AssetCreate<Model>: model shader not found!");
 
 		return std::make_shared<Model>(fullPath, shader);
 	}

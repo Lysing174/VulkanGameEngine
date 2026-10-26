@@ -91,7 +91,7 @@ namespace Engine {
 	//
 	// }
 
-	void Scene::OnUpdateSimulation(EditorCamera& camera)
+	void Scene::OnUpdateSimulation(const Camera& camera)
 	{
 		//Phisics****************************Need Add
 		
@@ -101,7 +101,7 @@ namespace Engine {
 		RenderEditorScene(camera);
 	}
 
-	void Scene::OnUpdateEditor(EditorCamera& camera)
+	void Scene::OnUpdateEditor(const Camera& camera)
 	{
 		// Render
 		RenderEditorScene(camera);
@@ -125,7 +125,7 @@ namespace Engine {
 		}
 	}
 
-	void Scene::RenderEditorScene(EditorCamera& camera)
+	void Scene::RenderEditorScene(const Camera& camera)
 	{
 		// 仅收集本帧需提交的数据 (光源 / Mesh)
 

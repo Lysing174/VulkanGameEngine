@@ -33,22 +33,28 @@ namespace Engine {
 	VulkanBuffer         Renderer::GaussianRenderer::s_GlobalHistogramSSBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_PartitionHistogramSSBO;
 
-	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_DistShader = nullptr;
 	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_UpsweepShader = nullptr;
 	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_SpineShader = nullptr;
 	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_DownsweepShader = nullptr;
-	VkDescriptorSetLayout Renderer::GaussianRenderer::s_DistSetLayout = VK_NULL_HANDLE;
+	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_PrefixCullShader = nullptr;
+	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_PrefixScanShader = nullptr;
+	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_PrefixCompactShader = nullptr;
 	VkDescriptorSetLayout Renderer::GaussianRenderer::s_UpsweepSetLayout = VK_NULL_HANDLE;
 	VkDescriptorSetLayout Renderer::GaussianRenderer::s_SpineSetLayout = VK_NULL_HANDLE;
 	VkDescriptorSetLayout Renderer::GaussianRenderer::s_DownsweepSetLayout = VK_NULL_HANDLE;
-	VkPipelineLayout      Renderer::GaussianRenderer::s_DistPipelineLayout = VK_NULL_HANDLE;
+	VkDescriptorSetLayout Renderer::GaussianRenderer::s_PrefixDescriptorSetLayout = VK_NULL_HANDLE;
 	VkPipelineLayout      Renderer::GaussianRenderer::s_UpsweepPipelineLayout = VK_NULL_HANDLE;
 	VkPipelineLayout      Renderer::GaussianRenderer::s_SpinePipelineLayout = VK_NULL_HANDLE;
 	VkPipelineLayout      Renderer::GaussianRenderer::s_DownsweepPipelineLayout = VK_NULL_HANDLE;
-	VkDescriptorSet       Renderer::GaussianRenderer::s_DistSet = VK_NULL_HANDLE;
+	VkPipelineLayout      Renderer::GaussianRenderer::s_PrefixPipelineLayout = VK_NULL_HANDLE;
 	VkDescriptorSet       Renderer::GaussianRenderer::s_UpsweepSet[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
 	VkDescriptorSet       Renderer::GaussianRenderer::s_SpineSet = VK_NULL_HANDLE;
 	VkDescriptorSet       Renderer::GaussianRenderer::s_DownsweepSet[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+	VkDescriptorSet       Renderer::GaussianRenderer::s_PrefixDescriptorSet = VK_NULL_HANDLE;
+	VulkanBuffer         Renderer::GaussianRenderer::s_ProjectedSplatsSSBO;
+	VulkanBuffer         Renderer::GaussianRenderer::s_PrefixScratchSSBO;
+	VulkanBuffer         Renderer::GaussianRenderer::s_PrefixGroupSSBO;
+	VulkanBuffer         Renderer::GaussianRenderer::s_WorkInfoSSBO;
 	uint32_t             Renderer::GaussianRenderer::s_TotalGaussianCount = 0;
 	bool                 Renderer::GaussianRenderer::s_GaussiansDirty = true;
 	bool                 Renderer::GaussianRenderer::s_GaussianResourcesCreated = false;
@@ -79,6 +85,8 @@ namespace Engine {
 	VkDescriptorSetLayout Renderer::EnvResource::s_EnvDescriptorLayout = VK_NULL_HANDLE;
 	VkDescriptorSet Renderer::EnvResource::s_EnvDescriptorSet = VK_NULL_HANDLE;
 	VkDescriptorImageInfo Renderer::EnvResource::s_EnvMapInfo = {};
+	std::unique_ptr<VulkanImage> Renderer::EnvResource::s_FallbackEnvMap;
+	VkSampler Renderer::EnvResource::s_FallbackEnvSampler = VK_NULL_HANDLE;
 	bool Renderer::EnvResource::s_EnvResourcesCreated = false;
 
     // Skybox (MeshRenderer)
@@ -103,16 +111,53 @@ namespace Engine {
         EnvResource::Init();
     	// 高斯渲染器: 仅创建 DS layout (SSBO/DS 按高斯资源变化按需重建)
     	GaussianRenderer::Init();
-        
+
+        // 用于 Mesh / Unlit / Shadow 顶点布局的标准立方体 (顶点属性布局与任意 mesh 一致)
+        auto cubeMesh = std::make_shared<Mesh>(Mesh::CreateCube());
+        auto vertexLayout = cubeMesh->GetVertexBuffer()->GetLayout();
+        const auto msaaSamples = VulkanContext::Get()->GetMSAASamples();
+
+        // ---- 所有图形 shader 的加载 / SetSamples / CreatePipeline 集中在此 (原 EditorLayer 初始化) ----
+
         // Mesh Shader: PBR
-        s_ShaderLibrary->Load("shaders/Mesh.vert.spv", "shaders/Mesh.frag.spv", ShaderConfig::DefaultPBR());
-        // Skybox Shader
-        s_ShaderLibrary->Load("shaders/Skybox.vert.spv", "shaders/Skybox.frag.spv", ShaderConfig::Skybox());
-        // Shadow Shader (方向光阴影贴图生成 pass)
-        s_ShaderLibrary->Load("shaders/Shadow.vert.spv", "shaders/Shadow.frag.spv", ShaderConfig::Shadow());
-    	
-    	s_ShaderLibrary->Load("shaders/GaussianSplat.vert.spv","shaders/GaussianSplat.frag.spv",ShaderConfig::GaussianSplat());
-    	
+        s_ShaderLibrary->Load("shaders/spv/MeshShader.vert.spv", "shaders/spv/MeshShader.frag.spv", ShaderConfig::DefaultPBR());
+        {
+            auto shader = s_ShaderLibrary->Get("MeshShader.vert.spv");
+            shader->SetSamples(msaaSamples);
+            shader->CreatePipeline(vertexLayout, "Mesh");
+        }
+
+        // Unlit Shader
+        s_ShaderLibrary->Load("shaders/spv/UnlitShader.vert.spv", "shaders/spv/UnlitShader.frag.spv", ShaderConfig::Unlit());
+        {
+            auto shader = s_ShaderLibrary->Get("UnlitShader.vert.spv");
+            shader->SetSamples(msaaSamples);
+            shader->CreatePipeline(vertexLayout, "Mesh");
+        }
+
+        // Skybox Shader (天空盒与 mesh 同 render pass, 使用自身立方体网格)
+        s_ShaderLibrary->Load("shaders/spv/Skybox.vert.spv", "shaders/spv/Skybox.frag.spv", ShaderConfig::Skybox());
+        {
+            auto skyboxShader = s_ShaderLibrary->Get("Skybox.vert.spv");
+            auto skyboxMesh   = std::make_shared<Mesh>(Mesh::CreateCube());
+            skyboxShader->SetSamples(msaaSamples);
+            skyboxShader->CreatePipeline(skyboxMesh->GetVertexBuffer()->GetLayout(), "Mesh");
+            SetSkyboxData(skyboxShader, skyboxMesh);
+        }
+
+        // Shadow Shader (方向光阴影贴图, 深度-only, 1x, 与 "Shadow" render pass 匹配)
+        s_ShaderLibrary->Load("shaders/spv/Shadow.vert.spv", "shaders/spv/Shadow.frag.spv", ShaderConfig::Shadow());
+        {
+            auto shadowShader = s_ShaderLibrary->Get("Shadow.vert.spv");
+            shadowShader->CreatePipeline(vertexLayout, "Shadow");
+        }
+
+        // 高斯 splat 合成 Shader (1x, 与 "Gaussian" render pass 匹配, 无顶点输入)
+        s_ShaderLibrary->Load("shaders/spv/GaussianSplat.vert.spv", "shaders/spv/GaussianSplat.frag.spv", ShaderConfig::GaussianSplat());
+        {
+            auto gaussianShader = s_ShaderLibrary->Get("GaussianSplat.vert.spv");
+            gaussianShader->CreatePipeline(nullptr, "Gaussian");
+        }
     }
 
     
@@ -153,17 +198,19 @@ namespace Engine {
 
 		s_FrameStatistics.SceneGaussianCount = GaussianRenderer::GetTotalGaussianCount();
 		s_FrameStatistics.GaussianDataBytes = s_FrameStatistics.SceneGaussianCount * sizeof(GaussianDataGPU);
-		// TODO(culling): 改为剔除后实际提交绘制的高斯和顶点数量，暂用全场景数量。
-		s_FrameStatistics.DrawnGaussianCount = s_FrameStatistics.SceneGaussianCount;
+		// TODO(culling): Use culled mesh vertex counts.
 		s_FrameStatistics.DrawnVertexCount = s_FrameStatistics.SceneVertexCount;
 	}
-	void Renderer::BeginScene(const EditorCamera& camera)
+	void Renderer::BeginScene(const Camera& camera)
 	{
         s_SceneData.CameraPosition = camera.GetPosition();
         s_SceneData.CameraForward  = camera.GetForwardDirection();
         s_SceneData.ViewMatrix     = camera.GetViewMatrix();
         s_SceneData.ProjectionMatrix = camera.GetProjection();
-        s_SceneData.ProjectionMatrix[1][1] *= -1; // Vulkan Y-flip
+        // Vulkan Y-flip: 翻转投影矩阵的第 1 列 (= y 行: m[0][1] / m[1][1] / m[2][1] / m[3][1])。
+        // 对中心主点的对称透视只有 m[1][1] 非 0 (与旧写法等价);
+        // 对带主点偏移的数据集相机 (DatasetCamera) 必须整行翻转, 否则 cy 偏移方向会反。
+        s_SceneData.ProjectionMatrix[1] *= -1.0f;
 
     	glm::mat4 projView = s_SceneData.ProjectionMatrix * s_SceneData.ViewMatrix;
     	VulkanContext::Get()->BeginFrame(projView);//此处从query pool读取上一帧gpu耗时
@@ -528,12 +575,18 @@ namespace Engine {
         EnvResource::SetEnvironmentMap(envMapInfo, shData);
     }
 
+    void Renderer::RemoveEnvironmentMap()
+    {
+        EnvResource::RemoveEnvironmentMap();
+    }
+
     // ============================================================
     // EnvRenderer (set3: SH 辐照度 + 预滤波环境 cubemap)
     // ============================================================
     void Renderer::EnvResource::Init()
     {
         CreateDescriptorSetLayout();
+        CreateFallbackEnvironmentMap();
         CreateDescriptorSet();
     }
 
@@ -546,6 +599,11 @@ namespace Engine {
         if (s_EnvDescriptorLayout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, s_EnvDescriptorLayout, nullptr);
         s_SHBuffer.Destroy();
+        s_FallbackEnvMap.reset();
+        if (s_FallbackEnvSampler != VK_NULL_HANDLE)
+            vkDestroySampler(device, s_FallbackEnvSampler, nullptr);
+        s_FallbackEnvSampler = VK_NULL_HANDLE;
+        s_EnvMapInfo = {};
         s_EnvDescriptorSet = VK_NULL_HANDLE;
         s_EnvDescriptorLayout = VK_NULL_HANDLE;
         s_EnvResourcesCreated = false;
@@ -558,15 +616,44 @@ namespace Engine {
 
     void Renderer::EnvResource::SetEnvironmentMap(const VkDescriptorImageInfo& envMapInfo, const std::vector<glm::vec4>& shData)
     {
+        if (envMapInfo.imageView == VK_NULL_HANDLE || envMapInfo.sampler == VK_NULL_HANDLE)
+        {
+            RemoveEnvironmentMap();
+            return;
+        }
+
+        // Shared descriptors and SH data must no longer be in use when replaced.
+        if (s_EnvDescriptorSet != VK_NULL_HANDLE)
+            vkDeviceWaitIdle(VulkanContext::Get()->GetDevice());
         s_EnvMapInfo = envMapInfo;
 
-        // 写入 SH 系数到 UBO (shared across frames)
-        if (s_SHBuffer.IsValid() && !shData.empty())
-            s_SHBuffer.SetData(shData.data(), shData.size() * sizeof(glm::vec4));
+        if (s_SHBuffer.IsValid())
+        {
+            std::array<glm::vec4, 9> coefficients{};
+            std::copy_n(shData.begin(), std::min(shData.size(), coefficients.size()), coefficients.begin());
+            s_SHBuffer.SetData(coefficients.data(), sizeof(coefficients));
+        }
+        UpdateEnvironmentDescriptor();
+    }
 
-        // 写入 cubemap 到 set3 b1 (descriptor set 或 cubemap 尚未就绪时跳过)
+    void Renderer::EnvResource::RemoveEnvironmentMap()
+    {
+        if (s_EnvDescriptorSet != VK_NULL_HANDLE)
+            vkDeviceWaitIdle(VulkanContext::Get()->GetDevice());
+        s_EnvMapInfo = {};
+        UpdateEnvironmentDescriptor();
+    }
+
+    void Renderer::EnvResource::UpdateEnvironmentDescriptor()
+    {
         if (s_EnvDescriptorSet == VK_NULL_HANDLE) return;
-        if (s_EnvMapInfo.imageView == VK_NULL_HANDLE) return;
+        VkDescriptorImageInfo imageInfo = s_EnvMapInfo;
+        if (!HasEnvironmentMap())
+        {
+            imageInfo.sampler = s_FallbackEnvSampler;
+            imageInfo.imageView = s_FallbackEnvMap->GetImageView();
+            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
         auto* context = VulkanContext::Get();
         VkDevice device = context->GetDevice();
         VkWriteDescriptorSet write = {};
@@ -576,8 +663,40 @@ namespace Engine {
         write.dstArrayElement = 0;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.descriptorCount = 1;
-        write.pImageInfo = &s_EnvMapInfo;
+        write.pImageInfo = &imageInfo;
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+
+    void Renderer::EnvResource::CreateFallbackEnvironmentMap()
+    {
+        // A valid cube descriptor is required even when the shader skips IBL.
+        VulkanImageSpec spec;
+        spec.ArrayLayers = 6;
+        spec.CreateFlags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+        spec.ViewType = VK_IMAGE_VIEW_TYPE_CUBE;
+        spec.Usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        s_FallbackEnvMap = std::make_unique<VulkanImage>(spec);
+        s_FallbackEnvMap->TransitionLayout(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        auto* context = VulkanContext::Get();
+        VkCommandBuffer cmd = context->BeginSingleTimeCommands();
+        VkClearColorValue black{};
+        VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 };
+        vkCmdClearColorImage(cmd, s_FallbackEnvMap->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            &black, 1, &range);
+        context->EndSingleTimeCommands(cmd);
+        s_FallbackEnvMap->TransitionLayout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        if (vkCreateSampler(context->GetDevice(), &samplerInfo, nullptr, &s_FallbackEnvSampler) != VK_SUCCESS)
+            throw std::runtime_error("failed to create fallback environment sampler!");
     }
 
     void Renderer::EnvResource::CreateDescriptorSetLayout()
@@ -628,7 +747,10 @@ namespace Engine {
 
         s_EnvResourcesCreated = true;
 
-        // b0: SH 辐照度 UBO (b1 cubemap 在 SetEnvironmentMap 中于贴图加载后写入)
+        std::array<glm::vec4, 9> coefficients{};
+        s_SHBuffer.SetData(coefficients.data(), sizeof(coefficients));
+
+        // b0: SH irradiance; b1 always has a valid environment or fallback cube.
         VkDescriptorBufferInfo shInfo = {};
         shInfo.buffer = s_SHBuffer.GetBuffer();
         shInfo.offset = 0;
@@ -642,6 +764,7 @@ namespace Engine {
         write.descriptorCount = 1;
         write.pBufferInfo = &shInfo;
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        UpdateEnvironmentDescriptor();
     }
 
     void Renderer::ShadowRenderer::Init()
@@ -927,7 +1050,12 @@ namespace Engine {
                 if (lightLocal >= 0 && lightSet != VK_NULL_HANDLE)
                     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, (uint32_t)lightLocal, 1, &lightSet, 0, nullptr);
                 if (envLocal >= 0 && envSet != VK_NULL_HANDLE)
+                {
                     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, (uint32_t)envLocal, 1, &envSet, 0, nullptr);
+                    uint32_t hasEnvironmentMap = EnvResource::HasEnvironmentMap() ? 1u : 0u;
+                    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                        100, sizeof(hasEnvironmentMap), &hasEnvironmentMap);
+                }
 
                 // 相机 push constant: projView (offset 112) + cameraPosition (offset 176).
                 {
@@ -1026,24 +1154,28 @@ namespace Engine {
 		}
 
 		// 释放 compute / 绘制 资源 (compute shader 句柄由 shared_ptr 析构时自行销毁 pipeline)
-		std::array<VkPipelineLayout, 4> pls = { s_DistPipelineLayout, s_UpsweepPipelineLayout,
-			s_SpinePipelineLayout, s_DownsweepPipelineLayout };
+		std::array<VkPipelineLayout, 4> pls = { s_UpsweepPipelineLayout,
+			s_SpinePipelineLayout, s_DownsweepPipelineLayout, s_PrefixPipelineLayout };
 		for (auto pl : pls) if (pl != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, pl, nullptr);
-		s_DistPipelineLayout = s_UpsweepPipelineLayout = s_SpinePipelineLayout =
-			s_DownsweepPipelineLayout = VK_NULL_HANDLE;
+		s_UpsweepPipelineLayout = s_SpinePipelineLayout =
+			s_DownsweepPipelineLayout = s_PrefixPipelineLayout = VK_NULL_HANDLE;
 
-		std::array<VkDescriptorSetLayout, 4> sls = { s_DistSetLayout, s_UpsweepSetLayout,
-			s_SpineSetLayout, s_DownsweepSetLayout };
+		std::array<VkDescriptorSetLayout, 4> sls = { s_UpsweepSetLayout,
+			s_SpineSetLayout, s_DownsweepSetLayout, s_PrefixDescriptorSetLayout };
 		for (auto l : sls) if (l != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, l, nullptr);
-		s_DistSetLayout = s_UpsweepSetLayout = s_SpineSetLayout =
-			s_DownsweepSetLayout = VK_NULL_HANDLE;
+		s_UpsweepSetLayout = s_SpineSetLayout =
+			s_DownsweepSetLayout = s_PrefixDescriptorSetLayout = VK_NULL_HANDLE;
 
-		
+
 
 		s_GlobalHistogramSSBO.Destroy();
 		s_PartitionHistogramSSBO.Destroy();
 		s_KeysBuffers[0].Destroy(); s_KeysBuffers[1].Destroy();
 		s_ValuesBuffers[0].Destroy(); s_ValuesBuffers[1].Destroy();
+		s_ProjectedSplatsSSBO.Destroy();
+		s_PrefixScratchSSBO.Destroy();
+		s_PrefixGroupSSBO.Destroy();
+		s_WorkInfoSSBO.Destroy();
 
 		s_GaussianResourcesCreated = false;
 		s_GaussiansDirty = true;
@@ -1098,8 +1230,9 @@ namespace Engine {
 
 	void Renderer::GaussianRenderer::CreateDescriptorSetLayout()
 	{
-		// set0: b0 FrameInfo UBO, b1 Gaussian SSBO, b2 SortedIndex SSBO, b3 u_DepthMap, b4 ModelTransform SSBO
-		std::array<VkDescriptorSetLayoutBinding, 5> bindings = {};
+		// set0: b0 FrameInfo UBO, b1 Gaussian SSBO, b2 SortedIndex SSBO, b3 u_DepthMap,
+		//       b4 ModelTransform SSBO, b5 ProjectedSplat SSBO (顶点着色器读取 PrefixCull 结果)
+		std::array<VkDescriptorSetLayoutBinding, 6> bindings = {};
 
 		bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		bindings[0].descriptorCount = 1;
@@ -1121,6 +1254,10 @@ namespace Engine {
 		bindings[4].binding = 4; bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		bindings[4].descriptorCount = 1; bindings[4].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 		bindings[4].pImmutableSamplers = nullptr;
+
+		bindings[5].binding = 5; bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		bindings[5].descriptorCount = 1; bindings[5].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		bindings[5].pImmutableSamplers = nullptr;
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo = {};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1158,6 +1295,10 @@ namespace Engine {
 		s_ValuesBuffers[0].Destroy(); s_ValuesBuffers[1].Destroy();
 		s_GlobalHistogramSSBO.Destroy();
 		s_PartitionHistogramSSBO.Destroy();
+		s_ProjectedSplatsSSBO.Destroy();
+		s_PrefixScratchSSBO.Destroy();
+		s_PrefixGroupSSBO.Destroy();
+		s_WorkInfoSSBO.Destroy();
 		if (!s_FrameInfoUBO.IsValid())
 			s_FrameInfoUBO = VulkanBuffer(64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1190,6 +1331,20 @@ namespace Engine {
 		s_PartitionHistogramSSBO = VulkanBuffer(numPartitions * 256 * sizeof(uint32_t), storageUsage,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
+		// Projected splats: 128B (including conic and tile bounds); scratch/group/workInfo unchanged.
+		s_ProjectedSplatsSSBO = VulkanBuffer(s_TotalGaussianCount * 128, storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		s_PrefixScratchSSBO   = VulkanBuffer(s_TotalGaussianCount * 8, storageUsage,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		uint32_t numGroups = (s_TotalGaussianCount + 511) / 512;
+		s_PrefixGroupSSBO     = VulkanBuffer(numGroups * sizeof(uint32_t), storageUsage,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		s_WorkInfoSSBO        = VulkanBuffer(48,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		uint32_t visibleCount = 0;
+		s_WorkInfoSSBO.SetData(&visibleCount, sizeof(visibleCount));
+
 		// 分配 DS (set0)
 		VkDescriptorSetAllocateInfo allocInfo = {};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1200,8 +1355,8 @@ namespace Engine {
 		if (vkAllocateDescriptorSets(device, &allocInfo, &s_GaussianDescriptorSet) != VK_SUCCESS)
 			throw std::runtime_error("failed to allocate gaussian descriptor set!");
 
-		// 写 b0(FrameInfo UBO) / b1(Gaussian) / b2(SortedIndex) / b4(ModelTransform)
-		std::array<VkWriteDescriptorSet, 4> writes = {};
+		// 写 b0(FrameInfo UBO) / b1(Gaussian) / b2(SortedIndex) / b4(ModelTransform) / b5(ProjectedSplats)
+		std::array<VkWriteDescriptorSet, 5> writes = {};
 
 		VkDescriptorBufferInfo uboInfo{};
 		uboInfo.buffer = s_FrameInfoUBO.GetBuffer(); uboInfo.offset = 0; uboInfo.range = s_FrameInfoUBO.GetSize();
@@ -1231,6 +1386,13 @@ namespace Engine {
 		writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[3].descriptorCount = 1;
 		writes[3].pBufferInfo = &modelInfo;
 
+		VkDescriptorBufferInfo projInfo{};
+		projInfo.buffer = s_ProjectedSplatsSSBO.GetBuffer(); projInfo.offset = 0; projInfo.range = s_ProjectedSplatsSSBO.GetSize();
+		writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[4].dstSet = s_GaussianDescriptorSet;
+		writes[4].dstBinding = 5; writes[4].dstArrayElement = 0;
+		writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[4].descriptorCount = 1;
+		writes[4].pBufferInfo = &projInfo;
+
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
 		// ---- 写 compute 排序 descriptor sets (缓冲句柄已重建, 需重新绑定) ----
@@ -1245,33 +1407,57 @@ namespace Engine {
 			w.descriptorCount = 1; w.pBufferInfo = &info;
 			vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
 		};
-		// Dist: b0 GaussianData, b1 keys[0], b2 values[0], b3 ModelTransform
-		writeStorage(s_DistSet, 0, s_GaussianSSBO);
-		writeStorage(s_DistSet, 1, s_KeysBuffers[0]);
-		writeStorage(s_DistSet, 2, s_ValuesBuffers[0]);
-		writeStorage(s_DistSet, 3, s_ModelTransformSSBO);
-		// Upsweep[src=0/1]: b0 keys[src], b1 GlobalHist, b2 PartitionHist
+		// ---- 排序 compute sets (缓冲句柄已重建, 需重新绑定) ----
+		// Upsweep[src=0/1]: b0 keys[src], b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
 		writeStorage(s_UpsweepSet[0], 0, s_KeysBuffers[0]);
 		writeStorage(s_UpsweepSet[1], 0, s_KeysBuffers[1]);
 		writeStorage(s_UpsweepSet[0], 1, s_GlobalHistogramSSBO);
 		writeStorage(s_UpsweepSet[1], 1, s_GlobalHistogramSSBO);
 		writeStorage(s_UpsweepSet[0], 2, s_PartitionHistogramSSBO);
 		writeStorage(s_UpsweepSet[1], 2, s_PartitionHistogramSSBO);
-		// Spine: b1 GlobalHist, b2 PartitionHist
+		writeStorage(s_UpsweepSet[0], 3, s_WorkInfoSSBO);
+		writeStorage(s_UpsweepSet[1], 3, s_WorkInfoSSBO);
+		// Spine: b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
 		writeStorage(s_SpineSet, 1, s_GlobalHistogramSSBO);
 		writeStorage(s_SpineSet, 2, s_PartitionHistogramSSBO);
-		// Downsweep[src=0]: b0 keys[0], b1 values[0], b2 PartitionHist, b3 keys[1], b4 values[1]
+		writeStorage(s_SpineSet, 3, s_WorkInfoSSBO);
+		// Downsweep[src=0]: b0 keys[0], b1 values[0], b2 PartitionHist, b3 keys[1], b4 values[1], b5 WorkInfo
 		writeStorage(s_DownsweepSet[0], 0, s_KeysBuffers[0]);
 		writeStorage(s_DownsweepSet[0], 1, s_ValuesBuffers[0]);
 		writeStorage(s_DownsweepSet[0], 2, s_PartitionHistogramSSBO);
 		writeStorage(s_DownsweepSet[0], 3, s_KeysBuffers[1]);
 		writeStorage(s_DownsweepSet[0], 4, s_ValuesBuffers[1]);
-		// Downsweep[src=1]: b0 keys[1], b1 values[1], b2 PartitionHist, b3 keys[0], b4 values[0]
+		writeStorage(s_DownsweepSet[0], 5, s_WorkInfoSSBO);
+		// Downsweep[src=1]: b0 keys[1], b1 values[1], b2 PartitionHist, b3 keys[0], b4 values[0], b5 WorkInfo
 		writeStorage(s_DownsweepSet[1], 0, s_KeysBuffers[1]);
 		writeStorage(s_DownsweepSet[1], 1, s_ValuesBuffers[1]);
 		writeStorage(s_DownsweepSet[1], 2, s_PartitionHistogramSSBO);
 		writeStorage(s_DownsweepSet[1], 3, s_KeysBuffers[0]);
 		writeStorage(s_DownsweepSet[1], 4, s_ValuesBuffers[0]);
+		writeStorage(s_DownsweepSet[1], 5, s_WorkInfoSSBO);
+
+		// ---- 前缀剔除集 (set0, b0..b8): Cull/Scan/Compact 共用 ----
+		if (s_PrefixDescriptorSet != VK_NULL_HANDLE)
+		{
+			// b0 FrameInfo UBO (uniform)
+			VkDescriptorBufferInfo prefixUbo{};
+			prefixUbo.buffer = s_FrameInfoUBO.GetBuffer(); prefixUbo.offset = 0; prefixUbo.range = s_FrameInfoUBO.GetSize();
+			VkWriteDescriptorSet uboWrite{};
+			uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			uboWrite.dstSet = s_PrefixDescriptorSet; uboWrite.dstBinding = 0;
+			uboWrite.dstArrayElement = 0; uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			uboWrite.descriptorCount = 1; uboWrite.pBufferInfo = &prefixUbo;
+			vkUpdateDescriptorSets(device, 1, &uboWrite, 0, nullptr);
+			// b1..b8 storage
+			writeStorage(s_PrefixDescriptorSet, 1, s_GaussianSSBO);
+			writeStorage(s_PrefixDescriptorSet, 2, s_ModelTransformSSBO);
+			writeStorage(s_PrefixDescriptorSet, 3, s_ProjectedSplatsSSBO);
+			writeStorage(s_PrefixDescriptorSet, 4, s_PrefixScratchSSBO);
+			writeStorage(s_PrefixDescriptorSet, 5, s_PrefixGroupSSBO);
+			writeStorage(s_PrefixDescriptorSet, 6, s_WorkInfoSSBO);
+			writeStorage(s_PrefixDescriptorSet, 7, s_KeysBuffers[0]);
+			writeStorage(s_PrefixDescriptorSet, 8, s_ValuesBuffers[0]);
+		}
 
 		// ===== 上传高斯数据 + 初始化排序索引 (合并自原 UploadGaussianData: 重建必伴随上传) =====
 		// 拼接所有高斯资产 GPU 数据 (modelIndex = 该 submission 在列表中的下标)
@@ -1334,7 +1520,8 @@ namespace Engine {
 		data.focal = glm::vec4(s_SceneData.ProjectionMatrix[0][0] * 0.5f * width,
 			s_SceneData.ProjectionMatrix[1][1] * 0.5f * height, 0.0f, 0.0f);
 		data.viewportInfo = glm::vec4(width, height, 1.0f / width, 1.0f / height);
-		data.extraInfo    = glm::vec4(0.001f, 0.0f, 0.0f, 0.0f); // x = alphaCullThreshold
+		// data.extraInfo = glm::vec4(0.001f, 0.0f, 0.0f, 0.0f);
+		data.extraInfo = glm::vec4(1.0f / 255.0f, 0.0f, 0.0f, 0.0f); // LMG alpha threshold
 
 		s_FrameInfoUBO.SetData(&data, sizeof(FrameInfoData));
 	}
@@ -1344,11 +1531,14 @@ namespace Engine {
 		auto* context = VulkanContext::Get();
 		VkDevice device = context->GetDevice();
 
-		// ---- 加载 4 个排序 compute shader (区别于 VS/FS, 走 ShaderLibrary::LoadCompute) ----
-		s_DistShader      = GetShaderLibrary()->LoadCompute("shaders/GaussianDist.comp.spv", ShaderConfig{});
-		s_UpsweepShader   = GetShaderLibrary()->LoadCompute("shaders/GaussianSortUpsweep.comp.spv", ShaderConfig{});
-		s_SpineShader     = GetShaderLibrary()->LoadCompute("shaders/GaussianSortSpine.comp.spv", ShaderConfig{});
-		s_DownsweepShader = GetShaderLibrary()->LoadCompute("shaders/GaussianSortDownsweep.comp.spv", ShaderConfig{});
+		// ---- 加载 compute shader (区别于 VS/FS, 走 ShaderLibrary::LoadCompute) ----
+		s_UpsweepShader   = GetShaderLibrary()->LoadCompute("shaders/spv/GaussianSortUpsweep.comp.spv", ShaderConfig{});
+		s_SpineShader     = GetShaderLibrary()->LoadCompute("shaders/spv/GaussianSortSpine.comp.spv", ShaderConfig{});
+		s_DownsweepShader = GetShaderLibrary()->LoadCompute("shaders/spv/GaussianSortDownsweep.comp.spv", ShaderConfig{});
+		// 视锥剔除前缀管线 (Cull/Scan/Compact 共用同一组 set0 b0..b8 + 同一 pipeline layout)
+		s_PrefixCullShader    = GetShaderLibrary()->LoadCompute("shaders/spv/PrefixCull.comp.spv", ShaderConfig{});
+		s_PrefixScanShader    = GetShaderLibrary()->LoadCompute("shaders/spv/PrefixScan.comp.spv", ShaderConfig{});
+		s_PrefixCompactShader = GetShaderLibrary()->LoadCompute("shaders/spv/PrefixCompact.comp.spv", ShaderConfig{});
 
 		// ---- compute set0 descriptor set layouts (全部为 storage buffer, COMPUTE stage) ----
 		auto makeStorageLayout = [&](const std::vector<uint32_t>& bindings) {
@@ -1371,10 +1561,35 @@ namespace Engine {
 				throw std::runtime_error("failed to create gaussian compute descriptor set layout!");
 			return layout;
 		};
-		s_DistSetLayout      = makeStorageLayout({ 0, 1, 2, 3 });
-		s_UpsweepSetLayout   = makeStorageLayout({ 0, 1, 2 });
-		s_SpineSetLayout     = makeStorageLayout({ 1, 2 });
-		s_DownsweepSetLayout = makeStorageLayout({ 0, 1, 2, 3, 4 });
+		// 排序 set0: Upsweep {0,1,2,3}, Spine {1,2,3}, Downsweep {0,1,2,3,4,5}
+		// (b3/b5 = WorkInfo, 由 PrefixScan 写入; 排序 shaders 改读 counts, 不再吃 push const 的 elementCount)
+		s_UpsweepSetLayout   = makeStorageLayout({ 0, 1, 2, 3 });
+		s_SpineSetLayout     = makeStorageLayout({ 1, 2, 3 });
+		s_DownsweepSetLayout = makeStorageLayout({ 0, 1, 2, 3, 4, 5 });
+
+		// 前缀剔除共享 set0: b0 = FrameInfo UBO, b1..b8 = storage buffer
+		{
+			std::vector<VkDescriptorSetLayoutBinding> plbs(9);
+			plbs[0].binding = 0;
+			plbs[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			plbs[0].descriptorCount = 1;
+			plbs[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+			plbs[0].pImmutableSamplers = nullptr;
+			for (uint32_t b = 1; b <= 8; ++b)
+			{
+				plbs[b].binding = b;
+				plbs[b].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+				plbs[b].descriptorCount = 1;
+				plbs[b].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+				plbs[b].pImmutableSamplers = nullptr;
+			}
+			VkDescriptorSetLayoutCreateInfo pinfo{};
+			pinfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+			pinfo.bindingCount = static_cast<uint32_t>(plbs.size());
+			pinfo.pBindings = plbs.data();
+			if (vkCreateDescriptorSetLayout(device, &pinfo, nullptr, &s_PrefixDescriptorSetLayout) != VK_SUCCESS)
+				throw std::runtime_error("failed to create prefix descriptor set layout!");
+		}
 
 		// ---- pipeline layouts (各 shader 独立 push constant 范围) ----
 		auto makePipelineLayout = [&](VkDescriptorSetLayout setLayout, uint32_t pcSize) {
@@ -1393,17 +1608,19 @@ namespace Engine {
 				throw std::runtime_error("failed to create gaussian compute pipeline layout!");
 			return layout;
 		};
-		// Dist: view+projection (2 mat4 = 128B); 其余: 4 uint (16B)
-		s_DistPipelineLayout      = makePipelineLayout(s_DistSetLayout, 128);
+		// 排序: 4 uint (16B); 前缀: Cull 用 2 mat4 = 128B, Scan/Compact 用 16B → 统一给 128B push const
 		s_UpsweepPipelineLayout   = makePipelineLayout(s_UpsweepSetLayout, 16);
 		s_SpinePipelineLayout     = makePipelineLayout(s_SpineSetLayout, 16);
 		s_DownsweepPipelineLayout = makePipelineLayout(s_DownsweepSetLayout, 16);
+		s_PrefixPipelineLayout    = makePipelineLayout(s_PrefixDescriptorSetLayout, 128);
 
 		// ---- compute pipelines ----
-		s_DistShader->CreatePipeline(s_DistPipelineLayout);
 		s_UpsweepShader->CreatePipeline(s_UpsweepPipelineLayout);
 		s_SpineShader->CreatePipeline(s_SpinePipelineLayout);
 		s_DownsweepShader->CreatePipeline(s_DownsweepPipelineLayout);
+		s_PrefixCullShader->CreatePipeline(s_PrefixPipelineLayout);
+		s_PrefixScanShader->CreatePipeline(s_PrefixPipelineLayout);
+		s_PrefixCompactShader->CreatePipeline(s_PrefixPipelineLayout);
 
 		// ---- 分配 descriptor sets (缓冲区句柄在 RecreateGaussianResources 中按帧集合填充) ----
 		auto allocSet = [&](VkDescriptorSetLayout layout) {
@@ -1417,12 +1634,12 @@ namespace Engine {
 				throw std::runtime_error("failed to allocate gaussian compute descriptor set!");
 			return set;
 		};
-		s_DistSet = allocSet(s_DistSetLayout);
 		s_UpsweepSet[0] = allocSet(s_UpsweepSetLayout);
 		s_UpsweepSet[1] = allocSet(s_UpsweepSetLayout);
 		s_SpineSet = allocSet(s_SpineSetLayout);
 		s_DownsweepSet[0] = allocSet(s_DownsweepSetLayout);
 		s_DownsweepSet[1] = allocSet(s_DownsweepSetLayout);
+		s_PrefixDescriptorSet = allocSet(s_PrefixDescriptorSetLayout);
 	}
 
 
@@ -1440,63 +1657,91 @@ namespace Engine {
 	void Renderer::GaussianRenderer::ComputeSort(VkCommandBuffer cmd)
 	{
 		if (s_TotalGaussianCount == 0) return;
+		const uint32_t numGroups = (s_TotalGaussianCount + 511) / 512;
+
+		// 保证先前的高斯上传 (TRANSFER) / 上一帧 compute 已就绪
 		InsertBarrier(cmd,
 			VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
 			VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-			VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 
+		// ============ 前缀视锥剔除: Cull → Scan → Compact ============
+		// Cull: 投影 + 视锥剔除, 写 projectedSplats / prefixScratch / groupData
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixCullShader->GetPipeline());
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &s_PrefixDescriptorSet, 0, nullptr);
+		struct PrefixCamPC { glm::mat4 view; glm::mat4 proj; } camPC{ s_SceneData.ViewMatrix, s_SceneData.ProjectionMatrix };
+		vkCmdPushConstants(cmd, s_PrefixPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(camPC), &camPC);
+		vkCmdDispatch(cmd, numGroups, 1, 1);
+		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+
+		// Scan: groupData 前缀和 → offsets + 写出 workInfo (间接调度/绘制命令)
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixScanShader->GetPipeline());
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &s_PrefixDescriptorSet, 0, nullptr);
+		uint32_t scanPC[4] = { s_TotalGaussianCount, 0, 0, 0 };
+		vkCmdPushConstants(cmd, s_PrefixPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(scanPC), scanPC);
+		vkCmdDispatch(cmd, 1, 1, 1);
+		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+
+		// Compact: 散射可见高斯 → keys[0]/values[0] (按原始 ID 索引)
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixCompactShader->GetPipeline());
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &s_PrefixDescriptorSet, 0, nullptr);
+		uint32_t compactPC[4] = { s_TotalGaussianCount, 0, 0, 0 };
+		vkCmdPushConstants(cmd, s_PrefixPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(compactPC), compactPC);
+		vkCmdDispatch(cmd, numGroups, 1, 1);
+		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
+
+		// ============ 4 轮基数排序 (读 workInfo.counts.x = 可见数, 间接调度) ============
 		// 每帧清零全局直方图 (4 个 pass 各写其独立 256 区间, 互不重叠)
 		vkCmdFillBuffer(cmd, s_GlobalHistogramSSBO.GetBuffer(), 0, s_GlobalHistogramSSBO.GetSize(), 0);
 		InsertBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 
-		// ---- Dist: 由高斯数据 + model transform 计算深度键 + 初始(恒等)索引 ----
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_DistShader->GetPipeline());
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_DistPipelineLayout, 0, 1, &s_DistSet, 0, nullptr);
-		struct DistPC { glm::mat4 view; glm::mat4 proj; } distPC{ s_SceneData.ViewMatrix, s_SceneData.ProjectionMatrix };
-		vkCmdPushConstants(cmd, s_DistPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(DistPC), &distPC);
-		vkCmdDispatch(cmd, (s_TotalGaussianCount + 255) / 256, 1, 1);
-		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-
-		uint32_t numPartitions = (s_TotalGaussianCount + 511) / 512;
 		uint32_t src = 0;
 		for (uint32_t pass = 0; pass < 4; ++pass)
 		{
-			// Upsweep: 统计各 partition 各 digit 计数 + 累加全局直方图
+			// Upsweep: 统计各 partition 各 digit 计数 + 累加全局直方图 (间接调度 = partitions)
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_UpsweepShader->GetPipeline());
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_UpsweepPipelineLayout, 0, 1, &s_UpsweepSet[src], 0, nullptr);
-			uint32_t upPC[4] = { pass, s_TotalGaussianCount, 0, 0 };
-			vkCmdPushConstants(cmd, s_UpsweepPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(upPC), upPC);
-			vkCmdDispatch(cmd, numPartitions, 1, 1);
+			vkCmdPushConstants(cmd, s_UpsweepPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pass), &pass);
+			s_UpsweepShader->DispatchIndirect(cmd, s_UpsweepPipelineLayout, s_UpsweepSet[src], s_WorkInfoSSBO.GetBuffer(), 16);
 			InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+							  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 
-			// Spine: 全局直方图 exclusive prefix sum + 各 partition 偏移
+			// Spine: 全局直方图 exclusive prefix sum + 各 partition 偏移 (1 workgroup)
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_SpineShader->GetPipeline());
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_SpinePipelineLayout, 0, 1, &s_SpineSet, 0, nullptr);
-			uint32_t spinePC[4] = { pass, s_TotalGaussianCount, numPartitions, 0 };
+			uint32_t spinePC[4] = { pass, 0, 0, 0 };
 			vkCmdPushConstants(cmd, s_SpinePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spinePC), spinePC);
 			vkCmdDispatch(cmd, 1, 1, 1);
 			InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+							  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 
-			// Downsweep: 确定性 scatter (稳定排序, 避免闪烁)
+			// Downsweep: 确定性 scatter (稳定排序, 避免闪烁) (间接调度 = partitions)
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_DownsweepShader->GetPipeline());
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_DownsweepPipelineLayout, 0, 1, &s_DownsweepSet[src], 0, nullptr);
-			uint32_t downPC[4] = { pass, s_TotalGaussianCount, numPartitions, 0 };
-			vkCmdPushConstants(cmd, s_DownsweepPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(downPC), downPC);
-			vkCmdDispatch(cmd, numPartitions, 1, 1);
+			vkCmdPushConstants(cmd, s_DownsweepPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pass), &pass);
+			s_DownsweepShader->DispatchIndirect(cmd, s_DownsweepPipelineLayout, s_DownsweepSet[src], s_WorkInfoSSBO.GetBuffer(), 16);
 			InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+							  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+							  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 
 			src = 1 - src;
 		}
 
-		// 经 4 次交换, src 回到 0: vertex shader 直接读取 values[0]
+		// 经 4 次交换, src 回到 0: vertex shader 直接读取 values[0];
+		// 同步排序结果 + workInfo.draw 给顶点着色器 / 间接绘制读取
 		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-						  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+						  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT);
 	}
 
 	void Renderer::GaussianRenderer::Run()
@@ -1507,6 +1752,13 @@ namespace Engine {
 		auto* context = VulkanContext::Get();
 		VkDevice device = context->GetDevice();
 		VkCommandBuffer cmd = context->GetCurrentCommandBuffer();
+
+		// BeginFrame has waited for the previous frame; read its visible count.
+		void* mapped;
+		if (vkMapMemory(device, s_WorkInfoSSBO.GetMemory(), 0, sizeof(uint32_t), 0, &mapped) != VK_SUCCESS)
+			throw std::runtime_error("failed to map gaussian visible count!");
+		s_FrameStatistics.DrawnGaussianCount = *static_cast<const uint32_t*>(mapped);
+		vkUnmapMemory(device, s_WorkInfoSSBO.GetMemory());
 
 		// 每帧刷新 splat 参数 UBO (不含相机矩阵; 相机矩阵经 push constant 传入)
 		UpdateFrameInfoUBO();
@@ -1565,8 +1817,9 @@ namespace Engine {
 
 
 
-		// 6 顶点 (一个 quad) / 实例 = 总高斯数; 实例顺序由排序后的 s_ValuesBuffers[0] 决定
-		vkCmdDraw(cmd, 6, s_TotalGaussianCount, 0, 0);
+		// 6 顶点 (一个 quad) / 实例 = 可见高斯数; 实例顺序由排序后的 s_ValuesBuffers[0] 决定.
+		// 实例数取自 workInfo.draw (offset 32, 由 PrefixScan 写入), 间接绘制避免 CPU 回读可见数.
+		vkCmdDrawIndirect(cmd, s_WorkInfoSSBO.GetBuffer(), 32, 1, 0);
 
 		VulkanRenderer::EndRenderPass();
 		context->EndGpuTiming(RenderStage::Gaussian);
@@ -1580,13 +1833,13 @@ void Renderer::MeshRenderer::SetSkyboxData(const std::shared_ptr<Shader>& shader
 
 	void Renderer::MeshRenderer::DrawSkybox()
 	{
-		if (!s_SkyboxShader || !s_SkyboxMesh)
+		if (!EnvResource::HasEnvironmentMap() || !s_SkyboxShader || !s_SkyboxMesh)
 			return;
 
 		auto* ctx = VulkanContext::Get();
 		VkCommandBuffer cmd = ctx->GetCurrentCommandBuffer();
 
-		// env(set3) 在 cubemap 加载完成前为空; 此时跳过天空盒避免绑定空 set 触发校验错误
+		// The descriptor also exists without an environment; HasEnvironmentMap above controls drawing.
 		VkDescriptorSet envSet = EnvResource::GetDescriptorSet();
 		if (envSet == VK_NULL_HANDLE)
 			return;

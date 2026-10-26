@@ -188,7 +188,11 @@ namespace Engine {
         // 2. Resolve Color image (attachment 1 in MSAA, or 0 in non-MSAA)
         //    Will be displayed by ImGui in SHADER_READ_ONLY_OPTIMAL
         // ---------------------------------------------------------------
-        CreateImage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        // Readback: CPU 需要 vkCmdCopyImageToBuffer 回读该图 (离线测试/PSNR 用)
+        VkImageUsageFlags resolveUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (m_Specification.Readback) resolveUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+        CreateImage(resolveUsage,
                     VK_SAMPLE_COUNT_1_BIT, m_ColorFormat,
                     m_ColorResolveImage, m_ColorResolveMemory);
         m_ColorResolveView = CreateView(m_ColorResolveImage, m_ColorFormat, VK_IMAGE_ASPECT_COLOR_BIT);

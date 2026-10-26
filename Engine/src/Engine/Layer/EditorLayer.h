@@ -48,7 +48,6 @@ namespace Engine {
         EditorCamera m_EditorCamera;
 
         Entity m_CubeEntity; 
-        std::shared_ptr<Mesh> m_CubeMesh;
         std::shared_ptr<Material> m_RedMaterial;
 
         glm::vec2 m_ViewportSize = { 1280.0f, 720.0f };

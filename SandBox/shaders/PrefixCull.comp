@@ -1,0 +1,335 @@
+#version 460
+
+layout(local_size_x = 512) in;
+
+// Prefix pipeline descriptor contract (set 0, shared pipeline layout):
+// b0 FrameInfo UBO, b1 Gaussian SSBO, b2 model transforms,
+// b3 projected splats (128 bytes/input), b4 scratch (8 bytes/input),
+// b5 group counts/offsets (4 bytes/group), b6 work info (48 bytes),
+// b7 output keys[0], b8 output values[0]. All except b0 are storage buffers.
+// Bind b1 to exactly N GaussianDataGPU entries. Allocate b3/b4/b7/b8 for N
+// entries and b5 for ceil(N/512). Dispatch ceil(N/512), then a compute
+// write -> compute read/write barrier before PrefixScan (one workgroup).
+// PrefixScan and PrefixCompact take N in their 16-byte push constants.
+// No buffers need clearing. N=0 skips Cull/Compact but must still run Scan.
+
+layout(push_constant) uniform CameraData
+{
+    mat4 viewMatrix;
+    mat4 projectionMatrix;
+} camera;
+
+layout(std140, set = 0, binding = 0) uniform FrameInfo
+{
+    vec4 cameraPosAndScale;
+    vec4 focal;
+    vec4 viewportInfo;
+    vec4 extraInfo;
+} frameInfo;
+
+struct GaussianDataGPU
+{
+    vec4 posAndOpacity;
+    float sh[48];      // 完整三阶球谐系数 (16 基函数 × 3 通道), 由 shader 实时求值
+    float cov3d[6];
+    uint modelIndex;
+    float _pad1;
+};
+
+struct ProjectedSplatGPU
+{
+    vec4 ndcCenter;   // xyz = center/depth; w = 1, matching the existing VS.
+    vec4 ndcBasis;    // xy = first basis; zw = second basis, in NDC units.
+    vec4 color;       // rgb + base opacity.
+    vec4 viewCenter;  // xyz = view-space center; w = unused.
+    vec4 invSigma0;   // M00, M01, M02, M11.
+    vec4 invSigma1;   // M12, M22, dot(E, M*E) - 9, unused.
+    vec4 conic;       // inverse screen covariance: (xx, xy, yy, unused).
+    vec4 ndcBounds;   // tile-aligned rectangle: (minX, minY, maxX, maxY).
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer GaussianDataBuffer
+{
+    GaussianDataGPU gaussians[];
+};
+
+layout(std430, set = 0, binding = 2) readonly buffer ModelTransformBuffer
+{
+    mat4 modelTransforms[];
+};
+
+layout(std430, set = 0, binding = 3) writeonly buffer ProjectedSplatBuffer
+{
+    ProjectedSplatGPU projectedSplats[];
+};
+
+layout(std430, set = 0, binding = 4) writeonly buffer PrefixScratchBuffer
+{
+    uvec2 prefixScratch[]; // x = encoded view z; y = local rank or UINT_MAX.
+};
+
+layout(std430, set = 0, binding = 5) writeonly buffer PrefixGroupBuffer
+{
+    uint groupData[];
+};
+
+const float SQRT8 = 2.8284271247461903;
+const uint INVALID_RANK = 0xFFFFFFFFu;
+shared uint visiblePrefix[512];
+
+bool isFinite(vec4 value)
+{
+    return !any(isnan(value)) && !any(isinf(value));
+}
+
+uint encodeDepth(float viewZ)
+{
+    uint bits = floatBitsToUint(viewZ);
+    // Ascending unsigned keys preserve ascending view z (far-to-near).
+    return bits ^ ((bits & 0x80000000u) != 0u ? 0xFFFFFFFFu : 0x80000000u);
+}
+
+// Degree 3 SH in asset-local coordinates; coefficients are basis-major RGB.
+// dir is the normalized camera-to-splat direction transformed into asset space.
+vec3 evalSH3(vec3 dir, float sh[48])
+{
+    float x = dir.x, y = dir.y, z = dir.z;
+    float xx = x*x, yy = y*y, zz = z*z;
+    float xy = x*y, yz = y*z, xz = x*z;
+    #define SH(k) vec3(sh[3*(k)+0], sh[3*(k)+1], sh[3*(k)+2])
+
+    float SH_C0 = 0.28209479177387814;
+    vec3 result = SH_C0 * SH(0);
+
+    float SH_C1 = 0.4886025119029199;
+    result += SH_C1 * (-y * SH(1) + z * SH(2) - x * SH(3));
+
+    float C2_0 = 1.0925484305920792;
+    float C2_1 = -1.0925484305920792;
+    float C2_2 = 0.31539156525252005;
+    float C2_3 = -1.0925484305920792;
+    float C2_4 = 0.5462742152960396;
+    float tmp0 = 3.0*zz - 1.0;
+    result += C2_0 * (xy * SH(4)) + C2_1 * (yz * SH(5)) + C2_2 * (tmp0 * SH(6))
+            + C2_3 * (xz * SH(7)) + C2_4 * ((xx - yy) * SH(8));
+
+    float C3_0 = -0.5900435899266435;
+    float C3_1 = 2.890611442640554;
+    float C3_2 = -0.4570457994644658;
+    float C3_3 = 0.3731763325901154;
+    float C3_4 = -0.4570457994644658;
+    float C3_5 = 1.445305721320277;
+    float C3_6 = -0.5900435899266435;
+    float tmp1 = 4.0*zz - xx - yy;
+    float tmp2 = xx - yy;
+    result += C3_0 * (y*(3.0*xx - yy) * SH(9))  + C3_1 * (xy*z * SH(10))
+            + C3_2 * (y*tmp1 * SH(11))          + C3_3 * (z*(2.0*zz - 3.0*xx - 3.0*yy) * SH(12))
+            + C3_4 * (x*tmp1 * SH(13))          + C3_5 * (z*tmp2 * SH(14))
+            + C3_6 * (x*(xx - 3.0*yy) * SH(15));
+    #undef SH
+    return result + 0.5; // 3DGS 约定: 最终颜色 = 0.5 + SH_eval
+}
+
+bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
+{
+    key = 0u;
+    GaussianDataGPU g = gaussians[id];
+    if (!isFinite(g.posAndOpacity) ||
+        g.posAndOpacity.w < frameInfo.extraInfo.x ||
+        g.modelIndex >= uint(modelTransforms.length()))
+        return false;
+
+    mat4 model = modelTransforms[g.modelIndex];
+    // Preserve the existing VS's separate model and view transformations.
+    vec3 worldCenter = (model * vec4(g.posAndOpacity.xyz, 1.0)).xyz;
+    vec4 viewCenter = camera.viewMatrix * vec4(worldCenter, 1.0);
+    // LMG rejects centers at positive camera depth <= 0.2.
+    if (!isFinite(viewCenter) || viewCenter.z >= -0.2)
+        return false;
+
+    vec4 clipCenter = camera.projectionMatrix * viewCenter;
+    if (!isFinite(clipCenter) || clipCenter.w <= 0.0)
+        return false;
+
+    vec3 ndcCenter = clipCenter.xyz / clipCenter.w;
+    /* Original center-depth clipping, retained for the old quad path.
+    if (!isFinite(vec4(ndcCenter, 1.0)) ||
+        ndcCenter.z < 0.0 || ndcCenter.z > 1.0)
+        return false;
+    */
+    if (!isFinite(vec4(ndcCenter, 1.0)))
+        return false;
+
+    mat3 covariance = mat3(
+        g.cov3d[0], g.cov3d[1], g.cov3d[2],
+        g.cov3d[1], g.cov3d[3], g.cov3d[4],
+        g.cov3d[2], g.cov3d[4], g.cov3d[5]
+    );
+
+    float fx = frameInfo.focal.x;
+    float fy = frameInfo.focal.y;
+    vec2 tanHalfFoV = frameInfo.viewportInfo.xy / (2.0 * abs(vec2(fx, fy)));
+    vec2 limitedXY = clamp(viewCenter.xy / viewCenter.z, -1.3 * tanHalfFoV, 1.3 * tanHalfFoV)
+        * viewCenter.z;
+    float inverseZSquared = 1.0 / (viewCenter.z * viewCenter.z);
+    /* Original unclamped projection Jacobian.
+    mat3 jacobian = mat3(
+        fx / viewCenter.z, 0.0, -(fx * viewCenter.x) * inverseZSquared,
+        0.0, fy / viewCenter.z, -(fy * viewCenter.y) * inverseZSquared,
+        0.0, 0.0, 0.0
+    );
+    */
+    mat3 jacobian = mat3(
+        fx / viewCenter.z, 0.0, -(fx * limitedXY.x) * inverseZSquared,
+        0.0, fy / viewCenter.z, -(fy * limitedXY.y) * inverseZSquared,
+        0.0, 0.0, 0.0
+    );
+    mat3 transform = transpose(mat3(camera.viewMatrix)) * jacobian;
+    transform = transpose(mat3(model)) * transform;
+    mat3 cov2D = transpose(transform) * covariance * transform;
+    float splatScale = frameInfo.cameraPosAndScale.w;
+    cov2D *= splatScale * splatScale;
+    cov2D[0][0] += 0.3;
+    cov2D[1][1] += 0.3;
+
+    float a = cov2D[0][0];
+    float b = cov2D[0][1];
+    float d = cov2D[1][1];
+    if (!isFinite(vec4(a, b, d, 0.0)))
+        return false;
+
+    float halfTrace = (a + d) * 0.5;
+    float determinant = a * d - b * b;
+    if (!isFinite(vec4(determinant, 0.0, 0.0, 0.0)) || determinant <= 0.0)
+        return false;
+
+    // Original rotated sqrt(8) quad and fixed radius cap, retained for comparison.
+    /*
+    float term = sqrt(max(0.0, halfTrace * halfTrace - determinant));
+    float lambda1 = halfTrace + term;
+    float lambda2 = halfTrace - term;
+    if (!isFinite(vec4(lambda1, lambda2, 0.0, 0.0)) || lambda2 <= 0.0)
+        return false;
+
+    vec2 eigenvector1;
+    if (abs(b) > 0.001)
+        eigenvector1 = normalize(vec2(lambda1 - d, b));
+    else
+        eigenvector1 = a >= d ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec2 eigenvector2 = vec2(-eigenvector1.y, eigenvector1.x);
+
+    // Keep the low-pass filter, radius cap and splatScale order identical to VS.
+    float splatScale = frameInfo.cameraPosAndScale.w;
+    vec2 basis1 = eigenvector1 * splatScale * min(SQRT8 * sqrt(lambda1), 2048.0);
+    vec2 basis2 = eigenvector2 * splatScale * min(SQRT8 * sqrt(lambda2), 2048.0);
+    basis1 = basis1 * frameInfo.viewportInfo.zw * 2.0;
+    basis2 = basis2 * frameInfo.viewportInfo.zw * 2.0;
+    if (!isFinite(vec4(basis1, basis2)))
+        return false;
+
+    // Conservative AABB of the actual generated quad, not a center-only test.
+    vec2 extent = abs(basis1) + abs(basis2);
+    if (any(lessThan(ndcCenter.xy + extent, vec2(-1.0))) ||
+        any(greaterThan(ndcCenter.xy - extent, vec2(1.0))))
+        return false;
+    */
+
+    // Match CUDA getRect: ceil(3 sigma) radius, expanded to exclusive 16x16 tile bounds.
+    float term = sqrt(max(0.1, halfTrace * halfTrace - determinant));
+    float radius = ceil(3.0 * sqrt(halfTrace + term));
+    vec2 viewport = frameInfo.viewportInfo.xy;
+    vec2 pixelCenter = ((ndcCenter.xy + 1.0) * viewport - 1.0) * 0.5;
+    if (!isFinite(vec4(pixelCenter, radius, 0.0)))
+        return false;
+    ivec2 tileGrid = (ivec2(viewport) + ivec2(15)) / 16;
+    ivec2 tileMin = ivec2(clamp((pixelCenter - radius) / 16.0, vec2(0.0), vec2(tileGrid)));
+    ivec2 tileMax = ivec2(clamp((pixelCenter + radius + 15.0) / 16.0, vec2(0.0), vec2(tileGrid)));
+    if (any(lessThanEqual(tileMax, tileMin)))
+        return false;
+    vec2 ndcMin = vec2(tileMin * 16) / viewport * 2.0 - 1.0;
+    vec2 ndcMax = vec2(tileMax * 16) / viewport * 2.0 - 1.0;
+
+    // Only surviving splats need the fragment shader's ellipsoid parameters.
+    // Original preparation retained; the current LMG rule only needs the center depth.
+    /*
+    mat3 viewModel = mat3(camera.viewMatrix) * mat3(model);
+    mat3 sigma = viewModel * covariance * transpose(viewModel);
+    float s00 = sigma[0][0], s01 = sigma[0][1], s02 = sigma[0][2];
+    float s11 = sigma[1][1], s12 = sigma[1][2], s22 = sigma[2][2];
+    float c00 = s11 * s22 - s12 * s12;
+    float c01 = -(s01 * s22 - s12 * s02);
+    float c02 = s01 * s12 - s11 * s02;
+    float c11 = s00 * s22 - s02 * s02;
+    float c12 = -(s00 * s12 - s01 * s02);
+    float c22 = s00 * s11 - s01 * s01;
+    float detSigma = s00 * c00 + s01 * c01 + s02 * c02;
+    float inverseDet = 1.0 / max(abs(detSigma), 1e-12);
+    if (detSigma < 0.0)
+        inverseDet = -inverseDet;
+
+    vec4 inverse0 = vec4(c00, c01, c02, c11) * inverseDet;
+    vec2 inverse1 = vec2(c12, c22) * inverseDet;
+    vec3 E = viewCenter.xyz;
+    vec3 ME = vec3(
+        inverse0.x * E.x + inverse0.y * E.y + inverse0.z * E.z,
+        inverse0.y * E.x + inverse0.w * E.y + inverse1.x * E.z,
+        inverse0.z * E.x + inverse1.x * E.y + inverse1.y * E.z
+    );
+    vec4 inverseTail = vec4(inverse1, dot(E, ME) - 9.0, 0.0);
+    if (!isFinite(inverse0) || !isFinite(inverseTail))
+        return false;
+    */
+
+    result.ndcCenter = vec4(ndcCenter, 1.0);
+    // result.ndcBasis = vec4(basis1, basis2);
+    result.ndcBasis = vec4(0.0);
+    // SH coefficients stay in asset space when the instance is transformed.
+    vec3 camPos = frameInfo.cameraPosAndScale.xyz;
+    vec3 viewDir = normalize(inverse(mat3(model)) * (worldCenter - camPos));
+    vec3 shColor = evalSH3(viewDir, g.sh);
+    result.color = vec4(max(shColor, vec3(0.0)), g.posAndOpacity.w);
+    // result.viewCenter = vec4(E, 0.0);
+    // result.invSigma0 = inverse0;
+    // result.invSigma1 = inverseTail;
+    result.viewCenter = vec4(viewCenter.xyz, 0.0);
+    result.invSigma0 = vec4(0.0);
+    result.invSigma1 = vec4(0.0);
+    result.conic = vec4(d, -b, a, 0.0) / determinant;
+    result.ndcBounds = vec4(ndcMin, ndcMax);
+    key = encodeDepth(viewCenter.z);
+    return true;
+}
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+    uint lane = gl_LocalInvocationID.x;
+    bool inRange = id < uint(gaussians.length());
+    bool visible = false;
+    uint key = 0u;
+    ProjectedSplatGPU projected;
+    if (inRange)
+    {
+        visible = projectAndCull(id, projected, key);
+        if (visible)
+            projectedSplats[id] = projected;
+    }
+
+    // Padded lanes still participate in every barrier of the inclusive scan.
+    visiblePrefix[lane] = visible ? 1u : 0u;
+    barrier();
+    for (uint stride = 1u; stride < 512u; stride <<= 1u)
+    {
+        uint value = visiblePrefix[lane];
+        if (lane >= stride)
+            value += visiblePrefix[lane - stride];
+        barrier();
+        visiblePrefix[lane] = value;
+        barrier();
+    }
+
+    if (inRange)
+        prefixScratch[id] = uvec2(key, visible ? visiblePrefix[lane] - 1u : INVALID_RANK);
+    if (lane == 511u)
+        groupData[gl_WorkGroupID.x] = visiblePrefix[lane];
+}

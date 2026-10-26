@@ -58,13 +58,29 @@ namespace Engine {
         createLogicalDevice();
         createTimestampQueries();
         createSwapChain();
-        offscreenColorFormat = swapChainImageFormat;
+        // offscreenColorFormat = swapChainImageFormat;
+        offscreenColorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+        VkFormatProperties colorProperties{};
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, offscreenColorFormat, &colorProperties);
+        const VkFormatFeatureFlags requiredColorFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT
+            | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
+            | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+        if ((colorProperties.optimalTilingFeatures & requiredColorFeatures) != requiredColorFeatures)
+            throw std::runtime_error("RGBA32F offscreen rendering requires color blending, linear sampling and readback support");
         depthImageFormat = findDepthFormat();
         createImageViews();
 
         // Clamp MSAA to device maximum
+        if (!Renderer::EnableMSAA)
+            m_MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         VkSampleCountFlagBits maxSamples = GetMaxUsableSampleCount();
         if (m_MSAASamples > maxSamples) m_MSAASamples = maxSamples;
+        VkImageFormatProperties colorImageProperties{};
+        if (vkGetPhysicalDeviceImageFormatProperties(physicalDevice, offscreenColorFormat, VK_IMAGE_TYPE_2D,
+            VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &colorImageProperties) != VK_SUCCESS)
+            throw std::runtime_error("RGBA32F offscreen color attachments are not supported");
+        while ((colorImageProperties.sampleCounts & m_MSAASamples) == 0 && m_MSAASamples != VK_SAMPLE_COUNT_1_BIT)
+            m_MSAASamples = static_cast<VkSampleCountFlagBits>(static_cast<uint32_t>(m_MSAASamples) >> 1);
 
         renderPassesMap["Shadow"] = std::make_shared<VulkanRenderPass>("Shadow", offscreenColorFormat, VK_FORMAT_D32_SFLOAT,std::make_shared<VkDevice>(device), VK_SAMPLE_COUNT_1_BIT);
         renderPassesMap["Mesh"]=std::make_shared<VulkanRenderPass>("Mesh",offscreenColorFormat,depthImageFormat,std::make_shared<VkDevice>(device), m_MSAASamples);
