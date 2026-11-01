@@ -245,6 +245,9 @@ namespace Engine
         Renderer::BeginScene(camera);
         Renderer::RunShadowPass();   // 无光源时内部直接返回 (不产生耗时)
         Renderer::RunMeshPass();     // Mesh pass + 高斯 splat pass
+        // EndFrame presents a COLOR_ATTACHMENT_OPTIMAL swapchain image even in offline mode.
+        VulkanContext::Get()->BeginUIRenderPass();
+        VulkanContext::Get()->EndRenderPass();
         Renderer::EndScene();
 
         // 等本帧 GPU 真正跑完: 计时才包含 GPU 时间, 且 GPU 时间戳可读

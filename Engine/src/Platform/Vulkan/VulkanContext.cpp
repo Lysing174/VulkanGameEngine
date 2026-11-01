@@ -284,7 +284,7 @@ namespace Engine {
             ? UINT64_MAX : (uint64_t{1} << m_TimestampValidBits) - 1;
         for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
         {
-            if (!m_TimedStages[stageIndex]) continue;
+            if (!m_SubmittedTimedStages[stageIndex]) continue;
             hasTimings = true;
             struct TimestampResult
             {
@@ -489,7 +489,7 @@ namespace Engine {
     }
     void VulkanContext::EndFrame()
     {
-        readGpuTimings();//读本帧各阶段耗时
+        readGpuTimings(); // Read the previously submitted frame, not the recording frame.
         
         VkImageMemoryBarrier presentBarrier = {};
         presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -545,6 +545,7 @@ namespace Engine {
         if (submitResult != VK_SUCCESS) {
             throw std::runtime_error("failed to submit draw command buffer!");
         }
+        m_SubmittedTimedStages = m_TimedStages;
 
         VkPresentInfoKHR presentInfo = {};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -1398,13 +1399,15 @@ namespace Engine {
     }
 
     void VulkanContext::createDescriptorPool() {
-        std::array<VkDescriptorPoolSize, 3> poolSizes = {};
+        std::array<VkDescriptorPoolSize, 4> poolSizes = {};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = 100;
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         poolSizes[1].descriptorCount = 100;
         poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         poolSizes[2].descriptorCount = 100;
+        poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        poolSizes[3].descriptorCount = 100;
 
         VkDescriptorPoolCreateInfo poolInfo = {};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

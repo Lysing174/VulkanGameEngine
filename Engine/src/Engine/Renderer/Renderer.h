@@ -28,6 +28,7 @@ namespace Engine {
 		Renderer()=delete;
 		// Startup option: changing MSAA requires recreating render passes and framebuffers.
 		static constexpr bool EnableMSAA = false;
+		inline static bool EnableHiZ = true;
 		static void Init();
 		static void Shutdown();
 		static void BeginRenderQueueSubmit();
@@ -271,6 +272,9 @@ namespace Engine {
 			static void UpdateModelTransforms();      // 每帧刷新 model transform SSBO (gizmo 移动等)
 			static void UpdateFrameInfoUBO();         // 每帧刷新 FrameInfo UBO (splat 参数, 不含相机矩阵)
 			static void CreateComputeResources();
+			static void CreateHiZResources(uint32_t width, uint32_t height);
+			static void DestroyHiZResources();
+			static bool BuildHiZ(VkCommandBuffer cmd);
 			static void InsertBarrier(VkCommandBuffer cmd, VkPipelineStageFlags srcStage, VkAccessFlags srcAccess,
 												  VkPipelineStageFlags dstStage, VkAccessFlags dstAccess);
 			static void ComputeSort(VkCommandBuffer cmd);
@@ -306,13 +310,21 @@ namespace Engine {
 		static std::shared_ptr<VulkanComputeShader> s_PrefixCullShader;
 		static std::shared_ptr<VulkanComputeShader> s_PrefixScanShader;
 		static std::shared_ptr<VulkanComputeShader> s_PrefixCompactShader;
-		static VkDescriptorSetLayout s_PrefixDescriptorSetLayout; // b0..b8
+		static VkDescriptorSetLayout s_PrefixDescriptorSetLayout; // b0..b9
 		static VkDescriptorSet       s_PrefixDescriptorSet;
 		static VkPipelineLayout      s_PrefixPipelineLayout;      // push const [0,128) compute
 		static VulkanBuffer s_ProjectedSplatsSSBO;  // b3: projected splats, 128 B/Gaussian
 		static VulkanBuffer s_PrefixScratchSSBO;    // b4: 8 B/高斯  (uvec2)
-		static VulkanBuffer s_PrefixGroupSSBO;      // b5: 4 B/group (ceil(N/512))
-		static VulkanBuffer s_WorkInfoSSBO;         // b6: 48 B, 含间接绘制/调度命令 (INDIRECT_BUFFER)
+		static VulkanBuffer s_PrefixGroupSSBO;      // b5: 8 B/group (post/pre Hi-Z counts)
+		static VulkanBuffer s_WorkInfoSSBO;         // b6: 64 B; indirect commands + culling statistics
+
+		static std::shared_ptr<VulkanComputeShader> s_HiZBuildShader;
+		static VkDescriptorSetLayout s_HiZSetLayout;
+		static VkPipelineLayout s_HiZPipelineLayout;
+		static std::unique_ptr<VulkanImage> s_HiZImage;
+		static std::vector<VkImageView> s_HiZMipViews;
+		static std::vector<VkDescriptorSet> s_HiZBuildSets;
+		static bool s_HiZActive;
 
 			static VkDescriptorSetLayout s_GaussianDescriptorLayout;
 			static VkDescriptorSet       s_GaussianDescriptorSet;

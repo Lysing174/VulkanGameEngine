@@ -55,6 +55,13 @@ namespace Engine {
 	VulkanBuffer         Renderer::GaussianRenderer::s_PrefixScratchSSBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_PrefixGroupSSBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_WorkInfoSSBO;
+	std::shared_ptr<VulkanComputeShader> Renderer::GaussianRenderer::s_HiZBuildShader;
+	VkDescriptorSetLayout Renderer::GaussianRenderer::s_HiZSetLayout = VK_NULL_HANDLE;
+	VkPipelineLayout Renderer::GaussianRenderer::s_HiZPipelineLayout = VK_NULL_HANDLE;
+	std::unique_ptr<VulkanImage> Renderer::GaussianRenderer::s_HiZImage;
+	std::vector<VkImageView> Renderer::GaussianRenderer::s_HiZMipViews;
+	std::vector<VkDescriptorSet> Renderer::GaussianRenderer::s_HiZBuildSets;
+	bool Renderer::GaussianRenderer::s_HiZActive = false;
 	uint32_t             Renderer::GaussianRenderer::s_TotalGaussianCount = 0;
 	bool                 Renderer::GaussianRenderer::s_GaussiansDirty = true;
 	bool                 Renderer::GaussianRenderer::s_GaussianResourcesCreated = false;
@@ -1118,7 +1125,7 @@ namespace Engine {
 		samplerInfo.unnormalizedCoordinates = VK_FALSE;
 		samplerInfo.mipmapMode              = VK_SAMPLER_MIPMAP_MODE_NEAREST;
 		samplerInfo.minLod                  = 0.0f;
-		samplerInfo.maxLod                  = 1.0f;
+		samplerInfo.maxLod                  = VK_LOD_CLAMP_NONE;
 		if (vkCreateSampler(VulkanContext::Get()->GetDevice(), &samplerInfo, nullptr, &s_DepthSampler) != VK_SUCCESS)
 			throw std::runtime_error("failed to create gaussian depth sampler!");
 
@@ -1130,6 +1137,13 @@ namespace Engine {
 	{
 		auto* context = VulkanContext::Get();
 		VkDevice device = context->GetDevice();
+		DestroyHiZResources();
+		if (s_HiZPipelineLayout != VK_NULL_HANDLE)
+			vkDestroyPipelineLayout(device, s_HiZPipelineLayout, nullptr);
+		if (s_HiZSetLayout != VK_NULL_HANDLE)
+			vkDestroyDescriptorSetLayout(device, s_HiZSetLayout, nullptr);
+		s_HiZPipelineLayout = VK_NULL_HANDLE;
+		s_HiZSetLayout = VK_NULL_HANDLE;
 
 		if (s_GaussianDescriptorSet != VK_NULL_HANDLE)
 			vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &s_GaussianDescriptorSet);
@@ -1331,19 +1345,19 @@ namespace Engine {
 		s_PartitionHistogramSSBO = VulkanBuffer(numPartitions * 256 * sizeof(uint32_t), storageUsage,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-		// Projected splats: 128B (including conic and tile bounds); scratch/group/workInfo unchanged.
+		// Projected splats: 128B; group counts now track pre/post Hi-Z visibility.
 		s_ProjectedSplatsSSBO = VulkanBuffer(s_TotalGaussianCount * 128, storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		s_PrefixScratchSSBO   = VulkanBuffer(s_TotalGaussianCount * 8, storageUsage,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		uint32_t numGroups = (s_TotalGaussianCount + 511) / 512;
-		s_PrefixGroupSSBO     = VulkanBuffer(numGroups * sizeof(uint32_t), storageUsage,
+		s_PrefixGroupSSBO     = VulkanBuffer(numGroups * 2 * sizeof(uint32_t), storageUsage,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		s_WorkInfoSSBO        = VulkanBuffer(48,
+		s_WorkInfoSSBO        = VulkanBuffer(64,
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		uint32_t visibleCount = 0;
-		s_WorkInfoSSBO.SetData(&visibleCount, sizeof(visibleCount));
+		std::array<uint32_t, 16> workInfo{};
+		s_WorkInfoSSBO.SetData(workInfo.data(), sizeof(workInfo));
 
 		// 分配 DS (set0)
 		VkDescriptorSetAllocateInfo allocInfo = {};
@@ -1521,9 +1535,172 @@ namespace Engine {
 			s_SceneData.ProjectionMatrix[1][1] * 0.5f * height, 0.0f, 0.0f);
 		data.viewportInfo = glm::vec4(width, height, 1.0f / width, 1.0f / height);
 		// data.extraInfo = glm::vec4(0.001f, 0.0f, 0.0f, 0.0f);
-		data.extraInfo = glm::vec4(1.0f / 255.0f, 0.0f, 0.0f, 0.0f); // LMG alpha threshold
+		data.extraInfo = glm::vec4(1.0f / 255.0f, s_HiZActive ? 1.0f : 0.0f, 0.0f, 0.0f);
 
 		s_FrameInfoUBO.SetData(&data, sizeof(FrameInfoData));
+	}
+
+	void Renderer::GaussianRenderer::DestroyHiZResources()
+	{
+		auto* context = VulkanContext::Get();
+		VkDevice device = context->GetDevice();
+		if (s_HiZImage)
+			vkDeviceWaitIdle(device);
+		if (!s_HiZBuildSets.empty())
+			vkFreeDescriptorSets(device, context->GetDescriptorPool(),
+				static_cast<uint32_t>(s_HiZBuildSets.size()), s_HiZBuildSets.data());
+		s_HiZBuildSets.clear();
+		for (VkImageView view : s_HiZMipViews)
+			vkDestroyImageView(device, view, nullptr);
+		s_HiZMipViews.clear();
+		s_HiZImage.reset();
+		s_HiZActive = false;
+	}
+
+	void Renderer::GaussianRenderer::CreateHiZResources(uint32_t width, uint32_t height)
+	{
+		auto powerOfTwo = [](uint32_t size) {
+			uint32_t result = 1;
+			while (result < size) result <<= 1;
+			return result;
+		};
+		width = powerOfTwo(width);
+		height = powerOfTwo(height);
+		if (s_HiZImage && s_HiZImage->GetWidth() == width && s_HiZImage->GetHeight() == height)
+			return;
+
+		DestroyHiZResources();
+		auto* context = VulkanContext::Get();
+		VkDevice device = context->GetDevice();
+		VkFormatProperties properties{};
+		vkGetPhysicalDeviceFormatProperties(context->GetPhysicalDevice(), VK_FORMAT_R32_SFLOAT, &properties);
+		const VkFormatFeatureFlags required = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+		if ((properties.optimalTilingFeatures & required) != required)
+			throw std::runtime_error("Hi-Z requires sampled/storage R32_SFLOAT images");
+
+		uint32_t levels = 1;
+		for (uint32_t size = std::max(width, height); size > 1; size >>= 1) ++levels;
+		VulkanImageSpec spec;
+		spec.Width = width;
+		spec.Height = height;
+		spec.MipLevels = levels;
+		spec.Format = VK_FORMAT_R32_SFLOAT;
+		spec.Usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		spec.DebugName = "Mesh Hi-Z";
+		s_HiZImage = std::make_unique<VulkanImage>(spec);
+		s_HiZImage->TransitionLayout(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+		for (uint32_t level = 0; level < levels; ++level)
+			s_HiZMipViews.push_back(s_HiZImage->CreateView(level, 1, 0, 1));
+
+		std::vector<VkDescriptorSetLayout> layouts(levels, s_HiZSetLayout);
+		std::vector<VkDescriptorSet> buildSets(levels);
+		VkDescriptorSetAllocateInfo allocation{};
+		allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocation.descriptorPool = context->GetDescriptorPool();
+		allocation.descriptorSetCount = levels;
+		allocation.pSetLayouts = layouts.data();
+		if (vkAllocateDescriptorSets(device, &allocation, buildSets.data()) != VK_SUCCESS)
+			throw std::runtime_error("failed to allocate Hi-Z descriptor sets");
+		s_HiZBuildSets = std::move(buildSets);
+
+		for (uint32_t level = 0; level < levels; ++level)
+		{
+			VkDescriptorImageInfo output{ VK_NULL_HANDLE, s_HiZMipViews[level], VK_IMAGE_LAYOUT_GENERAL };
+			VkWriteDescriptorSet write{};
+			write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			write.dstSet = s_HiZBuildSets[level];
+			write.dstBinding = 1;
+			write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			write.descriptorCount = 1;
+			write.pImageInfo = &output;
+			vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+			if (level != 0)
+			{
+				VkDescriptorImageInfo input{ s_DepthSampler, s_HiZMipViews[level - 1], VK_IMAGE_LAYOUT_GENERAL };
+				write.dstBinding = 0;
+				write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+				write.pImageInfo = &input;
+				vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+			}
+		}
+	}
+
+	bool Renderer::GaussianRenderer::BuildHiZ(VkCommandBuffer cmd)
+	{
+		auto framebuffer = std::static_pointer_cast<VulkanFramebuffer>(s_OffscreenFramebuffer);
+		if (!framebuffer || framebuffer->GetWidth() == 0 || framebuffer->GetHeight() == 0)
+			return false;
+		CreateHiZResources(framebuffer->GetWidth(), framebuffer->GetHeight());
+		VkDevice device = VulkanContext::Get()->GetDevice();
+		VkDescriptorImageInfo pyramid{ s_DepthSampler, s_HiZImage->GetImageView(), VK_IMAGE_LAYOUT_GENERAL };
+		VkWriteDescriptorSet write{};
+		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		write.dstSet = s_PrefixDescriptorSet;
+		write.dstBinding = 9;
+		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		write.descriptorCount = 1;
+		write.pImageInfo = &pyramid;
+		vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+		// MIN-resolved MSAA depth does not describe conservative pixel coverage.
+		if (!Renderer::EnableHiZ || framebuffer->IsMSAA() || framebuffer->GetGaussianDepthView() == VK_NULL_HANDLE)
+			return false;
+
+		VkImageMemoryBarrier depthBarrier{};
+		depthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		depthBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		depthBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		depthBarrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		depthBarrier.image = framebuffer->GetGaussianDepthImage();
+		depthBarrier.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+		VkFormat depthFormat = VulkanContext::Get()->GetDepthFormat();
+		if (depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || depthFormat == VK_FORMAT_D24_UNORM_S8_UINT)
+			depthBarrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0, 0, nullptr, 0, nullptr, 1, &depthBarrier);
+
+		VkImageMemoryBarrier pyramidBarrier{};
+		pyramidBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		pyramidBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+		pyramidBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+		pyramidBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+		pyramidBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		pyramidBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		pyramidBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		pyramidBarrier.image = s_HiZImage->GetImage();
+		pyramidBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, s_HiZImage->GetMipLevels(), 0, 1 };
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			0, 0, nullptr, 0, nullptr, 1, &pyramidBarrier);
+
+		VkDescriptorImageInfo depth{ s_DepthSampler, framebuffer->GetGaussianDepthView(),
+			VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
+		write.dstSet = s_HiZBuildSets[0];
+		write.dstBinding = 0;
+		write.pImageInfo = &depth;
+		vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+		struct HiZBuildPC { glm::uvec4 sourceInfo; glm::vec4 projection; } pc{};
+		static_assert(sizeof(HiZBuildPC) == 32, "Hi-Z push constant size mismatch");
+		pc.projection = glm::vec4(s_SceneData.ProjectionMatrix[2][2], s_SceneData.ProjectionMatrix[3][2], 0.0f, 0.0f);
+		for (uint32_t level = 0; level < s_HiZImage->GetMipLevels(); ++level)
+		{
+			pc.sourceInfo = glm::uvec4(level == 0 ? 1u : 0u, framebuffer->GetWidth(), framebuffer->GetHeight(), 0u);
+			vkCmdPushConstants(cmd, s_HiZPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+			uint32_t width = std::max(1u, s_HiZImage->GetWidth() >> level);
+			uint32_t height = std::max(1u, s_HiZImage->GetHeight() >> level);
+			s_HiZBuildShader->Dispatch(cmd, s_HiZPipelineLayout, s_HiZBuildSets[level], (width + 7) / 8, (height + 7) / 8, 1);
+			pyramidBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+			pyramidBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			pyramidBarrier.subresourceRange.baseMipLevel = level;
+			pyramidBarrier.subresourceRange.levelCount = 1;
+			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				0, 0, nullptr, 0, nullptr, 1, &pyramidBarrier);
+		}
+		return true;
 	}
 
 	void Renderer::GaussianRenderer::CreateComputeResources()
@@ -1539,6 +1716,7 @@ namespace Engine {
 		s_PrefixCullShader    = GetShaderLibrary()->LoadCompute("shaders/spv/PrefixCull.comp.spv", ShaderConfig{});
 		s_PrefixScanShader    = GetShaderLibrary()->LoadCompute("shaders/spv/PrefixScan.comp.spv", ShaderConfig{});
 		s_PrefixCompactShader = GetShaderLibrary()->LoadCompute("shaders/spv/PrefixCompact.comp.spv", ShaderConfig{});
+		s_HiZBuildShader = GetShaderLibrary()->LoadCompute("shaders/spv/HiZBuild.comp.spv", ShaderConfig{});
 
 		// ---- compute set0 descriptor set layouts (全部为 storage buffer, COMPUTE stage) ----
 		auto makeStorageLayout = [&](const std::vector<uint32_t>& bindings) {
@@ -1567,9 +1745,9 @@ namespace Engine {
 		s_SpineSetLayout     = makeStorageLayout({ 1, 2, 3 });
 		s_DownsweepSetLayout = makeStorageLayout({ 0, 1, 2, 3, 4, 5 });
 
-		// 前缀剔除共享 set0: b0 = FrameInfo UBO, b1..b8 = storage buffer
+		// Prefix set: b0 UBO, b1..b8 SSBO, b9 sampled Hi-Z pyramid.
 		{
-			std::vector<VkDescriptorSetLayoutBinding> plbs(9);
+			std::vector<VkDescriptorSetLayoutBinding> plbs(10);
 			plbs[0].binding = 0;
 			plbs[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 			plbs[0].descriptorCount = 1;
@@ -1583,12 +1761,33 @@ namespace Engine {
 				plbs[b].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 				plbs[b].pImmutableSamplers = nullptr;
 			}
+			plbs[9].binding = 9;
+			plbs[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			plbs[9].descriptorCount = 1;
+			plbs[9].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 			VkDescriptorSetLayoutCreateInfo pinfo{};
 			pinfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 			pinfo.bindingCount = static_cast<uint32_t>(plbs.size());
 			pinfo.pBindings = plbs.data();
 			if (vkCreateDescriptorSetLayout(device, &pinfo, nullptr, &s_PrefixDescriptorSetLayout) != VK_SUCCESS)
 				throw std::runtime_error("failed to create prefix descriptor set layout!");
+		}
+		{
+			std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+			bindings[0].binding = 0;
+			bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			bindings[0].descriptorCount = 1;
+			bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+			bindings[1].binding = 1;
+			bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+			bindings[1].descriptorCount = 1;
+			bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+			VkDescriptorSetLayoutCreateInfo info{};
+			info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+			info.bindingCount = static_cast<uint32_t>(bindings.size());
+			info.pBindings = bindings.data();
+			if (vkCreateDescriptorSetLayout(device, &info, nullptr, &s_HiZSetLayout) != VK_SUCCESS)
+				throw std::runtime_error("failed to create Hi-Z descriptor set layout");
 		}
 
 		// ---- pipeline layouts (各 shader 独立 push constant 范围) ----
@@ -1613,6 +1812,7 @@ namespace Engine {
 		s_SpinePipelineLayout     = makePipelineLayout(s_SpineSetLayout, 16);
 		s_DownsweepPipelineLayout = makePipelineLayout(s_DownsweepSetLayout, 16);
 		s_PrefixPipelineLayout    = makePipelineLayout(s_PrefixDescriptorSetLayout, 128);
+		s_HiZPipelineLayout = makePipelineLayout(s_HiZSetLayout, 32);
 
 		// ---- compute pipelines ----
 		s_UpsweepShader->CreatePipeline(s_UpsweepPipelineLayout);
@@ -1621,6 +1821,7 @@ namespace Engine {
 		s_PrefixCullShader->CreatePipeline(s_PrefixPipelineLayout);
 		s_PrefixScanShader->CreatePipeline(s_PrefixPipelineLayout);
 		s_PrefixCompactShader->CreatePipeline(s_PrefixPipelineLayout);
+		s_HiZBuildShader->CreatePipeline(s_HiZPipelineLayout);
 
 		// ---- 分配 descriptor sets (缓冲区句柄在 RecreateGaussianResources 中按帧集合填充) ----
 		auto allocSet = [&](VkDescriptorSetLayout layout) {
@@ -1748,24 +1949,28 @@ namespace Engine {
 	{
 		if (s_GaussianDescriptorSet == VK_NULL_HANDLE) return;
 		if (s_TotalGaussianCount == 0) return;
+		if (!s_OffscreenFramebuffer) return;
 
 		auto* context = VulkanContext::Get();
 		VkDevice device = context->GetDevice();
 		VkCommandBuffer cmd = context->GetCurrentCommandBuffer();
 
-		// BeginFrame has waited for the previous frame; read its visible count.
+		// BeginFrame has waited for the previous submitted frame; read both counts together.
 		void* mapped;
-		if (vkMapMemory(device, s_WorkInfoSSBO.GetMemory(), 0, sizeof(uint32_t), 0, &mapped) != VK_SUCCESS)
+		if (vkMapMemory(device, s_WorkInfoSSBO.GetMemory(), 0, 64, 0, &mapped) != VK_SUCCESS)
 			throw std::runtime_error("failed to map gaussian visible count!");
-		s_FrameStatistics.DrawnGaussianCount = *static_cast<const uint32_t*>(mapped);
+		const auto* counts = static_cast<const uint32_t*>(mapped);
+		s_FrameStatistics.DrawnGaussianCount = counts[0];
+		s_FrameStatistics.FrustumVisibleGaussianCount = counts[12];
 		vkUnmapMemory(device, s_WorkInfoSSBO.GetMemory());
 
+		context->BeginGpuTiming(RenderStage::GaussianSort);
+		s_HiZActive = BuildHiZ(cmd);
 		// 每帧刷新 splat 参数 UBO (不含相机矩阵; 相机矩阵经 push constant 传入)
 		UpdateFrameInfoUBO();
 		UpdateModelTransforms();
 
 		// 1) GPU 基数排序: 计算深度键并稳定排序, 结果保留在 s_ValuesBuffers[0] (render pass 之外执行)
-		context->BeginGpuTiming(RenderStage::GaussianSort);
 		ComputeSort(cmd);
 		context->EndGpuTiming(RenderStage::GaussianSort);
 

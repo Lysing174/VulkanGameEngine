@@ -14,62 +14,23 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="afba9ff3-0aac-46a2-a3d4-3ef04221cebc" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/main.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/main.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/AssetLibrary.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/AssetLibrary.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/AssetLibrary.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/AssetLibrary.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Camera.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Camera.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/EditorCamera.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/EditorCamera.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/FrameBuffer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/FrameBuffer.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/MipmapGenerator.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/MipmapGenerator.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Model.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Model.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Model.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Model.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Shader.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Shader.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Texture.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Texture.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Texture.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Texture.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Scene/Scene.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Scene/Scene.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Scene/Scene.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Scene/Scene.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanComputeShader.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanComputeShader.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanComputeShader.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanComputeShader.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/RendererStats.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/RendererStats.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanFrameBuffer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanFrameBuffer.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanFrameBuffer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanFrameBuffer.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanRenderer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanRenderer.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanTexture.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanTexture.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanTexture.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanTexture.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GGXPrefilter.comp.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianDist.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianDist.comp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianDist.comp.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSortDownsweep.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSortDownsweep.comp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSortDownsweep.comp.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSortSpine.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSortSpine.comp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSortSpine.comp.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSortUpsweep.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSortUpsweep.comp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSortUpsweep.comp.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/Mesh.frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/Mesh.vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/MeshShader.frag" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/MeshShader.frag" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/MeshShader.frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/MeshShader.vert" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/MeshShader.vert" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/Shadow.frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/Shadow.vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/Skybox.frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/Skybox.vert.spv" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanRenderPass.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanRenderPass.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/PrefixCompact.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/PrefixCompact.comp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/PrefixCull.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/PrefixCull.comp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/PrefixScan.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/PrefixScan.comp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/SandBox/shaders/compile.bat" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/compile.bat" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/VulkanEngine.sln.DotSettings.user" beforeDir="false" afterPath="$PROJECT_DIR$/VulkanEngine.sln.DotSettings.user" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCompact.comp.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCompact.comp.spv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCull.comp.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCull.comp.spv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixScan.comp.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixScan.comp.spv" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -98,7 +59,7 @@
   }
 }</component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="cidr-memory-view://19" root0="FORCE_HIGHLIGHTING" />
+    <setting file="cidr-memory-view://2" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$USER_HOME$/Desktop/GLSL实验代码/实验四 导入模型/main.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Core/ImGuiLog.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/AssetLibrary.cpp" root0="FORCE_HIGHLIGHTING" />
@@ -217,7 +178,8 @@
       <workItem from="1792330831149" duration="23960000" />
       <workItem from="1792550716605" duration="12109000" />
       <workItem from="1792589311570" duration="47552000" />
-      <workItem from="1792931931175" duration="8182000" />
+      <workItem from="1792931931175" duration="11605000" />
+      <workItem from="1793512972402" duration="2680000" />
     </task>
     <task id="LOCAL-00001" summary="添加渲染统计面板与 GPU 计时">
       <option name="closed" value="true" />
@@ -227,7 +189,15 @@
       <option name="project" value="LOCAL" />
       <updated>1792738698893</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="测试模式添加（统计PSNR\SSIM\FPS，目前FPS有问题）；添加视锥剔除；对齐高斯和网格渲染到lmg">
+      <option name="closed" value="true" />
+      <created>1792977347489</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1792977347489</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -249,7 +219,8 @@
   <component name="VcsManagerConfiguration">
     <option name="CLEAR_INITIAL_COMMIT_MESSAGE" value="true" />
     <MESSAGE value="添加渲染统计面板与 GPU 计时" />
-    <option name="LAST_COMMIT_MESSAGE" value="添加渲染统计面板与 GPU 计时" />
+    <MESSAGE value="测试模式添加（统计PSNR\SSIM\FPS，目前FPS有问题）；添加视锥剔除；对齐高斯和网格渲染到lmg" />
+    <option name="LAST_COMMIT_MESSAGE" value="测试模式添加（统计PSNR\SSIM\FPS，目前FPS有问题）；添加视锥剔除；对齐高斯和网格渲染到lmg" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -268,7 +239,7 @@
         </breakpoint>
         <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
           <url>file://$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp</url>
-          <line>173</line>
+          <line>180</line>
           <option name="timeStamp" value="7" />
         </line-breakpoint>
         <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">

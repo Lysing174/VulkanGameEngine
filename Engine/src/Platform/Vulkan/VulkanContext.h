@@ -203,6 +203,7 @@ namespace Engine {
         float m_TimestampPeriod = 0.0f;
         uint32_t m_TimestampValidBits = 0;
         std::array<bool, RenderStageCount> m_TimedStages = {};
+        std::array<bool, RenderStageCount> m_SubmittedTimedStages = {};
         GpuTimings m_GpuTimings;
         VkQueue presentQueue;
         std::vector<VkImage> swapChainImages;

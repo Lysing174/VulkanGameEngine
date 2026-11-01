@@ -1,0 +1,37 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D sourceDepth;
+layout(r32f, set = 0, binding = 1) uniform writeonly image2D destinationDepth;
+
+layout(push_constant) uniform HiZInfo {
+    uvec4 sourceInfo; // x: 1 for mesh depth conversion, yz: viewport dimensions.
+    vec4 projection;  // xy: projection[2][2], projection[3][2].
+} info;
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(destinationDepth))))
+        return;
+
+    float depth = uintBitsToFloat(0x7F800000u);
+    if (info.sourceInfo.x != 0u) {
+        if (all(lessThan(pixel, ivec2(info.sourceInfo.yz)))) {
+            float deviceDepth = texelFetch(sourceDepth, pixel, 0).r;
+            if (deviceDepth < 1.0) {
+                float viewDepth = info.projection.y / (deviceDepth + info.projection.x);
+                if (viewDepth > 0.0 && !isnan(viewDepth))
+                    depth = viewDepth;
+            }
+        }
+    } else {
+        ivec2 last = textureSize(sourceDepth, 0) - 1;
+        ivec2 base = pixel * 2;
+        depth = max(max(texelFetch(sourceDepth, min(base, last), 0).r,
+                        texelFetch(sourceDepth, min(base + ivec2(1, 0), last), 0).r),
+                    max(texelFetch(sourceDepth, min(base + ivec2(0, 1), last), 0).r,
+                        texelFetch(sourceDepth, min(base + ivec2(1, 1), last), 0).r));
+    }
+    imageStore(destinationDepth, pixel, vec4(depth));
+}

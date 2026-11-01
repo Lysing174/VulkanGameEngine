@@ -372,12 +372,18 @@ namespace Engine {
 		ImGui::Begin("Stats");
 		ImGui::Text("FPS (average for 0.5s): %.1f", m_Fps);
 		ImGui::Text("Frame Time: %.2f ms", m_Statistics.CpuTimeMs+m_Statistics.CpuWaitGpuTimeMs);
+		ImGui::Checkbox("Enable Hi-Z", &Renderer::EnableHiZ);
+		if (auto framebuffer = Renderer::GetOffscreenFramebuffer())
+			ImGui::Text("Render size: %u x %u", framebuffer->GetWidth(), framebuffer->GetHeight());
 		ImGui::Separator();
 		if (ImGui::BeginTable("RendererStatistics", 2, ImGuiTableFlags_Resizable))
 		{
 			ImGui::TableNextColumn();
 			ImGui::Text("Scene Gaussians: %llu", static_cast<unsigned long long>(m_Statistics.SceneGaussianCount));
-			ImGui::Text("Drawn Gaussians: %llu", static_cast<unsigned long long>(m_Statistics.DrawnGaussianCount));
+			ImGui::Text("After Frustum: %llu", static_cast<unsigned long long>(m_Statistics.FrustumVisibleGaussianCount));
+			ImGui::Text("After Hi-Z: %llu", static_cast<unsigned long long>(m_Statistics.DrawnGaussianCount));
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Culling counts are read from the previous completed GPU frame.\nHi-Z is bypassed when MSAA is enabled.");
 			ImGui::Text("Gaussian Data: %.2f MiB", m_Statistics.GaussianDataBytes / (1024.0 * 1024.0));
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("Scene gaussians x sizeof(GaussianDataGPU).\nExcludes sorting buffers, transforms and allocation overhead.");

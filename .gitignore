@@ -8,12 +8,15 @@
 
 # 模型文件
 *.ply
+*.bmp
+*.log
 SandBox/models/
 SandBox/gaussians/
 
 # 输出
 bin/
 bin-int/
+SandBox/test_output/
 
 # c2puml 输出目录
 c2puml_output/

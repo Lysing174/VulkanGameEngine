@@ -5,8 +5,8 @@ layout(local_size_x = 512) in;
 // Prefix pipeline descriptor contract (set 0, shared pipeline layout):
 // b0 FrameInfo UBO, b1 Gaussian SSBO, b2 model transforms,
 // b3 projected splats (128 bytes/input), b4 scratch (8 bytes/input),
-// b5 group counts/offsets (4 bytes/group), b6 work info (48 bytes),
-// b7 output keys[0], b8 output values[0]. All except b0 are storage buffers.
+// b5 group counts/offsets (8 bytes/group), b6 work info (64 bytes),
+// b7 output keys[0], b8 output values[0], b9 sampled Hi-Z pyramid.
 // Bind b1 to exactly N GaussianDataGPU entries. Allocate b3/b4/b7/b8 for N
 // entries and b5 for ceil(N/512). Dispatch ceil(N/512), then a compute
 // write -> compute read/write barrier before PrefixScan (one workgroup).
@@ -70,12 +70,45 @@ layout(std430, set = 0, binding = 4) writeonly buffer PrefixScratchBuffer
 
 layout(std430, set = 0, binding = 5) writeonly buffer PrefixGroupBuffer
 {
-    uint groupData[];
+    uvec2 groupData[]; // x: after Hi-Z, y: before Hi-Z.
 };
+
+layout(set = 0, binding = 9) uniform sampler2D hiZDepth;
 
 const float SQRT8 = 2.8284271247461903;
 const uint INVALID_RANK = 0xFFFFFFFFu;
-shared uint visiblePrefix[512];
+shared uvec2 visiblePrefix[512];
+
+bool isOccluded(vec4 bounds, float gaussianDepth)
+{
+    if (frameInfo.extraInfo.y == 0.0)
+        return false;
+
+    // Work in integer pixel bounds so four mip texels cover every rasterized pixel.
+    ivec2 viewport = ivec2(frameInfo.viewportInfo.xy);
+    ivec2 pixelMin = clamp(ivec2(floor((bounds.xy * 0.5 + 0.5) * vec2(viewport))),
+        ivec2(0), viewport - 1);
+    ivec2 pixelMax = clamp(ivec2(ceil((bounds.zw * 0.5 + 0.5) * vec2(viewport))) - 1,
+        pixelMin, viewport - 1);
+    int level = 0;
+    int lastLevel = textureQueryLevels(hiZDepth) - 1;
+    ivec2 cellMin = pixelMin;
+    ivec2 cellMax = pixelMax;
+    while (any(greaterThan(cellMax - cellMin, ivec2(1))) && level < lastLevel) {
+        ++level;
+        cellMin = pixelMin >> level;
+        cellMax = pixelMax >> level;
+    }
+    if (any(greaterThan(cellMax - cellMin, ivec2(1))))
+        return false;
+
+    float farthest = max(max(texelFetch(hiZDepth, cellMin, level).r,
+                             texelFetch(hiZDepth, ivec2(cellMax.x, cellMin.y), level).r),
+                         max(texelFetch(hiZDepth, ivec2(cellMin.x, cellMax.y), level).r,
+                             texelFetch(hiZDepth, cellMax, level).r));
+    // Match the fragment test's 0.1 tolerance, with an additional conservative bias.
+    return gaussianDepth > farthest + 0.1 + max(0.0001, gaussianDepth * 0.00001);
+}
 
 bool isFinite(vec4 value)
 {
@@ -306,21 +339,25 @@ void main()
     uint lane = gl_LocalInvocationID.x;
     bool inRange = id < uint(gaussians.length());
     bool visible = false;
+    bool frustumVisible = false;
     uint key = 0u;
     ProjectedSplatGPU projected;
     if (inRange)
     {
-        visible = projectAndCull(id, projected, key);
+        frustumVisible = projectAndCull(id, projected, key);
+        visible = frustumVisible;
+        if (visible && isOccluded(projected.ndcBounds, -projected.viewCenter.z))
+            visible = false;
         if (visible)
             projectedSplats[id] = projected;
     }
 
     // Padded lanes still participate in every barrier of the inclusive scan.
-    visiblePrefix[lane] = visible ? 1u : 0u;
+    visiblePrefix[lane] = uvec2(visible ? 1u : 0u, frustumVisible ? 1u : 0u);
     barrier();
     for (uint stride = 1u; stride < 512u; stride <<= 1u)
     {
-        uint value = visiblePrefix[lane];
+        uvec2 value = visiblePrefix[lane];
         if (lane >= stride)
             value += visiblePrefix[lane - stride];
         barrier();
@@ -329,7 +366,7 @@ void main()
     }
 
     if (inRange)
-        prefixScratch[id] = uvec2(key, visible ? visiblePrefix[lane] - 1u : INVALID_RANK);
+        prefixScratch[id] = uvec2(key, visible ? visiblePrefix[lane].x - 1u : INVALID_RANK);
     if (lane == 511u)
         groupData[gl_WorkGroupID.x] = visiblePrefix[lane];
 }

@@ -23,6 +23,7 @@ namespace Engine {
     struct RendererStatistics
     {
         uint64_t SceneGaussianCount = 0;
+        uint64_t FrustumVisibleGaussianCount = 0;
         uint64_t DrawnGaussianCount = 0;
         uint64_t GaussianDataBytes = 0;
         uint64_t SceneVertexCount = 0;

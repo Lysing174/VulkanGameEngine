@@ -36,6 +36,7 @@ namespace Engine {
         // 高斯 pass 用的 1x 深度视图: MSAA 模式取 1x depth resolve, 否则取 1x depth (即 m_DepthMSAAView).
         // 高斯 pass 通过 b3(u_DepthMap) 采样它做遮挡.
         VkImageView    GetGaussianDepthView()        const { return IsMSAA() ? m_DepthResolveView : m_DepthMSAAView; }
+        VkImage        GetGaussianDepthImage()       const { return IsMSAA() ? m_DepthResolveImage : m_DepthMSAAImage; }
 
     private:
         void Invalidate();

@@ -19,10 +19,10 @@ layout(push_constant) uniform PrefixInfo
 
 layout(std430, set = 0, binding = 5) buffer PrefixGroupBuffer
 {
-    uint groupData[];
+    uvec2 groupData[];
 };
 
-// std430 size: 48 bytes. These records are fully overwritten on every dispatch.
+// std430 size: 64 bytes. Indirect command offsets stay unchanged.
 // counts:       offset 0:  visibleCount, sortPartitionCount, inputCount, inputGroups.
 // sortDispatch: offset 16: VkDispatchIndirectCommand (x,y,z), then padding.
 // draw:         offset 32: VkDrawIndirectCommand (6,visibleCount,0,0).
@@ -32,10 +32,11 @@ layout(std430, set = 0, binding = 6) writeonly buffer GaussianWorkInfoBuffer
     uvec4 counts;
     uvec4 sortDispatch;
     uvec4 draw;
+    uvec4 cullingCounts; // offset 48: after frustum, after Hi-Z, culled by Hi-Z, unused.
 } workInfo;
 
-shared uint groupPrefix[512];
-shared uint precedingCount;
+shared uvec2 groupPrefix[512];
+shared uvec2 precedingCount;
 
 void main()
 {
@@ -45,13 +46,13 @@ void main()
         groupCount++;
 
     if (lane == 0u)
-        precedingCount = 0u;
+        precedingCount = uvec2(0u);
     barrier();
 
     for (uint base = 0u; base < groupCount; base += 512u)
     {
         uint group = base + lane;
-        uint count = 0u;
+        uvec2 count = uvec2(0u);
         if (group < groupCount)
             count = groupData[group];
         groupPrefix[lane] = count;
@@ -59,7 +60,7 @@ void main()
 
         for (uint stride = 1u; stride < 512u; stride <<= 1u)
         {
-            uint value = groupPrefix[lane];
+            uvec2 value = groupPrefix[lane];
             if (lane >= stride)
                 value += groupPrefix[lane - stride];
             barrier();
@@ -67,7 +68,7 @@ void main()
             barrier();
         }
 
-        uint tileBase = precedingCount;
+        uvec2 tileBase = precedingCount;
         if (group < groupCount)
             groupData[group] = tileBase + groupPrefix[lane] - count;
 
@@ -80,12 +81,13 @@ void main()
 
     if (lane == 0u)
     {
-        uint visibleCount = precedingCount;
+        uint visibleCount = precedingCount.x;
         uint partitions = visibleCount / 512u;
         if (visibleCount % 512u != 0u)
             partitions++;
         workInfo.counts = uvec4(visibleCount, partitions, prefixInfo.elementCount, groupCount);
         workInfo.sortDispatch = uvec4(partitions, 1u, 1u, 0u);
         workInfo.draw = uvec4(6u, visibleCount, 0u, 0u);
+        workInfo.cullingCounts = uvec4(precedingCount.y, visibleCount, precedingCount.y - visibleCount, 0u);
     }
 }

@@ -34,6 +34,7 @@ call :Compile "GaussianSplat.vert" "GaussianSplat.vert.spv" || goto :error
 call :Compile "GaussianSplat.frag" "GaussianSplat.frag.spv" || goto :error
 
 echo [6/6] Gaussian Compute
+call :Compile "HiZBuild.comp" "HiZBuild.comp.spv" || goto :error
 call :Compile "PrefixCull.comp" "PrefixCull.comp.spv" || goto :error
 call :Compile "PrefixScan.comp" "PrefixScan.comp.spv" || goto :error
 call :Compile "PrefixCompact.comp" "PrefixCompact.comp.spv" || goto :error
