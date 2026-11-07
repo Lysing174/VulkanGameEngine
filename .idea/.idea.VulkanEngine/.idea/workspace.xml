@@ -15,22 +15,23 @@
   <component name="ChangeListManager">
     <list default="true" id="afba9ff3-0aac-46a2-a3d4-3ef04221cebc" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.h" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/RendererStats.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/RendererStats.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanBuffer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanBuffer.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanFrameBuffer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanFrameBuffer.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanRenderPass.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanRenderPass.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/PrefixCompact.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/PrefixCompact.comp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/imgui.ini" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/imgui.ini" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/SandBox/shaders/PrefixCull.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/PrefixCull.comp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/PrefixScan.comp" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/PrefixScan.comp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/compile.bat" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/compile.bat" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCompact.comp.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCompact.comp.spv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.frag.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.frag.spv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.vert.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.vert.spv" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCull.comp.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixCull.comp.spv" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixScan.comp.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/PrefixScan.comp.spv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/VulkanEngine.sln.DotSettings.user" beforeDir="false" afterPath="$PROJECT_DIR$/VulkanEngine.sln.DotSettings.user" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -41,9 +42,14 @@
     <option name="firstShow" value="false" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="85" />
+    <option name="cachedIndexableFilesCount" value="83" />
   </component>
   <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="bb887b56964cb39ce302c57f927174fb2d31089f" />
+      </map>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
@@ -59,11 +65,13 @@
   }
 }</component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="cidr-memory-view://2" root0="FORCE_HIGHLIGHTING" />
+    <setting file="cidr-memory-view://7" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$USER_HOME$/Desktop/GLSL实验代码/实验四 导入模型/main.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Core/ImGuiLog.h" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/AssetLibrary.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/AssetLibrary.h" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/DatasetCamera.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/GlobalBindings.h" root0="FORCE_HIGHLIGHTING" />
@@ -96,7 +104,7 @@
     &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
     &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
     &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;bb887b56&quot;,
     &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
@@ -180,6 +188,7 @@
       <workItem from="1792589311570" duration="47552000" />
       <workItem from="1792931931175" duration="11605000" />
       <workItem from="1793512972402" duration="2680000" />
+      <workItem from="1793955602520" duration="14073000" />
     </task>
     <task id="LOCAL-00001" summary="添加渲染统计面板与 GPU 计时">
       <option name="closed" value="true" />
@@ -237,16 +246,6 @@
           <properties exception="System.Threading.ThreadAbortException" breakIfHandledByOtherCode="false" displayValue="System.Threading.ThreadAbortException" />
           <option name="timeStamp" value="3" />
         </breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp</url>
-          <line>180</line>
-          <option name="timeStamp" value="7" />
-        </line-breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp</url>
-          <line>280</line>
-          <option name="timeStamp" value="20" />
-        </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
   </component>

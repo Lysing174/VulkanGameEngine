@@ -1438,6 +1438,7 @@ namespace Engine {
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
             throw std::runtime_error("failed to begin command buffer!");
         }
 
@@ -1445,15 +1446,35 @@ namespace Engine {
     }
 
     void VulkanContext::EndSingleTimeCommands(VkCommandBuffer commandBuffer) {
-        vkEndCommandBuffer(commandBuffer);
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+            throw std::runtime_error("failed to end single-time command buffer!");
+        }
 
         VkSubmitInfo submitInfo = {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffer;
 
-        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-        vkQueueWaitIdle(graphicsQueue);
+        const VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        if (submitResult != VK_SUCCESS) {
+            vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+            throw std::runtime_error("single-time command submission failed: " + std::to_string(submitResult));
+        }
+
+        const VkResult waitResult = vkQueueWaitIdle(graphicsQueue);
+        if (waitResult != VK_SUCCESS) {
+            // Complete pending work before callers release transfer resources.
+            // Device loss also permits releasing the failed device's resources.
+            const VkResult idleResult = vkDeviceWaitIdle(device);
+            if (idleResult != VK_SUCCESS && idleResult != VK_ERROR_DEVICE_LOST) {
+                std::cerr << "Unable to synchronize failed transfer: " << idleResult << std::endl;
+                // Unwinding would free staging memory while the device may still use it.
+                std::terminate();
+            }
+            vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+            throw std::runtime_error("single-time command wait failed: " + std::to_string(waitResult));
+        }
 
         vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     }

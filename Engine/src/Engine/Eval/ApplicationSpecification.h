@@ -26,7 +26,7 @@ namespace Engine
         glm::mat4   GaussianTransform = glm::mat4(1.0f);    // 高斯整体变换 (无则不改)
 
         // 网格模型路径 (.gltf/.glb/.obj, 可空: 留空 "" 表示不绘制 mesh)
-        std::string MeshPath      = "";//"D:/source/python_projects/SuGaR/output/lmg_assets/playroom/playroom.obj";
+        std::string MeshPath      = "D:/source/python_projects/SuGaR/output/lmg_assets/playroom/playroom.obj";
         glm::mat4   MeshTransform = glm::mat4(1.0f);    // 网格整体变换 (无则不改)
 
         // COLMAP 内参 / 位姿 (必填)

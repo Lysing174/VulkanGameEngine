@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <limits>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/string_cast.hpp>
 
@@ -1289,13 +1290,24 @@ namespace Engine {
 		if (vkDeviceWaitIdle(device) != VK_SUCCESS)
 			throw std::runtime_error("failed to wait before recreating gaussian resources!");
 
-		// 统计总高斯数 (按各资产 GetGaussianCount)
-		s_TotalGaussianCount = 0;
+		// Snapshot the assets so counting and staging use the same instances.
+		std::vector<std::shared_ptr<GaussianModel>> models;
+		models.reserve(s_GaussianSubmitList.size());
+		uint64_t totalCount = 0;
 		for (const auto& sub : s_GaussianSubmitList)
 		{
 			auto model = GetModelLibrary()->Load(sub.GaussianID);
-			if (model) s_TotalGaussianCount += model->GetGaussianCount();
+			if (model) totalCount += model->GetGaussianCount();
+			models.push_back(std::move(model));
 		}
+		VkPhysicalDeviceProperties properties{};
+		vkGetPhysicalDeviceProperties(context->GetPhysicalDevice(), &properties);
+		if (totalCount > std::numeric_limits<uint32_t>::max() ||
+			totalCount > properties.limits.maxStorageBufferRange / sizeof(GaussianDataGPU) ||
+			models.size() > std::numeric_limits<uint32_t>::max())
+			throw std::runtime_error("Gaussian scene exceeds the supported SSBO or index range");
+		s_TotalGaussianCount = static_cast<uint32_t>(totalCount);
+		s_GaussianResourcesCreated = false;
 
 		// 释放旧的 DS / 缓冲 (DS 由 descriptor pool 分配, 可单独 free)
 		if (s_GaussianDescriptorSet != VK_NULL_HANDLE)
@@ -1324,179 +1336,223 @@ namespace Engine {
 			return;
 		}
 
-		VkBufferUsageFlags storageUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-		s_GaussianSSBO       = VulkanBuffer(s_TotalGaussianCount * sizeof(GaussianDataGPU), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		s_ModelTransformSSBO = VulkanBuffer(s_GaussianSubmitList.size() * sizeof(glm::mat4), storageUsage,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		// ping-pong keys/values: values[0] 接收初始索引上传, 四轮排序后直接供绘制读取
-		s_KeysBuffers[0]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		s_KeysBuffers[1]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		s_ValuesBuffers[0]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		s_ValuesBuffers[1]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		// 全局直方图: 每帧 vkCmdFillBuffer 清零, 需 TRANSFER_DST
-		s_GlobalHistogramSSBO = VulkanBuffer(1024 * sizeof(uint32_t), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		uint32_t numPartitions = (s_TotalGaussianCount + 511) / 512;
-		s_PartitionHistogramSSBO = VulkanBuffer(numPartitions * 256 * sizeof(uint32_t), storageUsage,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-		// Projected splats: 128B; group counts now track pre/post Hi-Z visibility.
-		s_ProjectedSplatsSSBO = VulkanBuffer(s_TotalGaussianCount * 128, storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		s_PrefixScratchSSBO   = VulkanBuffer(s_TotalGaussianCount * 8, storageUsage,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		uint32_t numGroups = (s_TotalGaussianCount + 511) / 512;
-		s_PrefixGroupSSBO     = VulkanBuffer(numGroups * 2 * sizeof(uint32_t), storageUsage,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-		s_WorkInfoSSBO        = VulkanBuffer(64,
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		std::array<uint32_t, 16> workInfo{};
-		s_WorkInfoSSBO.SetData(workInfo.data(), sizeof(workInfo));
-
-		// 分配 DS (set0)
-		VkDescriptorSetAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		allocInfo.descriptorPool = context->GetDescriptorPool();
-		allocInfo.descriptorSetCount = 1;
-		allocInfo.pSetLayouts = &s_GaussianDescriptorLayout;
-
-		if (vkAllocateDescriptorSets(device, &allocInfo, &s_GaussianDescriptorSet) != VK_SUCCESS)
-			throw std::runtime_error("failed to allocate gaussian descriptor set!");
-
-		// 写 b0(FrameInfo UBO) / b1(Gaussian) / b2(SortedIndex) / b4(ModelTransform) / b5(ProjectedSplats)
-		std::array<VkWriteDescriptorSet, 5> writes = {};
-
-		VkDescriptorBufferInfo uboInfo{};
-		uboInfo.buffer = s_FrameInfoUBO.GetBuffer(); uboInfo.offset = 0; uboInfo.range = s_FrameInfoUBO.GetSize();
-		writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[0].dstSet = s_GaussianDescriptorSet;
-		writes[0].dstBinding = 0; writes[0].dstArrayElement = 0;
-		writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[0].descriptorCount = 1;
-		writes[0].pBufferInfo = &uboInfo;
-
-		VkDescriptorBufferInfo gaussianInfo{};
-		gaussianInfo.buffer = s_GaussianSSBO.GetBuffer(); gaussianInfo.offset = 0; gaussianInfo.range = s_GaussianSSBO.GetSize();
-		writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[1].dstSet = s_GaussianDescriptorSet;
-		writes[1].dstBinding = 1; writes[1].dstArrayElement = 0;
-		writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[1].descriptorCount = 1;
-		writes[1].pBufferInfo = &gaussianInfo;
-
-		VkDescriptorBufferInfo sortedInfo{};
-		sortedInfo.buffer = s_ValuesBuffers[0].GetBuffer(); sortedInfo.offset = 0; sortedInfo.range = s_ValuesBuffers[0].GetSize();
-		writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[2].dstSet = s_GaussianDescriptorSet;
-		writes[2].dstBinding = 2; writes[2].dstArrayElement = 0;
-		writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[2].descriptorCount = 1;
-		writes[2].pBufferInfo = &sortedInfo;
-
-		VkDescriptorBufferInfo modelInfo{};
-		modelInfo.buffer = s_ModelTransformSSBO.GetBuffer(); modelInfo.offset = 0; modelInfo.range = s_ModelTransformSSBO.GetSize();
-		writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[3].dstSet = s_GaussianDescriptorSet;
-		writes[3].dstBinding = 4; writes[3].dstArrayElement = 0;
-		writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[3].descriptorCount = 1;
-		writes[3].pBufferInfo = &modelInfo;
-
-		VkDescriptorBufferInfo projInfo{};
-		projInfo.buffer = s_ProjectedSplatsSSBO.GetBuffer(); projInfo.offset = 0; projInfo.range = s_ProjectedSplatsSSBO.GetSize();
-		writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[4].dstSet = s_GaussianDescriptorSet;
-		writes[4].dstBinding = 5; writes[4].dstArrayElement = 0;
-		writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[4].descriptorCount = 1;
-		writes[4].pBufferInfo = &projInfo;
-
-		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-
-		// ---- 写 compute 排序 descriptor sets (缓冲句柄已重建, 需重新绑定) ----
-		auto writeStorage = [&](VkDescriptorSet set, uint32_t binding, const VulkanBuffer& buf) {
-			if (set == VK_NULL_HANDLE || !buf.IsValid()) return;
-			VkDescriptorBufferInfo info{};
-			info.buffer = buf.GetBuffer(); info.offset = 0; info.range = buf.GetSize();
-			VkWriteDescriptorSet w{};
-			w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			w.dstSet = set; w.dstBinding = binding;
-			w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-			w.descriptorCount = 1; w.pBufferInfo = &info;
-			vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
-		};
-		// ---- 排序 compute sets (缓冲句柄已重建, 需重新绑定) ----
-		// Upsweep[src=0/1]: b0 keys[src], b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
-		writeStorage(s_UpsweepSet[0], 0, s_KeysBuffers[0]);
-		writeStorage(s_UpsweepSet[1], 0, s_KeysBuffers[1]);
-		writeStorage(s_UpsweepSet[0], 1, s_GlobalHistogramSSBO);
-		writeStorage(s_UpsweepSet[1], 1, s_GlobalHistogramSSBO);
-		writeStorage(s_UpsweepSet[0], 2, s_PartitionHistogramSSBO);
-		writeStorage(s_UpsweepSet[1], 2, s_PartitionHistogramSSBO);
-		writeStorage(s_UpsweepSet[0], 3, s_WorkInfoSSBO);
-		writeStorage(s_UpsweepSet[1], 3, s_WorkInfoSSBO);
-		// Spine: b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
-		writeStorage(s_SpineSet, 1, s_GlobalHistogramSSBO);
-		writeStorage(s_SpineSet, 2, s_PartitionHistogramSSBO);
-		writeStorage(s_SpineSet, 3, s_WorkInfoSSBO);
-		// Downsweep[src=0]: b0 keys[0], b1 values[0], b2 PartitionHist, b3 keys[1], b4 values[1], b5 WorkInfo
-		writeStorage(s_DownsweepSet[0], 0, s_KeysBuffers[0]);
-		writeStorage(s_DownsweepSet[0], 1, s_ValuesBuffers[0]);
-		writeStorage(s_DownsweepSet[0], 2, s_PartitionHistogramSSBO);
-		writeStorage(s_DownsweepSet[0], 3, s_KeysBuffers[1]);
-		writeStorage(s_DownsweepSet[0], 4, s_ValuesBuffers[1]);
-		writeStorage(s_DownsweepSet[0], 5, s_WorkInfoSSBO);
-		// Downsweep[src=1]: b0 keys[1], b1 values[1], b2 PartitionHist, b3 keys[0], b4 values[0], b5 WorkInfo
-		writeStorage(s_DownsweepSet[1], 0, s_KeysBuffers[1]);
-		writeStorage(s_DownsweepSet[1], 1, s_ValuesBuffers[1]);
-		writeStorage(s_DownsweepSet[1], 2, s_PartitionHistogramSSBO);
-		writeStorage(s_DownsweepSet[1], 3, s_KeysBuffers[0]);
-		writeStorage(s_DownsweepSet[1], 4, s_ValuesBuffers[0]);
-		writeStorage(s_DownsweepSet[1], 5, s_WorkInfoSSBO);
-
-		// ---- 前缀剔除集 (set0, b0..b8): Cull/Scan/Compact 共用 ----
-		if (s_PrefixDescriptorSet != VK_NULL_HANDLE)
+		try
 		{
-			// b0 FrameInfo UBO (uniform)
-			VkDescriptorBufferInfo prefixUbo{};
-			prefixUbo.buffer = s_FrameInfoUBO.GetBuffer(); prefixUbo.offset = 0; prefixUbo.range = s_FrameInfoUBO.GetSize();
-			VkWriteDescriptorSet uboWrite{};
-			uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			uboWrite.dstSet = s_PrefixDescriptorSet; uboWrite.dstBinding = 0;
-			uboWrite.dstArrayElement = 0; uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			uboWrite.descriptorCount = 1; uboWrite.pBufferInfo = &prefixUbo;
-			vkUpdateDescriptorSets(device, 1, &uboWrite, 0, nullptr);
-			// b1..b8 storage
-			writeStorage(s_PrefixDescriptorSet, 1, s_GaussianSSBO);
-			writeStorage(s_PrefixDescriptorSet, 2, s_ModelTransformSSBO);
-			writeStorage(s_PrefixDescriptorSet, 3, s_ProjectedSplatsSSBO);
-			writeStorage(s_PrefixDescriptorSet, 4, s_PrefixScratchSSBO);
-			writeStorage(s_PrefixDescriptorSet, 5, s_PrefixGroupSSBO);
-			writeStorage(s_PrefixDescriptorSet, 6, s_WorkInfoSSBO);
-			writeStorage(s_PrefixDescriptorSet, 7, s_KeysBuffers[0]);
-			writeStorage(s_PrefixDescriptorSet, 8, s_ValuesBuffers[0]);
-		}
+			VkBufferUsageFlags storageUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+			s_GaussianSSBO       = VulkanBuffer(s_TotalGaussianCount * sizeof(GaussianDataGPU), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			s_ModelTransformSSBO = VulkanBuffer(s_GaussianSubmitList.size() * sizeof(glm::mat4), storageUsage,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			// ping-pong keys/values: values[0] 接收初始索引上传, 四轮排序后直接供绘制读取
+			s_KeysBuffers[0]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			s_KeysBuffers[1]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			s_ValuesBuffers[0]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			s_ValuesBuffers[1]   = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			// 全局直方图: 每帧 vkCmdFillBuffer 清零, 需 TRANSFER_DST
+			s_GlobalHistogramSSBO = VulkanBuffer(1024 * sizeof(uint32_t), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			uint32_t numPartitions = (s_TotalGaussianCount + 511) / 512;
+			s_PartitionHistogramSSBO = VulkanBuffer(numPartitions * 256 * sizeof(uint32_t), storageUsage,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-		// ===== 上传高斯数据 + 初始化排序索引 (合并自原 UploadGaussianData: 重建必伴随上传) =====
-		// 拼接所有高斯资产 GPU 数据 (modelIndex = 该 submission 在列表中的下标)
-		std::vector<GaussianDataGPU> gpu;
-		gpu.reserve(s_TotalGaussianCount);
-		for (uint32_t i = 0; i < s_GaussianSubmitList.size(); i++)
+			// Projected splats: 128B; group counts now track pre/post Hi-Z visibility.
+			s_ProjectedSplatsSSBO = VulkanBuffer(s_TotalGaussianCount * 128, storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			s_PrefixScratchSSBO   = VulkanBuffer(s_TotalGaussianCount * 8, storageUsage,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			uint32_t numGroups = (s_TotalGaussianCount + 511) / 512;
+			s_PrefixGroupSSBO     = VulkanBuffer(numGroups * 2 * sizeof(uint32_t), storageUsage,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+			s_WorkInfoSSBO        = VulkanBuffer(64,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			std::array<uint32_t, 16> workInfo{};
+			workInfo[2] = s_TotalGaussianCount; // counts.z: input count, available before the first Cull.
+			workInfo[3] = numGroups;           // counts.w: input workgroup count.
+			s_WorkInfoSSBO.SetData(workInfo.data(), sizeof(workInfo));
+
+			// 分配 DS (set0)
+			VkDescriptorSetAllocateInfo allocInfo = {};
+			allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			allocInfo.descriptorPool = context->GetDescriptorPool();
+			allocInfo.descriptorSetCount = 1;
+			allocInfo.pSetLayouts = &s_GaussianDescriptorLayout;
+
+			if (vkAllocateDescriptorSets(device, &allocInfo, &s_GaussianDescriptorSet) != VK_SUCCESS)
+				throw std::runtime_error("failed to allocate gaussian descriptor set!");
+
+			// 写 b0(FrameInfo UBO) / b1(Gaussian) / b2(SortedIndex) / b4(ModelTransform) / b5(ProjectedSplats)
+			std::array<VkWriteDescriptorSet, 5> writes = {};
+
+			VkDescriptorBufferInfo uboInfo{};
+			uboInfo.buffer = s_FrameInfoUBO.GetBuffer(); uboInfo.offset = 0; uboInfo.range = s_FrameInfoUBO.GetSize();
+			writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[0].dstSet = s_GaussianDescriptorSet;
+			writes[0].dstBinding = 0; writes[0].dstArrayElement = 0;
+			writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[0].descriptorCount = 1;
+			writes[0].pBufferInfo = &uboInfo;
+
+			VkDescriptorBufferInfo gaussianInfo{};
+			gaussianInfo.buffer = s_GaussianSSBO.GetBuffer(); gaussianInfo.offset = 0; gaussianInfo.range = s_GaussianSSBO.GetSize();
+			writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[1].dstSet = s_GaussianDescriptorSet;
+			writes[1].dstBinding = 1; writes[1].dstArrayElement = 0;
+			writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[1].descriptorCount = 1;
+			writes[1].pBufferInfo = &gaussianInfo;
+
+			VkDescriptorBufferInfo sortedInfo{};
+			sortedInfo.buffer = s_ValuesBuffers[0].GetBuffer(); sortedInfo.offset = 0; sortedInfo.range = s_ValuesBuffers[0].GetSize();
+			writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[2].dstSet = s_GaussianDescriptorSet;
+			writes[2].dstBinding = 2; writes[2].dstArrayElement = 0;
+			writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[2].descriptorCount = 1;
+			writes[2].pBufferInfo = &sortedInfo;
+
+			VkDescriptorBufferInfo modelInfo{};
+			modelInfo.buffer = s_ModelTransformSSBO.GetBuffer(); modelInfo.offset = 0; modelInfo.range = s_ModelTransformSSBO.GetSize();
+			writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[3].dstSet = s_GaussianDescriptorSet;
+			writes[3].dstBinding = 4; writes[3].dstArrayElement = 0;
+			writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[3].descriptorCount = 1;
+			writes[3].pBufferInfo = &modelInfo;
+
+			VkDescriptorBufferInfo projInfo{};
+			projInfo.buffer = s_ProjectedSplatsSSBO.GetBuffer(); projInfo.offset = 0; projInfo.range = s_ProjectedSplatsSSBO.GetSize();
+			writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[4].dstSet = s_GaussianDescriptorSet;
+			writes[4].dstBinding = 5; writes[4].dstArrayElement = 0;
+			writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[4].descriptorCount = 1;
+			writes[4].pBufferInfo = &projInfo;
+
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+
+			// ---- 写 compute 排序 descriptor sets (缓冲句柄已重建, 需重新绑定) ----
+			auto writeStorage = [&](VkDescriptorSet set, uint32_t binding, const VulkanBuffer& buf) {
+				if (set == VK_NULL_HANDLE || !buf.IsValid()) return;
+				VkDescriptorBufferInfo info{};
+				info.buffer = buf.GetBuffer(); info.offset = 0; info.range = buf.GetSize();
+				VkWriteDescriptorSet w{};
+				w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				w.dstSet = set; w.dstBinding = binding;
+				w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+				w.descriptorCount = 1; w.pBufferInfo = &info;
+				vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+			};
+			// ---- 排序 compute sets (缓冲句柄已重建, 需重新绑定) ----
+			// Upsweep[src=0/1]: b0 keys[src], b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
+			writeStorage(s_UpsweepSet[0], 0, s_KeysBuffers[0]);
+			writeStorage(s_UpsweepSet[1], 0, s_KeysBuffers[1]);
+			writeStorage(s_UpsweepSet[0], 1, s_GlobalHistogramSSBO);
+			writeStorage(s_UpsweepSet[1], 1, s_GlobalHistogramSSBO);
+			writeStorage(s_UpsweepSet[0], 2, s_PartitionHistogramSSBO);
+			writeStorage(s_UpsweepSet[1], 2, s_PartitionHistogramSSBO);
+			writeStorage(s_UpsweepSet[0], 3, s_WorkInfoSSBO);
+			writeStorage(s_UpsweepSet[1], 3, s_WorkInfoSSBO);
+			// Spine: b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
+			writeStorage(s_SpineSet, 1, s_GlobalHistogramSSBO);
+			writeStorage(s_SpineSet, 2, s_PartitionHistogramSSBO);
+			writeStorage(s_SpineSet, 3, s_WorkInfoSSBO);
+			// Downsweep[src=0]: b0 keys[0], b1 values[0], b2 PartitionHist, b3 keys[1], b4 values[1], b5 WorkInfo
+			writeStorage(s_DownsweepSet[0], 0, s_KeysBuffers[0]);
+			writeStorage(s_DownsweepSet[0], 1, s_ValuesBuffers[0]);
+			writeStorage(s_DownsweepSet[0], 2, s_PartitionHistogramSSBO);
+			writeStorage(s_DownsweepSet[0], 3, s_KeysBuffers[1]);
+			writeStorage(s_DownsweepSet[0], 4, s_ValuesBuffers[1]);
+			writeStorage(s_DownsweepSet[0], 5, s_WorkInfoSSBO);
+			// Downsweep[src=1]: b0 keys[1], b1 values[1], b2 PartitionHist, b3 keys[0], b4 values[0], b5 WorkInfo
+			writeStorage(s_DownsweepSet[1], 0, s_KeysBuffers[1]);
+			writeStorage(s_DownsweepSet[1], 1, s_ValuesBuffers[1]);
+			writeStorage(s_DownsweepSet[1], 2, s_PartitionHistogramSSBO);
+			writeStorage(s_DownsweepSet[1], 3, s_KeysBuffers[0]);
+			writeStorage(s_DownsweepSet[1], 4, s_ValuesBuffers[0]);
+			writeStorage(s_DownsweepSet[1], 5, s_WorkInfoSSBO);
+
+			// ---- 前缀剔除集 (set0, b0..b8): Cull/Scan/Compact 共用 ----
+			if (s_PrefixDescriptorSet != VK_NULL_HANDLE)
+			{
+				// b0 FrameInfo UBO (uniform)
+				VkDescriptorBufferInfo prefixUbo{};
+				prefixUbo.buffer = s_FrameInfoUBO.GetBuffer(); prefixUbo.offset = 0; prefixUbo.range = s_FrameInfoUBO.GetSize();
+				VkWriteDescriptorSet uboWrite{};
+				uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+				uboWrite.dstSet = s_PrefixDescriptorSet; uboWrite.dstBinding = 0;
+				uboWrite.dstArrayElement = 0; uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+				uboWrite.descriptorCount = 1; uboWrite.pBufferInfo = &prefixUbo;
+				vkUpdateDescriptorSets(device, 1, &uboWrite, 0, nullptr);
+				// b1..b8 storage
+				writeStorage(s_PrefixDescriptorSet, 1, s_GaussianSSBO);
+				writeStorage(s_PrefixDescriptorSet, 2, s_ModelTransformSSBO);
+				writeStorage(s_PrefixDescriptorSet, 3, s_ProjectedSplatsSSBO);
+				writeStorage(s_PrefixDescriptorSet, 4, s_PrefixScratchSSBO);
+				writeStorage(s_PrefixDescriptorSet, 5, s_PrefixGroupSSBO);
+				writeStorage(s_PrefixDescriptorSet, 6, s_WorkInfoSSBO);
+				writeStorage(s_PrefixDescriptorSet, 7, s_KeysBuffers[0]);
+				writeStorage(s_PrefixDescriptorSet, 8, s_ValuesBuffers[0]);
+			}
+
+			// One staging allocation for the scene. Assets already contain GPU-format
+			// data; fill per-instance indices here without modifying shared caches.
+			{
+				VulkanBuffer staging(s_GaussianSSBO.GetSize(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+				void* mapped = nullptr;
+				if (vkMapMemory(device, staging.GetMemory(), 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
+					throw std::runtime_error("Failed to map Gaussian staging buffer");
+				try
+				{
+					auto* destination = static_cast<GaussianDataGPU*>(mapped);
+					size_t offset = 0;
+					for (uint32_t modelIndex = 0; modelIndex < models.size(); ++modelIndex)
+					{
+						if (!models[modelIndex]) continue;
+						const size_t count = models[modelIndex]->GetGaussianCount();
+						if (count > size_t(s_TotalGaussianCount) - offset)
+							throw std::runtime_error("Gaussian staging range exceeds the scene buffer");
+						models[modelIndex]->CopyGPUData(destination + offset, modelIndex);
+						offset += count;
+					}
+					if (offset != s_TotalGaussianCount)
+						throw std::runtime_error("Gaussian staging count does not match the scene buffer");
+				}
+				catch (...)
+				{
+					vkUnmapMemory(device, staging.GetMemory());
+					throw;
+				}
+				// HOST_COHERENT memory needs no explicit flush before queue submission.
+				vkUnmapMemory(device, staging.GetMemory());
+				VulkanBuffer::CopyBuffer(staging, s_GaussianSSBO, staging.GetSize());
+			}
+
+			// 排序索引初始化为恒等 (compute 基数排序前的安全回退)
+			std::vector<uint32_t> identity(s_TotalGaussianCount);
+			for (uint32_t i = 0; i < s_TotalGaussianCount; i++) identity[i] = i;
+			s_ValuesBuffers[0].SetDataStaged(identity.data(), identity.size() * sizeof(uint32_t));
+
+			UpdateModelTransforms();
+
+			// b3(u_DepthMap) 运行时在 Run() 中按当前 offscreen FBO 的 1x depth resolve 实时绑定 (见 b3 遮挡).
+			s_GaussianResourcesCreated = true;
+		}
+		catch (...)
 		{
-			const auto& sub = s_GaussianSubmitList[i];
-			auto model = GetModelLibrary()->Get(sub.GaussianID);
-			if (!model) continue;
-			auto gpuData = model->GetGPUData(i);  // 内部已设 modelIndex = i
-			for (auto& g : gpuData) gpu.push_back(g);
+			if (s_GaussianDescriptorSet != VK_NULL_HANDLE)
+				vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &s_GaussianDescriptorSet);
+			s_GaussianDescriptorSet = VK_NULL_HANDLE;
+			s_GaussianSSBO.Destroy();
+			s_ModelTransformSSBO.Destroy();
+			s_KeysBuffers[0].Destroy(); s_KeysBuffers[1].Destroy();
+			s_ValuesBuffers[0].Destroy(); s_ValuesBuffers[1].Destroy();
+			s_GlobalHistogramSSBO.Destroy();
+			s_PartitionHistogramSSBO.Destroy();
+			s_ProjectedSplatsSSBO.Destroy();
+			s_PrefixScratchSSBO.Destroy();
+			s_PrefixGroupSSBO.Destroy();
+			s_WorkInfoSSBO.Destroy();
+			s_TotalGaussianCount = 0;
+			s_GaussianResourcesCreated = false;
+			s_GaussiansDirty = true;
+			throw;
 		}
-		if (gpu.size() > s_TotalGaussianCount) gpu.resize(s_TotalGaussianCount);
-		s_GaussianSSBO.SetDataStaged(gpu.data(), gpu.size() * sizeof(GaussianDataGPU));
-
-		// 排序索引初始化为恒等 (compute 基数排序前的安全回退)
-		std::vector<uint32_t> identity(s_TotalGaussianCount);
-		for (uint32_t i = 0; i < s_TotalGaussianCount; i++) identity[i] = i;
-		s_ValuesBuffers[0].SetDataStaged(identity.data(), identity.size() * sizeof(uint32_t));
-
-		UpdateModelTransforms();
-
-		// b3(u_DepthMap) 运行时在 Run() 中按当前 offscreen FBO 的 1x depth resolve 实时绑定 (见 b3 遮挡).
-		s_GaussianResourcesCreated = true;
 	}
 
 	// 每帧刷新 model transform (gizmo 移动等, 不触发 SSBO 重建)
@@ -1535,7 +1591,8 @@ namespace Engine {
 			s_SceneData.ProjectionMatrix[1][1] * 0.5f * height, 0.0f, 0.0f);
 		data.viewportInfo = glm::vec4(width, height, 1.0f / width, 1.0f / height);
 		// data.extraInfo = glm::vec4(0.001f, 0.0f, 0.0f, 0.0f);
-		data.extraInfo = glm::vec4(1.0f / 255.0f, s_HiZActive ? 1.0f : 0.0f, 0.0f, 0.0f);
+		data.extraInfo = glm::vec4(1.0f / 255.0f, s_HiZActive ? 1.0f : 0.0f,
+			Renderer::EnableHiZRefinement ? 1.0f : 0.0f, 0.0f);
 
 		s_FrameInfoUBO.SetData(&data, sizeof(FrameInfoData));
 	}

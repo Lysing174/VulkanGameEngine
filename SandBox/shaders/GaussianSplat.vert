@@ -28,23 +28,24 @@ struct ProjectedSplatGPU {
     vec4 ndcBasis;    // xy = first basis; zw = second basis, in NDC units
     vec4 color;       // rgb + base opacity
     vec4 viewCenter;  // xyz = view-space center; w = unused
-    vec4 invSigma0;   // M00, M01, M02, M11
-    vec4 invSigma1;   // M12, M22, dot(E, M*E) - 9, unused
-    vec4 conic;       // inverse screen covariance: (xx, xy, yy, unused)
-    vec4 ndcBounds;   // tile-aligned rectangle: (minX, minY, maxX, maxY)
+    vec4 quadCenter;  // xy = quad center in NDC; z = needs tile-domain rejection
+    vec4 tileBounds;  // original tile candidate rectangle in NDC
+    vec4 conic;       // inverse screen covariance: (xx, xy, yy); w = conservative power cutoff
+    vec4 ndcBounds;   // conservative contributing-pixel AABB, within the original tile bounds
 };
 layout(std430, set = 0, binding = 5) readonly buffer ProjectedSplatBuffer {
     ProjectedSplatGPU projectedSplats[];
 };
 
 // Outputs (与 GaussianSplat.frag 严格对应)
-layout(location = 0) out vec4 fragColor;     // rgb + base opacity
-layout(location = 1) out vec2 fragPosition;   // center minus fragment position, in pixels
+layout(location = 0) flat out vec4 fragColor; // rgb + base opacity, constant per Gaussian
+layout(location = 1) flat out vec2 fragCenterPixel; // center in framebuffer pixel coordinates
 layout(location = 2) out vec2 fragScreenUV;   // screen UV for depth texture lookup
 layout(location = 3) flat out vec3 fragViewCenter;  // 椭球中心 E (view space)
 layout(location = 4) flat out vec4 fragInvSigma0;   // Σ_view⁻¹ 对称 6 元前 4 个
 layout(location = 5) flat out vec4 fragInvSigma1;   // (M12, M22, c=EᵀME - r², _pad)
-layout(location = 6) flat out vec3 fragConic;
+layout(location = 6) flat out vec4 fragConic;
+layout(location = 7) flat out vec4 fragBounds; // original tile bounds in pixels; zero disables the test
 
 const float sqrt8 = 2.8284271247461903; // sqrt(8)
 
@@ -60,13 +61,14 @@ void main() {
     fragInvSigma0   = vec4(1.0, 0.0, 0.0, 1.0);
     fragInvSigma1   = vec4(0.0, 1.0, 1.0, 0.0);
     fragScreenUV    = vec2(0.0);
-    fragConic      = vec3(0.0);
+    fragConic      = vec4(0.0);
+    fragBounds     = vec4(0.0);
 
     uint gaussianIdx = sortedIndices[gl_InstanceIndex];
     if (gaussianIdx >= projectedSplats.length()) {
         gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
         fragColor = vec4(0.0);
-        fragPosition = vec2(0.0);
+        fragCenterPixel = vec2(0.0);
         return;
     }
 
@@ -80,15 +82,17 @@ void main() {
     fragColor      = p.color;
     fragPosition   = quadPos * sqrt8;                 // scaled for gaussian evaluation in fragment
     */
-    vec2 corner = quadPos * 0.5 + 0.5;
-    vec2 ndcPosition = mix(p.ndcBounds.xy, p.ndcBounds.zw, corner);
+    vec2 ndcPosition = p.quadCenter.xy + quadPos.x * p.ndcBasis.xy + quadPos.y * p.ndcBasis.zw;
     // LMG does not far-clip splat centers; depth testing is disabled for this pass.
     gl_Position = vec4(ndcPosition, clamp(p.ndcCenter.z, 0.0, 1.0), 1.0);
     fragColor = p.color;
-    fragPosition = (p.ndcCenter.xy - ndcPosition) * 0.5 * frameInfo.viewportInfo.xy;
+    fragCenterPixel = (p.ndcCenter.xy * 0.5 + 0.5) * frameInfo.viewportInfo.xy;
     fragScreenUV   = gl_Position.xy * 0.5 + 0.5;      // screen UV for depth lookup (w = 1)
     fragViewCenter = p.viewCenter.xyz;
-    fragInvSigma0  = p.invSigma0;
-    fragInvSigma1  = p.invSigma1;
-    fragConic      = p.conic.xyz;
+    fragInvSigma0  = vec4(0.0);
+    fragInvSigma1  = vec4(0.0);
+    fragConic      = p.conic;
+    // Most small quads already fit the original tile domain; skip its fragment test.
+    fragBounds = p.quadCenter.z != 0.0
+        ? (p.tileBounds * 0.5 + 0.5) * frameInfo.viewportInfo.xyxy : vec4(0.0);
 }

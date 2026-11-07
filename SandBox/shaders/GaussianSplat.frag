@@ -1,13 +1,14 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-layout(location = 0) in vec4 fragColor;      // rgb + base opacity
-layout(location = 1) in vec2 fragPosition;    // center minus fragment position, in pixels
+layout(location = 0) flat in vec4 fragColor; // rgb + base opacity, constant per Gaussian
+layout(location = 1) flat in vec2 fragCenterPixel; // center in framebuffer pixel coordinates
 layout(location = 2) in vec2 fragScreenUV;    // screen UV for depth lookup
 layout(location = 3) flat in vec3 fragViewCenter;   // 椭球中心 E (view space)
 layout(location = 4) in vec4 fragInvSigma0;    // Σ_view⁻¹: (M00, M01, M02, M11)
 layout(location = 5) in vec4 fragInvSigma1;    // (M12, M22, c=EᵀME - r², _pad)
-layout(location = 6) flat in vec3 fragConic;
+layout(location = 6) flat in vec4 fragConic; // xyz: conic; w: conservative power cutoff
+layout(location = 7) flat in vec4 fragBounds;
 
 // 相机矩阵经 push constant 传入 (与 vertex 共用同一 block)
 layout(push_constant) uniform CameraData {
@@ -22,6 +23,12 @@ layout(set = 0, binding = 3) uniform sampler2D u_DepthMap;
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    // Keep exactly the original tile domain without custom primitive clipping.
+    if (fragBounds.z > fragBounds.x &&
+        (any(lessThan(gl_FragCoord.xy, fragBounds.xy)) ||
+         any(greaterThanEqual(gl_FragCoord.xy, fragBounds.zw))))
+        discard;
+
     /* Original sqrt(8) radial cutoff, retained for comparison.
     // 高斯到中心的平方距离 (sqrt8 单位)
     float A = dot(fragPosition, fragPosition);
@@ -30,16 +37,17 @@ void main() {
     if (A > 8.0) discard;
     */
 
-    vec2 d = fragPosition;
+    vec2 d = fragCenterPixel - gl_FragCoord.xy;
     float power = -0.5 * (fragConic.x * d.x * d.x + fragConic.z * d.y * d.y)
         - fragConic.y * d.x * d.y;
-    if (power > 0.0)
+    if (power > 0.0 || power < fragConic.w)
         discard;
     float opacity = min(0.99, fragColor.a * exp(power));
     if (opacity < 1.0 / 255.0)
         discard;
 
-    float sceneDepth = texture(u_DepthMap, fragScreenUV).r;
+    // The mesh depth image and this pass share the same pixel grid.
+    float sceneDepth = texelFetch(u_DepthMap, ivec2(gl_FragCoord.xy), 0).r;
 
     // 默认完全可见; 仅在有 mesh 几何的像素上做遮挡
     float occlusion = 1.0;

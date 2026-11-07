@@ -28,20 +28,29 @@ namespace Engine {
 		if (vkCreateBuffer(device, &bufferInfo, nullptr, &m_Buffer) != VK_SUCCESS)
 			throw std::runtime_error("failed to create buffer!");
 
-		// 2. 分配内存
-		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(device, m_Buffer, &memRequirements);
+		try
+		{
+			// 2. 分配内存
+			VkMemoryRequirements memRequirements;
+			vkGetBufferMemoryRequirements(device, m_Buffer, &memRequirements);
 
-		VkMemoryAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = ctx->FindMemoryType(memRequirements.memoryTypeBits, properties);
+			VkMemoryAllocateInfo allocInfo = {};
+			allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+			allocInfo.allocationSize = memRequirements.size;
+			allocInfo.memoryTypeIndex = ctx->FindMemoryType(memRequirements.memoryTypeBits, properties);
 
-		if (vkAllocateMemory(device, &allocInfo, nullptr, &m_Memory) != VK_SUCCESS)
-			throw std::runtime_error("failed to allocate buffer memory!");
+			if (vkAllocateMemory(device, &allocInfo, nullptr, &m_Memory) != VK_SUCCESS)
+				throw std::runtime_error("failed to allocate buffer memory!");
 
-		// 3. 绑定
-		vkBindBufferMemory(device, m_Buffer, m_Memory, 0);
+			// 3. 绑定
+			if (vkBindBufferMemory(device, m_Buffer, m_Memory, 0) != VK_SUCCESS)
+				throw std::runtime_error("failed to bind buffer memory!");
+		}
+		catch (...)
+		{
+			Destroy();
+			throw;
+		}
 	}
 
 	VulkanBuffer::~VulkanBuffer()

@@ -10,6 +10,7 @@ layout(local_size_x = 512) in;
 // Bind b1 to exactly N GaussianDataGPU entries. Allocate b3/b4/b7/b8 for N
 // entries and b5 for ceil(N/512). Dispatch ceil(N/512), then a compute
 // write -> compute read/write barrier before PrefixScan (one workgroup).
+// CPU initializes b6 counts.zw to N and ceil(N/512) before the first Cull.
 // PrefixScan and PrefixCompact take N in their 16-byte push constants.
 // No buffers need clearing. N=0 skips Cull/Compact but must still run Scan.
 
@@ -24,7 +25,7 @@ layout(std140, set = 0, binding = 0) uniform FrameInfo
     vec4 cameraPosAndScale;
     vec4 focal;
     vec4 viewportInfo;
-    vec4 extraInfo;
+    vec4 extraInfo; // x: alpha threshold; y: Hi-Z active; z: adaptive refinement enabled.
 } frameInfo;
 
 struct GaussianDataGPU
@@ -42,10 +43,10 @@ struct ProjectedSplatGPU
     vec4 ndcBasis;    // xy = first basis; zw = second basis, in NDC units.
     vec4 color;       // rgb + base opacity.
     vec4 viewCenter;  // xyz = view-space center; w = unused.
-    vec4 invSigma0;   // M00, M01, M02, M11.
-    vec4 invSigma1;   // M12, M22, dot(E, M*E) - 9, unused.
-    vec4 conic;       // inverse screen covariance: (xx, xy, yy, unused).
-    vec4 ndcBounds;   // tile-aligned rectangle: (minX, minY, maxX, maxY).
+    vec4 quadCenter;  // xy = quad center in NDC; z = needs tile-domain fragment rejection.
+    vec4 tileBounds;  // original tile candidate rectangle in NDC (old ellipsoid slot).
+    vec4 conic;       // inverse screen covariance: (xx, xy, yy); w = conservative power cutoff.
+    vec4 ndcBounds;   // conservative contributing-pixel AABB, within the original tile bounds.
 };
 
 layout(std430, set = 0, binding = 1) readonly buffer GaussianDataBuffer
@@ -73,18 +74,208 @@ layout(std430, set = 0, binding = 5) writeonly buffer PrefixGroupBuffer
     uvec2 groupData[]; // x: after Hi-Z, y: before Hi-Z.
 };
 
+layout(std430, set = 0, binding = 6) readonly buffer GaussianWorkInfoBuffer
+{
+    uvec4 counts; // visibleCount, sortPartitionCount, inputCount, inputGroups.
+    uvec4 sortDispatch;
+    uvec4 draw;
+    uvec4 cullingCounts;
+} workInfo;
+
 layout(set = 0, binding = 9) uniform sampler2D hiZDepth;
 
 const float SQRT8 = 2.8284271247461903;
 const uint INVALID_RANK = 0xFFFFFFFFu;
 shared uvec2 visiblePrefix[512];
 
-bool isOccluded(vec4 bounds, float gaussianDepth)
+bool makeCompactQuad(vec2 center, vec3 conic, float radiusSquared, vec2 viewport, vec4 tileBounds,
+    out vec2 quadCenter, out vec4 basis, out vec4 clipBounds)
+{
+    // The original rectangle is a safe fallback for ill-conditioned conics.
+    clipBounds = tileBounds;
+    quadCenter = (tileBounds.xy + tileBounds.zw) * 0.5;
+    basis = vec4((tileBounds.z - tileBounds.x) * 0.5, 0.0,
+        0.0, (tileBounds.w - tileBounds.y) * 0.5);
+
+    float coefficientScale = max(max(abs(conic.x), abs(conic.y)), abs(conic.z));
+    if (!(coefficientScale > 0.0) || isnan(coefficientScale) || isinf(coefficientScale))
+        return true;
+
+    vec3 q = conic / coefficientScale;
+    // Enlarge the ellipse to cover roundoff in the fragment quadratic form.
+    // Subtracting a multiple of I preserves the principal directions.
+    float roundoff = 4e-6 * (abs(q.x) + 2.0 * abs(q.y) + abs(q.z));
+    q.xz -= vec2(roundoff);
+    float determinant = q.x * q.z - q.y * q.y;
+    if (q.x <= 0.0 || q.z <= 0.0 || determinant <= 0.0)
+        return true;
+
+    float halfDifference = 0.5 * (q.x - q.z);
+    float eigenGap = length(vec2(halfDifference, q.y));
+    float lambdaMax = 0.5 * (q.x + q.z) + eigenGap;
+    // det/lambdaMax avoids cancellation in the smaller eigenvalue.
+    float lambdaMin = determinant / lambdaMax;
+    if (!(lambdaMin > 0.0))
+        return true;
+
+    vec2 minorAxis = vec2(1.0, 0.0);
+    if (eigenGap > 0.0) {
+        minorAxis = q.x >= q.z ? vec2(lambdaMax - q.z, q.y) : vec2(q.y, lambdaMax - q.x);
+        minorAxis = normalize(minorAxis);
+    }
+    vec2 majorAxis = vec2(-minorAxis.y, minorAxis.x);
+    vec2 halfLengths = sqrt(vec2(radiusSquared / lambdaMin, radiusSquared / lambdaMax) / coefficientScale);
+    // Cover subpixel rasterization and interpolation rounding; never cap large splats.
+    halfLengths += vec2(0.5) + halfLengths * 1e-5;
+    vec2 basis1 = majorAxis * halfLengths.x * (2.0 / viewport);
+    vec2 basis2 = minorAxis * halfLengths.y * (2.0 / viewport);
+    vec4 rotatedBasis = vec4(basis1, basis2);
+    if (any(isnan(rotatedBasis)) || any(isinf(rotatedBasis)))
+        return true;
+
+    // Exact AABB of the enlarged ellipse, with an extra pixel of conservative slack.
+    vec2 extent = sqrt(basis1 * basis1 + basis2 * basis2) + 2.0 / viewport;
+    clipBounds = vec4(max(tileBounds.xy, center - extent), min(tileBounds.zw, center + extent));
+    if (any(lessThanEqual(clipBounds.zw, clipBounds.xy)))
+        return false;
+
+    vec2 size = clipBounds.zw - clipBounds.xy;
+    float rotatedArea = 4.0 * abs(basis1.x * basis2.y - basis1.y * basis2.x);
+    if (size.x * size.y <= rotatedArea) {
+        quadCenter = (clipBounds.xy + clipBounds.zw) * 0.5;
+        basis = vec4(size.x * 0.5, 0.0, 0.0, size.y * 0.5);
+    } else {
+        quadCenter = center;
+        basis = rotatedBasis;
+    }
+    return true;
+}
+
+const float HIZ_REFINE_MIN_PIXELS = 4096.0;
+const uint HIZ_REFINE_NODE_BUDGET = 32u;
+
+float ellipseQuadratic(vec2 p, vec3 q)
+{
+    return q.x * p.x * p.x + 2.0 * q.y * p.x * p.y + q.z * p.y * p.y;
+}
+
+bool outsideEllipse(ivec2 pixelMin, ivec2 pixelMax, vec2 center, vec3 q, float radiusSquared)
+{
+    // Use whole pixel squares, not only centers, to retain boundary coverage.
+    vec2 lo = vec2(pixelMin) - center;
+    vec2 hi = vec2(pixelMax) + 1.0 - center;
+    if (all(lessThanEqual(lo, vec2(0.0))) && all(greaterThanEqual(hi, vec2(0.0))))
+        return false;
+
+    // The minimum of a positive-definite quadratic over a rectangle lies at
+    // its center (if contained), or at a clamped minimum on one of four edges.
+    vec2 edgeY = clamp(-q.y * vec2(lo.x, hi.x) / q.z, vec2(lo.y), vec2(hi.y));
+    vec2 edgeX = clamp(-q.y * vec2(lo.y, hi.y) / q.x, vec2(lo.x), vec2(hi.x));
+    float minimum = min(min(ellipseQuadratic(vec2(lo.x, edgeY.x), q),
+                            ellipseQuadratic(vec2(hi.x, edgeY.y), q)),
+                        min(ellipseQuadratic(vec2(edgeX.x, lo.y), q),
+                            ellipseQuadratic(vec2(edgeX.y, hi.y), q)));
+    vec2 magnitude = max(abs(lo), abs(hi));
+    float magnitudeBound = q.x * magnitude.x * magnitude.x
+        + 2.0 * abs(q.y) * magnitude.x * magnitude.y + q.z * magnitude.y * magnitude.y;
+    // Treat numerical uncertainty as intersection, including overflow/NaN.
+    float slack = max(0.0001 * radiusSquared, 1e-5 * magnitudeBound);
+    return minimum > radiusSquared + slack;
+}
+
+bool refineOcclusion(ProjectedSplatGPU projected, ivec2 pixelMin, ivec2 pixelMax,
+    int rootLevel, ivec2 rootMin, ivec2 rootMax, vec4 rootDepths, float depthGuard)
+{
+    vec3 conic = projected.conic.xyz;
+    float scale = max(max(abs(conic.x), abs(conic.y)), abs(conic.z));
+    if (!(scale > 0.0) || isnan(scale) || isinf(scale))
+        return false;
+    vec3 q = conic / scale;
+    float roundoff = 4e-6 * (abs(q.x) + 2.0 * abs(q.y) + abs(q.z));
+    q.xz -= vec2(roundoff);
+    float determinant = q.x * q.z - q.y * q.y;
+    float radiusSquared = (-2.0 * projected.conic.w) / scale;
+    if (q.x <= 0.0 || q.z <= 0.0 || determinant <= 0.0 ||
+        !(radiusSquared > 0.0) || isnan(radiusSquared) || isinf(radiusSquared))
+        return false;
+
+    vec2 center = (projected.ndcCenter.xy * 0.5 + 0.5) * frameInfo.viewportInfo.xy;
+    float gaussianDepth = -projected.viewCenter.z;
+
+    // One valid visible pixel is enough to retain the entire Gaussian. Failed
+    // samples never establish occlusion; the hierarchy must still prove it.
+    ivec2 probe = clamp(ivec2(floor(clamp(center, vec2(pixelMin), vec2(pixelMax)))), pixelMin, pixelMax);
+    vec2 d = center - (vec2(probe) + 0.5);
+    float power = -0.5 * (conic.x * d.x * d.x + conic.z * d.y * d.y) - conic.y * d.x * d.y;
+    if (power <= 0.0 && min(0.99, projected.color.a * exp(power)) >= frameInfo.extraInfo.x) {
+        float probeDepth = texelFetch(hiZDepth, probe, 0).r;
+        if (gaussianDepth <= probeDepth + 0.1)
+            return false;
+    }
+
+    // Charge the original four reads and the probe to the same total budget.
+    uint visits = 5u;
+    for (int rootY = rootMin.y; rootY <= rootMax.y; ++rootY) {
+        for (int rootX = rootMin.x; rootX <= rootMax.x; ++rootX) {
+            ivec2 node = ivec2(rootX, rootY);
+            int level = rootLevel;
+            for (;;) {
+                if (level != rootLevel) {
+                    if (visits >= HIZ_REFINE_NODE_BUDGET)
+                        return false;
+                    ++visits;
+                }
+                ivec2 lo = max(pixelMin, node << level);
+                ivec2 hi = min(pixelMax, ((node + 1) << level) - 1);
+                bool descend = false;
+                if (all(lessThanEqual(lo, hi)) && !outsideEllipse(lo, hi, center, q, radiusSquared)) {
+                    int rootIndex = (rootX - rootMin.x) + 2 * (rootY - rootMin.y);
+                    float depth = level == rootLevel ? rootDepths[rootIndex] : texelFetch(hiZDepth, node, level).r;
+                    if (!(gaussianDepth > depth + 0.1 + depthGuard)) {
+                        if (level == 0)
+                            return false;
+                        descend = true;
+                    }
+                }
+                if (descend) {
+                    node <<= 1;
+                    --level;
+                    continue;
+                }
+
+                // Stackless depth-first walk: coordinate parity identifies the
+                // current child. Ascend until a sibling exists, or finish this root.
+                bool hasSibling = false;
+                while (level < rootLevel) {
+                    int child = (node.x & 1) + 2 * (node.y & 1);
+                    ivec2 parent = node >> 1;
+                    if (child < 3) {
+                        int nextChild = child + 1;
+                        node = (parent << 1) + ivec2(nextChild & 1, nextChild >> 1);
+                        hasSibling = true;
+                        break;
+                    }
+                    node = parent;
+                    ++level;
+                }
+                if (!hasSibling)
+                    break;
+            }
+        }
+    }
+    // Every potentially contributing region was either outside the ellipse or
+    // proven occluded. Partial visibility and budget exhaustion return above.
+    return true;
+}
+
+bool isOccluded(ProjectedSplatGPU projected)
 {
     if (frameInfo.extraInfo.y == 0.0)
         return false;
 
-    // Work in integer pixel bounds so four mip texels cover every rasterized pixel.
+    vec4 bounds = projected.ndcBounds;
+    float gaussianDepth = -projected.viewCenter.z;
+    // Four mip texels conservatively cover every potentially contributing pixel.
     ivec2 viewport = ivec2(frameInfo.viewportInfo.xy);
     ivec2 pixelMin = clamp(ivec2(floor((bounds.xy * 0.5 + 0.5) * vec2(viewport))),
         ivec2(0), viewport - 1);
@@ -102,12 +293,20 @@ bool isOccluded(vec4 bounds, float gaussianDepth)
     if (any(greaterThan(cellMax - cellMin, ivec2(1))))
         return false;
 
-    float farthest = max(max(texelFetch(hiZDepth, cellMin, level).r,
-                             texelFetch(hiZDepth, ivec2(cellMax.x, cellMin.y), level).r),
-                         max(texelFetch(hiZDepth, ivec2(cellMin.x, cellMax.y), level).r,
-                             texelFetch(hiZDepth, cellMax, level).r));
+    vec4 depths = vec4(texelFetch(hiZDepth, cellMin, level).r,
+        texelFetch(hiZDepth, ivec2(cellMax.x, cellMin.y), level).r,
+        texelFetch(hiZDepth, ivec2(cellMin.x, cellMax.y), level).r,
+        texelFetch(hiZDepth, cellMax, level).r);
+    float farthest = max(max(depths.x, depths.y), max(depths.z, depths.w));
     // Match the fragment test's 0.1 tolerance, with an additional conservative bias.
-    return gaussianDepth > farthest + 0.1 + max(0.0001, gaussianDepth * 0.00001);
+    float depthGuard = max(0.0001, gaussianDepth * 0.00001);
+    if (gaussianDepth > farthest + 0.1 + depthGuard)
+        return true;
+
+    vec2 size = vec2(pixelMax - pixelMin + 1);
+    if (frameInfo.extraInfo.z == 0.0 || level == 0 || size.x * size.y < HIZ_REFINE_MIN_PIXELS)
+        return false;
+    return refineOcclusion(projected, pixelMin, pixelMax, level, cellMin, cellMax, depths, depthGuard);
 }
 
 bool isFinite(vec4 value)
@@ -282,6 +481,17 @@ bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
     vec2 ndcMin = vec2(tileMin * 16) / viewport * 2.0 - 1.0;
     vec2 ndcMax = vec2(tileMax * 16) / viewport * 2.0 - 1.0;
 
+    // alpha >= threshold iff q <= 2*log(opacity/threshold). Keep the original
+    // tile domain as well, so the compact geometry cannot introduce new tails.
+    float supportRadiusSquared = 2.0 * log(g.posAndOpacity.w / frameInfo.extraInfo.x) + 0.0002;
+    vec3 conic = vec3(d, -b, a) / determinant;
+    vec2 quadCenter;
+    vec4 compactBasis;
+    vec4 compactBounds;
+    if (!makeCompactQuad(ndcCenter.xy, conic, supportRadiusSquared, viewport, vec4(ndcMin, ndcMax),
+        quadCenter, compactBasis, compactBounds))
+        return false;
+
     // Only surviving splats need the fragment shader's ellipsoid parameters.
     // Original preparation retained; the current LMG rule only needs the center depth.
     /*
@@ -315,7 +525,7 @@ bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
 
     result.ndcCenter = vec4(ndcCenter, 1.0);
     // result.ndcBasis = vec4(basis1, basis2);
-    result.ndcBasis = vec4(0.0);
+    result.ndcBasis = compactBasis;
     // SH coefficients stay in asset space when the instance is transformed.
     vec3 camPos = frameInfo.cameraPosAndScale.xyz;
     vec3 viewDir = normalize(inverse(mat3(model)) * (worldCenter - camPos));
@@ -325,10 +535,13 @@ bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
     // result.invSigma0 = inverse0;
     // result.invSigma1 = inverseTail;
     result.viewCenter = vec4(viewCenter.xyz, 0.0);
-    result.invSigma0 = vec4(0.0);
-    result.invSigma1 = vec4(0.0);
-    result.conic = vec4(d, -b, a, 0.0) / determinant;
-    result.ndcBounds = vec4(ndcMin, ndcMax);
+    vec2 quadExtent = abs(compactBasis.xy) + abs(compactBasis.zw);
+    bool needsTileClip = any(lessThan(quadCenter - quadExtent, vec2(ndcMin))) ||
+        any(greaterThan(quadCenter + quadExtent, vec2(ndcMax)));
+    result.quadCenter = vec4(quadCenter, needsTileClip ? 1.0 : 0.0, 0.0);
+    result.tileBounds = vec4(ndcMin, ndcMax);
+    result.conic = vec4(conic, -0.5 * supportRadiusSquared);
+    result.ndcBounds = compactBounds;
     key = encodeDepth(viewCenter.z);
     return true;
 }
@@ -337,7 +550,8 @@ void main()
 {
     uint id = gl_GlobalInvocationID.x;
     uint lane = gl_LocalInvocationID.x;
-    bool inRange = id < uint(gaussians.length());
+    // Avoid OpArrayLength on the potentially >2 GiB Gaussian SSBO.
+    bool inRange = id < workInfo.counts.z;
     bool visible = false;
     bool frustumVisible = false;
     uint key = 0u;
@@ -346,7 +560,7 @@ void main()
     {
         frustumVisible = projectAndCull(id, projected, key);
         visible = frustumVisible;
-        if (visible && isOccluded(projected.ndcBounds, -projected.viewCenter.z))
+        if (visible && isOccluded(projected))
             visible = false;
         if (visible)
             projectedSplats[id] = projected;

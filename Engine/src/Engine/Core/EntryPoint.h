@@ -12,7 +12,7 @@ extern Engine::Application* Engine::CreateApplication();
 // 测试模式开关: 改这里即可切换。
 //   true  → 走 ApplicationSpecification 离线测试流程 (路径/参数全部在代码里写死, 见 ApplicationSpecification.h 的 TestSpecification)
 //   false → 走原有编辑器流程 (Application)
-static const bool ENABLE_TEST_MODE = true;
+static const bool ENABLE_TEST_MODE = false;
 
 int main(int argc,char** argv) 
 {

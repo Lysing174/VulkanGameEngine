@@ -373,6 +373,9 @@ namespace Engine {
 		ImGui::Text("FPS (average for 0.5s): %.1f", m_Fps);
 		ImGui::Text("Frame Time: %.2f ms", m_Statistics.CpuTimeMs+m_Statistics.CpuWaitGpuTimeMs);
 		ImGui::Checkbox("Enable Hi-Z", &Renderer::EnableHiZ);
+		ImGui::Checkbox("Adaptive Hi-Z", &Renderer::EnableHiZRefinement);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Refine uncertain splats covering at least 4096 pixels.\nBudget: 32 nodes including the coarse test; unresolved splats remain visible.");
 		if (auto framebuffer = Renderer::GetOffscreenFramebuffer())
 			ImGui::Text("Render size: %u x %u", framebuffer->GetWidth(), framebuffer->GetHeight());
 		ImGui::Separator();

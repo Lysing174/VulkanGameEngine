@@ -29,6 +29,7 @@ namespace Engine {
 		// Startup option: changing MSAA requires recreating render passes and framebuffers.
 		static constexpr bool EnableMSAA = false;
 		inline static bool EnableHiZ = true;
+		inline static bool EnableHiZRefinement = true;
 		static void Init();
 		static void Shutdown();
 		static void BeginRenderQueueSubmit();
