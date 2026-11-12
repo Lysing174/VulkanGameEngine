@@ -8,6 +8,7 @@
 #include <stb_image.h>
 
 #include <GLFW/glfw3.h>
+#include <glm/gtc/packing.hpp>
 
 #include <algorithm>
 #include <array>
@@ -279,13 +280,15 @@ namespace Engine
 
         const VkFormat format = framebuffer->GetColorFormat();
         const bool floatColor = format == VK_FORMAT_R32G32B32A32_SFLOAT;
-        if (!floatColor && format != VK_FORMAT_B8G8R8A8_UNORM)
+        const bool halfColor = format == VK_FORMAT_R16G16B16A16_SFLOAT;
+        if (!floatColor && !halfColor && format != VK_FORMAT_B8G8R8A8_UNORM)
         {
             EG_CORE_ERROR("Unsupported offscreen readback format: {0}", static_cast<int>(format));
             return false;
         }
         const size_t pixelCount = static_cast<size_t>(width) * height;
-        const VkDeviceSize size = static_cast<VkDeviceSize>(pixelCount) * 4 * (floatColor ? sizeof(float) : 1);
+        const size_t channelSize = halfColor ? sizeof(uint16_t) : (floatColor ? sizeof(float) : sizeof(uint8_t));
+        const VkDeviceSize size = static_cast<VkDeviceSize>(pixelCount) * 4 * channelSize;
 
         if (!m_ReadbackBuffer.IsValid() || m_ReadbackBuffer.GetSize() < size ||
             m_ReadbackWidth != width || m_ReadbackHeight != height)
@@ -359,21 +362,34 @@ namespace Engine
             return false;
 
         outPixels.resize(pixelCount * 4);
-        if (floatColor)
+        if (floatColor || halfColor)
         {
-            const float* rgba = static_cast<const float*>(data);
             auto quantize = [](float value) -> uint8_t
             {
                 if (!(value > 0.0f)) return 0; // Also handles NaN.
                 if (value >= 1.0f) return 255;
                 return static_cast<uint8_t>(value * 255.0f + 0.5f);
             };
-            for (size_t pixel = 0; pixel < pixelCount; ++pixel)
+            auto writeBGRA = [&](const auto& readChannel)
             {
-                outPixels[pixel * 4 + 0] = quantize(rgba[pixel * 4 + 2]);
-                outPixels[pixel * 4 + 1] = quantize(rgba[pixel * 4 + 1]);
-                outPixels[pixel * 4 + 2] = quantize(rgba[pixel * 4 + 0]);
-                outPixels[pixel * 4 + 3] = quantize(rgba[pixel * 4 + 3]);
+                for (size_t pixel = 0; pixel < pixelCount; ++pixel)
+                {
+                    const size_t channel = pixel * 4;
+                    outPixels[channel + 0] = quantize(readChannel(channel + 2));
+                    outPixels[channel + 1] = quantize(readChannel(channel + 1));
+                    outPixels[channel + 2] = quantize(readChannel(channel + 0));
+                    outPixels[channel + 3] = quantize(readChannel(channel + 3));
+                }
+            };
+            if (halfColor)
+            {
+                const auto* rgba = static_cast<const uint16_t*>(data);
+                writeBGRA([rgba](size_t channel) { return glm::unpackHalf1x16(rgba[channel]); });
+            }
+            else
+            {
+                const auto* rgba = static_cast<const float*>(data);
+                writeBGRA([rgba](size_t channel) { return rgba[channel]; });
             }
         }
         else

@@ -21,26 +21,34 @@ namespace Engine
     struct TestSpecification
     {
         // 高斯 .ply 路径 (可空: 留空 "" 表示不绘制高斯)
+        //std::string GaussianPly      = "";
         std::string GaussianPly      = "D:/source/python_projects/3DGS/output/baseline/playroom/point_cloud/iteration_30000/point_cloud.ply";
         //std::string GaussianPly      =  "D:/source/repos/VulkanEngine/paper_reproduction/lmg/output/playroom/distortion_160000_sh3_r1/point_cloud/iteration_15000/point_cloud.ply";
+        //std::string GaussianPly      = "D:/source/repos/VulkanEngine/SandBox/gaussians/e9zR4mvMWw7/point_cloud_250000.ply";
         glm::mat4   GaussianTransform = glm::mat4(1.0f);    // 高斯整体变换 (无则不改)
 
         // 网格模型路径 (.gltf/.glb/.obj, 可空: 留空 "" 表示不绘制 mesh)
-        std::string MeshPath      = "D:/source/python_projects/SuGaR/output/lmg_assets/playroom/playroom.obj";
+        std::string MeshPath      = "";
+        //std::string MeshPath      = "D:/source/python_projects/SuGaR/output/lmg_assets/playroom/playroom.obj";
+        //std::string MeshPath      = "D:/source/repos/VulkanEngine/SandBox/models/e9zR4mvMWw7/e2ed48cedbd04eb1b33b935df4d78911.obj";
         glm::mat4   MeshTransform = glm::mat4(1.0f);    // 网格整体变换 (无则不改)
 
         // COLMAP 内参 / 位姿 (必填)
         std::string ColmapCamerasTxt = "D:/source/python_projects/3DGS/data/deep_blending/playroom/sparse/0/cameras.bin";
         std::string ColmapImagesTxt  = "D:/source/python_projects/3DGS/data/deep_blending/playroom/sparse/0/images.bin";
+        //std::string ColmapCamerasTxt = "D:/source/repos/VulkanEngine/paper_reproduction/lmg/dataset/images/e9zR4mvMWw7/sparse/0/cameras.txt";
+        //std::string ColmapImagesTxt  = "D:/source/repos/VulkanEngine/paper_reproduction/lmg/dataset/images/e9zR4mvMWw7/sparse/0/images.txt";
 
         // 测试集图片目录: 留空 "" 表示渲染 images.txt 里全部位姿;
         // 填了目录则只渲染该目录下真实存在的图片 (用于从训练+测试混合的位姿里筛出测试集)
         std::string ImageDir         = "D:/source/python_projects/3DGS/data/deep_blending/playroom/test_images";
+        //std::string ImageDir         = "D:/source/python_projects/3DGS/data/Matterport3D/e9zR4mvMWw7/e9zR4mvMWw7/test_images";
 
         // GT (真值) 图片目录: 每张渲染图会与 GroundTruthDir/<相机名> 比对, 计算 PSNR/SSIM。
         // 留空 "" 表示不计算质量指标。通常与 ImageDir 指向同一个测试图目录。
         std::string GroundTruthDir   = "D:/source/python_projects/3DGS/data/deep_blending/playroom/test_images";
-
+        //std::string GroundTruthDir   = "D:/source/python_projects/3DGS/data/Matterport3D/e9zR4mvMWw7/e9zR4mvMWw7/test_images";
+        
         // 渲染结果输出目录
         std::string OutputDir        = "test_output";
 
@@ -88,7 +96,7 @@ namespace Engine
         // 返回该张耗时 (ms); GPU 各阶段耗时写入 outGpu (读的是时间戳流水线里的上一帧)。
         double RenderImage(const DatasetCamera& camera, GpuTimings& outGpu);
 
-        // Read RGBA32F offscreen color and quantize to BGRA8 for BMP/metrics.
+        // Read offscreen color as BGRA8 for BMP and metrics.
         bool ReadbackColor(std::vector<uint8_t>& outPixels);
 
         static bool WriteBMP(const std::string& path, const uint8_t* bgra, uint32_t width, uint32_t height);

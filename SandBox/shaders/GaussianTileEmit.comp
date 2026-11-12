@@ -1,0 +1,18 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "GaussianTileCommon.glsl"
+layout(local_size_x=512) in;
+void main() {
+    uint rank=gl_GlobalInvocationID.x;
+    if (rank>=work.counts.x || tileWork.counts.z!=0u) return;
+    uint id=sortedIDs[rank];
+    uvec4 rect=tileRect(splats[id]);
+    uint offset=groups[gl_WorkGroupID.x].x+scratch[rank].y;
+    // Deterministic depth-rank order; stable tile-ID sort preserves it.
+    for (uint y=rect.y; y<rect.w; ++y)
+        for (uint x=rect.x; x<rect.z; ++x) {
+            tileKeys[offset]=y*params.grid.x+x;
+            tileIDs[offset]=id;
+            ++offset;
+        }
+}

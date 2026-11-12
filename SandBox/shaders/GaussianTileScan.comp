@@ -1,0 +1,36 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "GaussianTileCommon.glsl"
+layout(local_size_x=512) in;
+shared uint prefix[512];
+shared uint carry;
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    if (lane == 0u) carry = 0u;
+    barrier();
+    for (uint base=0u; base<params.grid.w; base+=512u) {
+        uint group = base+lane;
+        prefix[lane] = group<params.grid.w ? groups[group].x : 0u;
+        barrier();
+        for (uint stride=1u; stride<512u; stride<<=1u) {
+            uint value=prefix[lane];
+            if (lane>=stride) value=cappedAdd(value,prefix[lane-stride]);
+            barrier();
+            prefix[lane]=value;
+            barrier();
+        }
+        uint batchBase=carry;
+        uint offset=lane==0u ? 0u : prefix[lane-1u];
+        if (group<params.grid.w) groups[group].x=cappedAdd(batchBase,offset);
+        barrier();
+        if (lane==0u) carry=cappedAdd(batchBase,prefix[511]);
+        barrier();
+    }
+    if (lane==0u) {
+        bool overflow=carry>params.grid.z;
+        uint count=overflow ? 0u : carry;
+        uint partitions=(count+511u)/512u;
+        tileWork.counts=uvec4(count,partitions,overflow ? 1u : 0u,params.grid.z);
+        tileWork.dispatch=uvec4(partitions,1u,1u,0u);
+    }
+}

@@ -59,14 +59,14 @@ namespace Engine {
         createTimestampQueries();
         createSwapChain();
         // offscreenColorFormat = swapChainImageFormat;
-        offscreenColorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+        offscreenColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
         VkFormatProperties colorProperties{};
         vkGetPhysicalDeviceFormatProperties(physicalDevice, offscreenColorFormat, &colorProperties);
         const VkFormatFeatureFlags requiredColorFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT
             | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
             | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
         if ((colorProperties.optimalTilingFeatures & requiredColorFeatures) != requiredColorFeatures)
-            throw std::runtime_error("RGBA32F offscreen rendering requires color blending, linear sampling and readback support");
+            throw std::runtime_error("RGBA16F offscreen rendering requires color blending, linear sampling and readback support");
         depthImageFormat = findDepthFormat();
         createImageViews();
 
@@ -78,7 +78,7 @@ namespace Engine {
         VkImageFormatProperties colorImageProperties{};
         if (vkGetPhysicalDeviceImageFormatProperties(physicalDevice, offscreenColorFormat, VK_IMAGE_TYPE_2D,
             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 0, &colorImageProperties) != VK_SUCCESS)
-            throw std::runtime_error("RGBA32F offscreen color attachments are not supported");
+            throw std::runtime_error("RGBA16F offscreen color attachments are not supported");
         while ((colorImageProperties.sampleCounts & m_MSAASamples) == 0 && m_MSAASamples != VK_SAMPLE_COUNT_1_BIT)
             m_MSAASamples = static_cast<VkSampleCountFlagBits>(static_cast<uint32_t>(m_MSAASamples) >> 1);
 

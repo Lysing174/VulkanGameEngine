@@ -1,0 +1,11 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "GaussianTileCommon.glsl"
+layout(local_size_x=512) in;
+void main() {
+    uint i=gl_GlobalInvocationID.x;
+    if (i>=tileWork.counts.x) return;
+    uint tile=tileKeys[i];
+    if (i==0u || tileKeys[i-1u]!=tile) ranges[tile].x=i;
+    if (i+1u==tileWork.counts.x || tileKeys[i+1u]!=tile) ranges[tile].y=i+1u;
+}

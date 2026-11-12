@@ -1,0 +1,64 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "GaussianTileCommon.glsl"
+layout(local_size_x=16, local_size_y=16) in;
+layout(set=0, binding=10) uniform sampler2D meshDepth;
+layout(rgba32f, set=0, binding=11) uniform image2D outputColor;
+shared vec4 centers[256]; // pixel center xy, positive depth, unused
+shared vec4 colors[256];
+shared vec4 conics[256];
+shared vec4 domains[256];
+shared uint allDone;
+void main() {
+    uvec2 pixel=gl_GlobalInvocationID.xy;
+    uint lane=gl_LocalInvocationIndex;
+    bool inside=all(lessThan(pixel,uvec2(frame.viewportInfo.xy)));
+    bool done=!inside;
+    bool fallback=tileWork.counts.z!=0u;
+    uint tile=gl_WorkGroupID.y*params.grid.x+gl_WorkGroupID.x;
+    uvec2 range=fallback ? uvec2(0u,work.counts.x) : ranges[tile];
+    vec2 samplePoint=vec2(pixel)+0.5; // matches the existing VS/FS convention
+    float depthLimit=3.402823466e38;
+    vec4 background=vec4(0);
+    if (inside) {
+        background=imageLoad(outputColor,ivec2(pixel));
+        float depth=texelFetch(meshDepth,ivec2(pixel),0).r;
+        if (depth<1.0) depthLimit=params.projection.y/(depth+params.projection.x)+0.1;
+    }
+    vec3 C=vec3(0);
+    float T=1.0;
+    for (uint base=range.x; base<range.y; base+=256u) {
+        if (lane==0u) allDone=1u;
+        barrier();
+        if (!done) atomicAnd(allDone,0u);
+        barrier();
+        if (allDone!=0u) break; // uniform; completed pixels still join barriers
+        uint i=base+lane;
+        if (i<range.y) {
+            uint id=fallback ? sortedIDs[i] : tileIDs[i];
+            ProjectedSplatGPU p=splats[id];
+            centers[lane]=vec4((p.ndcCenter.xy*0.5+0.5)*frame.viewportInfo.xy,-p.viewCenter.z,0);
+            colors[lane]=p.color;
+            conics[lane]=p.conic;
+            domains[lane]=(p.tileBounds*0.5+0.5)*frame.viewportInfo.xyxy;
+        }
+        barrier();
+        for (uint j=0u; !done && j<min(256u,range.y-base); ++j) {
+            if (centers[j].z>depthLimit || any(lessThan(samplePoint,domains[j].xy)) ||
+                any(greaterThanEqual(samplePoint,domains[j].zw))) continue;
+            vec2 d=centers[j].xy-samplePoint;
+            vec4 q=conics[j];
+            float power=-0.5*(q.x*d.x*d.x+q.z*d.y*d.y)-q.y*d.x*d.y;
+            if (power>0.0 || power<q.w) continue;
+            float alpha=min(0.99,colors[j].a*exp(power));
+            if (alpha<1.0/255.0) continue;
+            float nextT=T*(1.0-alpha);
+            // Match the original CUDA threshold and its triggering-item rule.
+            if (nextT<0.0001) { done=true; continue; }
+            C+=T*alpha*colors[j].rgb;
+            T=nextT;
+        }
+        barrier(); // finish consuming this batch before overwriting shared data
+    }
+    if (inside) imageStore(outputColor,ivec2(pixel),vec4(C+T*background.rgb,1.0-T+T*background.a));
+}

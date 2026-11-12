@@ -1,0 +1,27 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "GaussianTileCommon.glsl"
+layout(local_size_x=512) in;
+shared uint prefix[512];
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint rank = gl_GlobalInvocationID.x;
+    uint count = 0u;
+    if (rank < work.counts.x) {
+        uvec4 rect = tileRect(splats[sortedIDs[rank]]);
+        count = min((rect.z-rect.x)*(rect.w-rect.y), params.grid.z+1u);
+    }
+    prefix[lane] = count;
+    barrier();
+    for (uint stride=1u; stride<512u; stride<<=1u) {
+        uint value = prefix[lane];
+        if (lane >= stride) value = cappedAdd(value, prefix[lane-stride]);
+        barrier();
+        prefix[lane] = value;
+        barrier();
+    }
+    // Saturated exclusive offset must not be computed as inclusive-count.
+    uint offset = lane == 0u ? 0u : prefix[lane-1u];
+    if (rank < work.counts.x) scratch[rank] = uvec2(count, offset);
+    if (lane == 511u) groups[gl_WorkGroupID.x] = uvec2(prefix[511], 0u);
+}
