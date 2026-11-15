@@ -1,6 +1,8 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+layout(early_fragment_tests) in;
+
 layout(location = 0) flat in vec4 fragColor; // rgb + base opacity, constant per Gaussian
 layout(location = 1) flat in vec2 fragCenterPixel; // center in framebuffer pixel coordinates
 layout(location = 2) in vec2 fragScreenUV;    // screen UV for depth lookup
@@ -46,11 +48,13 @@ void main() {
     if (opacity < 1.0 / 255.0)
         discard;
 
+    /* Inputs for the original ellipsoid visibility path below.
     // The mesh depth image and this pass share the same pixel grid.
     float sceneDepth = texelFetch(u_DepthMap, ivec2(gl_FragCoord.xy), 0).r;
 
     // 默认完全可见; 仅在有 mesh 几何的像素上做遮挡
     float occlusion = 1.0;
+    */
 
     // Original ellipsoid intersection visibility, retained for future experiments.
     /*
@@ -116,17 +120,6 @@ void main() {
         // 中间 → 线性过渡
     }
     */
-
-    // Match LMG: accept the center if z_gaussian <= z_mesh + 0.1.
-    // Convert Vulkan depth to positive camera-space z; depth=1 means no mesh.
-    if (sceneDepth < 1.0)
-    {
-        float meshDepth = camera.projectionMatrix[3][2]
-            / (sceneDepth + camera.projectionMatrix[2][2]);
-        float gaussianDepth = -fragViewCenter.z;
-        if (gaussianDepth > meshDepth + 0.1)
-            discard;
-    }
 
     /* Original alpha evaluation for the rotated quad.
     // 基础高斯 opacity * 遮挡

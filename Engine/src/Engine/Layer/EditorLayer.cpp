@@ -66,27 +66,27 @@ namespace Engine {
     	UUID cubeID   = modelLibrary->FindIDByPath(CUBE_PATH);
 		UUID playroomID = modelLibrary->FindIDByPath(PLAYROOM_PATH);
     	
-        Entity HelmetEntity = m_ActiveScene->CreateEntity("Helmet");
-        HelmetEntity.AddComponent<MeshFilterComponent>(helmetID);
-        HelmetEntity.AddComponent<MeshRendererComponent>(helmetID);
-    	HelmetEntity.GetComponent<TransformComponent>().Translation={0.0f,0.0f,0.0f};
-    	HelmetEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
-    	HelmetEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
-
-    	Entity BustEntity = m_ActiveScene->CreateEntity("Bust");
-    	BustEntity.AddComponent<MeshFilterComponent>(bustID);
-    	BustEntity.AddComponent<MeshRendererComponent>(bustID);
-    	BustEntity.GetComponent<TransformComponent>().Translation={4.0f,-3.0f,0.0f};
-    	BustEntity.GetComponent<TransformComponent>().Scale={10.0f,10.0f,10.0f};
-    	BustEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
- 
-    	Entity CubeEntity = m_ActiveScene->CreateEntity("Cube");
-    	CubeEntity.AddComponent<MeshFilterComponent>(cubeID);
-    	CubeEntity.AddComponent<MeshRendererComponent>(cubeID);
-    	CubeEntity.GetComponent<TransformComponent>().Translation={0.0f,-3.5f,0.0f};
-    	CubeEntity.GetComponent<TransformComponent>().Scale={15.0f,1.0f,15.0f};
-    	CubeEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
-    	
+     //    Entity HelmetEntity = m_ActiveScene->CreateEntity("Helmet");
+     //    HelmetEntity.AddComponent<MeshFilterComponent>(helmetID);
+     //    HelmetEntity.AddComponent<MeshRendererComponent>(helmetID);
+    	// HelmetEntity.GetComponent<TransformComponent>().Translation={0.0f,0.0f,0.0f};
+    	// HelmetEntity.GetComponent<TransformComponent>().Scale={3.0f,3.0f,3.0f};
+    	// HelmetEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
+     //
+    	// Entity BustEntity = m_ActiveScene->CreateEntity("Bust");
+    	// BustEntity.AddComponent<MeshFilterComponent>(bustID);
+    	// BustEntity.AddComponent<MeshRendererComponent>(bustID);
+    	// BustEntity.GetComponent<TransformComponent>().Translation={4.0f,-3.0f,0.0f};
+    	// BustEntity.GetComponent<TransformComponent>().Scale={10.0f,10.0f,10.0f};
+    	// BustEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
+     //
+    	// Entity CubeEntity = m_ActiveScene->CreateEntity("Cube");
+    	// CubeEntity.AddComponent<MeshFilterComponent>(cubeID);
+    	// CubeEntity.AddComponent<MeshRendererComponent>(cubeID);
+    	// CubeEntity.GetComponent<TransformComponent>().Translation={0.0f,-3.5f,0.0f};
+    	// CubeEntity.GetComponent<TransformComponent>().Scale={15.0f,1.0f,15.0f};
+    	// CubeEntity.GetComponent<TransformComponent>().Rotation={0.0f,0.0f,0.0f};
+    	//
     	Entity PlayroomEntity = m_ActiveScene->CreateEntity("Playroom");
     	PlayroomEntity.AddComponent<MeshFilterComponent>(playroomID);
     	PlayroomEntity.AddComponent<MeshRendererComponent>(playroomID);

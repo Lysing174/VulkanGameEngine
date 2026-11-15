@@ -40,6 +40,7 @@ namespace Engine {
 		bool BlendEnable                = true;
 		bool DepthTestEnable            = true;
 		bool DepthWriteEnable           = true;
+		VkCompareOp DepthCompareOp      = VK_COMPARE_OP_LESS;
 		VkCullModeFlags CullMode        = VK_CULL_MODE_BACK_BIT;
 		VkFrontFace FrontFace           = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		bool HasVertexInput             = true;  // false = 无 VBO, 用 gl_VertexIndex 生成顶点
@@ -194,8 +195,9 @@ namespace Engine {
 		{
 			ShaderConfig config;
 			config.PipelineState.HasVertexInput = false;
-			config.PipelineState.DepthTestEnable = false;
+			config.PipelineState.DepthTestEnable = true;
 			config.PipelineState.DepthWriteEnable = false;
+			config.PipelineState.DepthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 			config.PipelineState.CullMode = VK_CULL_MODE_NONE;
 			config.PipelineState.Topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 			config.PipelineState.BlendEnable = true;

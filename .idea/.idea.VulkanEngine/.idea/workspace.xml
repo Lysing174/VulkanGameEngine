@@ -13,13 +13,17 @@
     <configurations />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="afba9ff3-0aac-46a2-a3d4-3ef04221cebc" name="更改" comment="搁置变更fs架构到cs">
+    <list default="true" id="afba9ff3-0aac-46a2-a3d4-3ef04221cebc" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Shader.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Shader.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanShader.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanShader.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/SandBox/imgui.ini" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/imgui.ini" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.frag.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.frag.spv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.vert.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.vert.spv" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -30,7 +34,7 @@
     <option name="firstShow" value="false" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="83" />
+    <option name="cachedIndexableFilesCount" value="84" />
   </component>
   <component name="Git.Settings">
     <option name="RECENT_BRANCH_BY_REPOSITORY">
@@ -53,7 +57,7 @@
   }
 }</component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="cidr-memory-view://21" root0="FORCE_HIGHLIGHTING" />
+    <setting file="cidr-memory-view://0" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$USER_HOME$/Desktop/GLSL实验代码/实验四 导入模型/main.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Core/ImGuiLog.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" root0="FORCE_HIGHLIGHTING" />
@@ -62,6 +66,7 @@
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/DatasetCamera.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianModel.h" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/GaussianTilePipeline.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Renderer/GlobalBindings.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/vendor/bin/assimp/assimp/material.inl" root0="SKIP_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/vendor/bin/tiny_gltf/tiny_gltf.h" root0="SKIP_HIGHLIGHTING" />
@@ -79,30 +84,30 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "C/C++ 项目.SandBox.executor": "Debug",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.cidr.known.project.marker": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.readMode.enableVisualFormatting": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "cidr.known.project.marker": "true",
-    "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "main",
-    "ignore.virus.scanning.warn.message": "true",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "settings.editor.selected.configurable": "preferences.lookFeel",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;C/C++ 项目.SandBox.executor&quot;: &quot;Debug&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.readMode.enableVisualFormatting&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;cidr.known.project.marker&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.lookFeel&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RunManager">
     <configuration name="SandBox" type="CppProject" factoryName="C++ Project">
       <configuration_1 setup="1">
@@ -177,6 +182,7 @@
       <workItem from="1792931931175" duration="11605000" />
       <workItem from="1793512972402" duration="2680000" />
       <workItem from="1793955602520" duration="14073000" />
+      <workItem from="1794731321682" duration="1324000" />
     </task>
     <task id="LOCAL-00001" summary="添加渲染统计面板与 GPU 计时">
       <option name="closed" value="true" />
@@ -194,7 +200,15 @@
       <option name="project" value="LOCAL" />
       <updated>1792977347489</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="改格式为RGBA16F">
+      <option name="closed" value="true" />
+      <created>1794486531971</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1794486531971</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -218,7 +232,8 @@
     <MESSAGE value="添加渲染统计面板与 GPU 计时" />
     <MESSAGE value="测试模式添加（统计PSNR\SSIM\FPS，目前FPS有问题）；添加视锥剔除；对齐高斯和网格渲染到lmg" />
     <MESSAGE value="搁置变更fs架构到cs" />
-    <option name="LAST_COMMIT_MESSAGE" value="搁置变更fs架构到cs" />
+    <MESSAGE value="改格式为RGBA16F" />
+    <option name="LAST_COMMIT_MESSAGE" value="改格式为RGBA16F" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

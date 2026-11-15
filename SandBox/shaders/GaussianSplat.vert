@@ -83,8 +83,12 @@ void main() {
     fragPosition   = quadPos * sqrt8;                 // scaled for gaussian evaluation in fragment
     */
     vec2 ndcPosition = p.quadCenter.xy + quadPos.x * p.ndcBasis.xy + quadPos.y * p.ndcBasis.zw;
-    // LMG does not far-clip splat centers; depth testing is disabled for this pass.
-    gl_Position = vec4(ndcPosition, clamp(p.ndcCenter.z, 0.0, 1.0), 1.0);
+    // Preserve z_gaussian <= z_mesh + 0.1 with a biased depth and LESS_OR_EQUAL.
+    float depthWithTolerance = -p.viewCenter.z - 0.1;
+    float deviceDepth = camera.projectionMatrix[3][2] / depthWithTolerance
+        - camera.projectionMatrix[2][2];
+    // Clamp to keep splats beyond the far plane visible against clear depth (1).
+    gl_Position = vec4(ndcPosition, clamp(deviceDepth, 0.0, 1.0), 1.0);
     fragColor = p.color;
     fragCenterPixel = (p.ndcCenter.xy * 0.5 + 0.5) * frameInfo.viewportInfo.xy;
     fragScreenUV   = gl_Position.xy * 0.5 + 0.5;      // screen UV for depth lookup (w = 1)
