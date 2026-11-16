@@ -114,9 +114,10 @@ namespace Engine {
         void BeginUIRenderPass();
         void EndRenderPass();
         void DrawImGui();
-        void BeginGpuTiming(RenderStage stage);
+        void BeginGpuTiming(RenderStage stage, VkPipelineStageFlagBits startStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
         void EndGpuTiming(RenderStage stage);
         const GpuTimings& GetGpuTimings() const { return m_GpuTimings; }
+        const CpuSyncTimings& GetCpuSyncTimings() const { return m_CpuSyncTimings; }
         
 
 
@@ -205,6 +206,7 @@ namespace Engine {
         std::array<bool, RenderStageCount> m_TimedStages = {};
         std::array<bool, RenderStageCount> m_SubmittedTimedStages = {};
         GpuTimings m_GpuTimings;
+        CpuSyncTimings m_CpuSyncTimings = {};
         VkQueue presentQueue;
         std::vector<VkImage> swapChainImages;
         std::vector<VkImageView> swapChainImageViews;

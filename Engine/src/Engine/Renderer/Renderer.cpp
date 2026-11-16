@@ -253,11 +253,18 @@ namespace Engine {
     	VulkanRenderer::EndRenderPass();        // Close ImGui RP
 	}
 
-	void Renderer::EndScene()
+	void Renderer::EndScene(std::chrono::steady_clock::time_point cpuFrameStart)
 	{
-    	VulkanContext::Get()->EndFrame();
-    	    	
-    	s_FrameStatistics.GPU = VulkanContext::Get()->GetGpuTimings();
+		auto* context = VulkanContext::Get();
+		context->EndFrame();
+		if (cpuFrameStart != std::chrono::steady_clock::time_point{})
+		{
+			s_FrameStatistics.CPU.FrameMilliseconds = std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - cpuFrameStart).count();
+			s_FrameStatistics.CPU.SyncMilliseconds = context->GetCpuSyncTimings();
+		}
+
+		s_FrameStatistics.GPU = context->GetGpuTimings();
     	s_FrameStatistics.HasCompletedFrame = true;
     	s_Statistics = s_FrameStatistics;
 	}
@@ -1703,6 +1710,8 @@ namespace Engine {
 		if (!Renderer::EnableHiZ || framebuffer->IsMSAA() || framebuffer->GetGaussianDepthView() == VK_NULL_HANDLE)
 			return false;
 
+		auto* context = VulkanContext::Get();
+		context->BeginGpuTiming(RenderStage::HiZBuild, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		VkImageMemoryBarrier depthBarrier{};
 		depthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 		depthBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -1757,6 +1766,7 @@ namespace Engine {
 			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 				0, 0, nullptr, 0, nullptr, 1, &pyramidBarrier);
 		}
+		context->EndGpuTiming(RenderStage::HiZBuild);
 		return true;
 	}
 
@@ -1916,6 +1926,10 @@ namespace Engine {
 	{
 		if (s_TotalGaussianCount == 0) return;
 		const uint32_t numGroups = (s_TotalGaussianCount + 511) / 512;
+		auto* context = VulkanContext::Get();
+
+		// Measure between completion points so adjacent phases don't include the preceding phase's drain time.
+		context->BeginGpuTiming(RenderStage::PrefixCull, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
 		// 保证先前的高斯上传 (TRANSFER) / 上一帧 compute 已就绪
 		InsertBarrier(cmd,
@@ -1934,6 +1948,8 @@ namespace Engine {
 		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
 						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
 
+		context->EndGpuTiming(RenderStage::PrefixCull);
+		context->BeginGpuTiming(RenderStage::ScanCompact, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		// Scan: groupData 前缀和 → offsets + 写出 workInfo (间接调度/绘制命令)
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixScanShader->GetPipeline());
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &s_PrefixDescriptorSet, 0, nullptr);
@@ -1954,6 +1970,8 @@ namespace Engine {
 						  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
 						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 
+		context->EndGpuTiming(RenderStage::ScanCompact);
+		context->BeginGpuTiming(RenderStage::RadixSort, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		// ============ 4 轮基数排序 (读 workInfo.counts.x = 可见数, 间接调度) ============
 		// 每帧清零全局直方图 (4 个 pass 各写其独立 256 区间, 互不重叠)
 		vkCmdFillBuffer(cmd, s_GlobalHistogramSSBO.GetBuffer(), 0, s_GlobalHistogramSSBO.GetSize(), 0);
@@ -2000,6 +2018,7 @@ namespace Engine {
 		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
 						  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_HOST_BIT,
 						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT);
+		context->EndGpuTiming(RenderStage::RadixSort);
 	}
 
 	void Renderer::GaussianRenderer::Run()
@@ -2021,7 +2040,7 @@ namespace Engine {
 		s_FrameStatistics.FrustumVisibleGaussianCount = counts[12];
 		vkUnmapMemory(device, s_WorkInfoSSBO.GetMemory());
 
-		context->BeginGpuTiming(RenderStage::GaussianSort);
+		context->BeginGpuTiming(RenderStage::GaussianPrepare, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		s_HiZActive = BuildHiZ(cmd);
 		// 每帧刷新 splat 参数 UBO (不含相机矩阵; 相机矩阵经 push constant 传入)
 		UpdateFrameInfoUBO();
@@ -2029,7 +2048,7 @@ namespace Engine {
 
 		// 1) GPU 基数排序: 计算深度键并稳定排序, 结果保留在 s_ValuesBuffers[0] (render pass 之外执行)
 		ComputeSort(cmd);
-		context->EndGpuTiming(RenderStage::GaussianSort);
+		context->EndGpuTiming(RenderStage::GaussianPrepare);
 
 		auto gaussianShader = GetShaderLibrary()->Get("GaussianSplat.vert.spv");
 		//VkPipeline pipeline = gaussianShader->GetPipeline("Gaussian");

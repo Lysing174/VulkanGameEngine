@@ -739,10 +739,10 @@ namespace Engine
             m_Accumulator += (float)(renderMs * 0.001);
             m_LastFrameTime = m_Accumulator;
 
-            EG_CORE_INFO("[Test] [{0}/{1}] {2}  {3}x{4}  GPU render (isValid:{5}) {6:.2f} ms \n(mesh: {7:.2f} ms, gaussian sort: {8:.2f} ms, "
+            EG_CORE_INFO("[Test] [{0}/{1}] {2}  {3}x{4}  GPU render (isValid:{5}) {6:.2f} ms \n(mesh: {7:.2f} ms, gaussian prepare: {8:.2f} ms, "
                          "gaussian render: {9:.2f} ms) CPU time: {10:.2f} ms, dump {11:.2f} ms",
-                         i + 1, count, camera.GetName(), w, h,gpu.Valid&&gpu.Supported, gpu.Milliseconds[0]+gpu.Milliseconds[1]+gpu.Milliseconds[2]+gpu.Milliseconds[3],
-                         gpu.Milliseconds[1],gpu.Milliseconds[2],gpu.Milliseconds[3],renderMs, ioMs);
+                         i + 1, count, camera.GetName(), w, h, gpu.Valid && gpu.Supported, gpu.TotalRenderMilliseconds(),
+                         gpu.Get(RenderStage::Mesh), gpu.Get(RenderStage::GaussianPrepare), gpu.Get(RenderStage::Gaussian), renderMs, ioMs);
         }
 
         // ---- 汇总 ----
@@ -750,13 +750,15 @@ namespace Engine
         const double avgFps      = avgRenderMs > 0.0 ? 1000.0 / avgRenderMs : 0.0;
         const double avgIOMs     = count > 0 ? totalIOMs / (double)count : 0.0;
 
-        static const char* stageNames[RenderStageCount] = { "shadow", "mesh", "gaussianSort", "gaussian" };
+        static const char* stageNames[RenderStageCount] = {
+            "shadow", "mesh", "gaussianPrepare (total)", "hiZBuild", "prefixCull", "scanCompact", "radixSort", "gaussian"
+        };
         std::ostringstream gpuLine;
-        double gpuTotal = 0.0;
+        GpuTimings avgGpu;
         for (size_t s = 0; s < RenderStageCount; ++s)
         {
             const double avg = gpuFrames > 0 ? gpuAccum[s] / (double)gpuFrames : 0.0;
-            gpuTotal += avg;
+            avgGpu.Milliseconds[s] = avg;
             gpuLine << stageNames[s] << " " << std::fixed << std::setprecision(2) << avg << " ms";
             if (s + 1 < RenderStageCount) gpuLine << " | ";
         }
@@ -779,7 +781,7 @@ namespace Engine
             EG_CORE_INFO("[Test] avg GPU stages  : {0}", gpuLine.str());
         else
             EG_CORE_INFO("[Test] avg GPU stages  : unavailable (timestamp query not supported)");
-        EG_CORE_INFO("[Test] avg GPU total   : {0:.2f} ms", gpuTotal);
+        EG_CORE_INFO("[Test] avg GPU total   : {0:.2f} ms", avgGpu.TotalRenderMilliseconds());
 
         Shutdown();
     }

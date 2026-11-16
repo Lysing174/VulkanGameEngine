@@ -199,8 +199,9 @@ namespace Engine {
 		const auto& statistics = Renderer::GetStatistics();
 		if (statistics.HasCompletedFrame)
 		{
-			m_CpuTimeAccumulator += statistics.CpuTimeMs;
-			m_CpuWaitGpuTimeAccumulator += statistics.CpuWaitGpuTimeMs;
+			m_CpuTimingAccumulator.FrameMilliseconds += statistics.CPU.FrameMilliseconds;
+			for (size_t i = 0; i < CpuSyncStageCount; ++i)
+				m_CpuTimingAccumulator.SyncMilliseconds[i] += statistics.CPU.SyncMilliseconds[i];
 			++m_CpuTimingFrameCount;
 			if (statistics.GPU.Valid)
 			{
@@ -213,16 +214,18 @@ namespace Engine {
     	{
     		m_Fps = m_FrameCount / m_FpsAccumulator;
 			m_Statistics = statistics;
-			m_Statistics.CpuTimeMs = m_CpuTimingFrameCount > 0
-				? m_CpuTimeAccumulator / m_CpuTimingFrameCount : 0.0;
-    		m_Statistics.CpuWaitGpuTimeMs = m_CpuTimingFrameCount > 0
-							? m_CpuWaitGpuTimeAccumulator / m_CpuTimingFrameCount : 0.0;
+			m_Statistics.CPU = m_CpuTimingAccumulator;
+			if (m_CpuTimingFrameCount > 0)
+			{
+				m_Statistics.CPU.FrameMilliseconds /= m_CpuTimingFrameCount;
+				for (double& milliseconds : m_Statistics.CPU.SyncMilliseconds)
+					milliseconds /= m_CpuTimingFrameCount;
+			}
     		m_Statistics.GPU.Valid = m_GpuTimingFrameCount > 0;
 			for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
 				m_Statistics.GPU.Milliseconds[stageIndex] = m_GpuTimingFrameCount > 0
 					? m_GpuTimeAccumulator[stageIndex] / m_GpuTimingFrameCount : 0.0;
-			m_CpuTimeAccumulator = 0.0;
-    		m_CpuWaitGpuTimeAccumulator = 0.0;
+			m_CpuTimingAccumulator = {};
 			m_GpuTimeAccumulator.fill(0.0);
 			m_CpuTimingFrameCount = 0;
 			m_GpuTimingFrameCount = 0;
@@ -371,7 +374,7 @@ namespace Engine {
 	{
 		ImGui::Begin("Stats");
 		ImGui::Text("FPS (average for 0.5s): %.1f", m_Fps);
-		ImGui::Text("Frame Time: %.2f ms", m_Statistics.CpuTimeMs+m_Statistics.CpuWaitGpuTimeMs);
+		ImGui::Text("Frame Time: %.2f ms", m_Statistics.CPU.FrameMilliseconds);
 		ImGui::Checkbox("Enable Hi-Z", &Renderer::EnableHiZ);
 		ImGui::Checkbox("Adaptive Hi-Z", &Renderer::EnableHiZRefinement);
 		if (ImGui::IsItemHovered())
@@ -401,12 +404,16 @@ namespace Engine {
 			ImGui::TextDisabled("* Mesh vertex count uses the scene total.");
 
 			ImGui::TableNextColumn();
-			ImGui::Text("CPU work (avr): %.3f ms", m_Statistics.CpuTimeMs);
+			ImGui::Text("CPU other: %.3f ms", m_Statistics.CPU.OtherMilliseconds());
 			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("Events, scene update, resource submission, command recording and ImGui building.\nExcludes frame acquisition and presentation waits.");
-			ImGui::Text("CPU waitting GPU time (avr): %.3f ms", m_Statistics.CpuWaitGpuTimeMs);
+				ImGui::SetTooltip("Frame time minus QueueWaitIdle, Acquire and Present.\nIncludes CPU work, submission and any other waits.");
+			const std::array<const char*, CpuSyncStageCount> cpuSyncNames = { "QueueWaitIdle", "Acquire", "Present" };
+			for (size_t i = 0; i < CpuSyncStageCount; ++i)
+				ImGui::Text("CPU %s: %.3f ms", cpuSyncNames[i], m_Statistics.CPU.SyncMilliseconds[i]);
+
 			const std::array<const char*, RenderStageCount> stageNames = {
-				"Shadow pass (avr)", "Mesh pass (avr)", "Gaussian sort (avr)", "Gaussian pass (avr)"
+				"Shadow pass", "Mesh pass", "Gaussian prepare (total)",
+				"  Hi-Z build", "  PrefixCull", "  Scan + Compact", "  Radix sort", "Gaussian pass"
 			};
 			for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
 			{

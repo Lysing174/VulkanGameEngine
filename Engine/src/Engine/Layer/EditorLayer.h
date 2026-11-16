@@ -62,8 +62,7 @@ namespace Engine {
         float m_FpsAccumulator = 0.0f;
         int m_FrameCount = 0;
         RendererStatistics m_Statistics;
-        double m_CpuTimeAccumulator = 0.0;
-        double m_CpuWaitGpuTimeAccumulator = 0.0;
+        CpuTimings m_CpuTimingAccumulator;
         std::array<double, RenderStageCount> m_GpuTimeAccumulator = {};
         uint32_t m_CpuTimingFrameCount = 0;
         uint32_t m_GpuTimingFrameCount = 0;

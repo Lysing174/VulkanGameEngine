@@ -118,15 +118,7 @@ namespace Engine {
 			}
 			Renderer::EndRenderQueueSubmit();
 			
-			const double cpuUpdateMs = std::chrono::duration<double, std::milli>(
-				std::chrono::steady_clock::now() - cpuFrameStart).count();
-			
-			//读上一帧gpu耗时到renderer里
 			Renderer::BeginScene(m_EditorLayer->GetEditorCamera());
-			
-			const double cpuWaitGpuTimeMs=std::chrono::duration<double, std::milli>(
-				std::chrono::steady_clock::now() - cpuFrameStart).count()-cpuUpdateMs;
-			const auto cpuRecordingStart = std::chrono::steady_clock::now();
 			
 			Renderer::RunShadowPass();   // 先渲阴影贴图 (在 Mesh pass 之前)
 			Renderer::RunMeshPass();
@@ -140,11 +132,7 @@ namespace Engine {
 			// 现在录制 ImGui Pass 并提交整帧
 			Renderer::RunImGuiPass();
 			
-			// CPU: 事件、场景更新、资源提交、命令录制与 ImGui 构建；不计 acquire/present 等待。
-			Renderer::SetCpuTime(cpuUpdateMs + std::chrono::duration<double, std::milli>(
-			std::chrono::steady_clock::now() - cpuRecordingStart).count(),cpuWaitGpuTimeMs);
-
-			Renderer::EndScene();
+			Renderer::EndScene(cpuFrameStart);
 			
 		}
 	}

@@ -15,15 +15,15 @@
   <component name="ChangeListManager">
     <list default="true" id="afba9ff3-0aac-46a2-a3d4-3ef04221cebc" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.VulkanEngine/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Core/EntryPoint.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Core/Application.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Core/Application.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Shader.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Shader.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanShader.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanShader.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/imgui.ini" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/imgui.ini" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.frag" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/GaussianSplat.vert" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.frag.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.frag.spv" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.vert.spv" beforeDir="false" afterPath="$PROJECT_DIR$/SandBox/shaders/spv/GaussianSplat.vert.spv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Layer/EditorLayer.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/Renderer.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Engine/Renderer/RendererStats.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Engine/Renderer/RendererStats.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.h" beforeDir="false" afterPath="$PROJECT_DIR$/Engine/src/Platform/Vulkan/VulkanContext.h" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -57,7 +57,7 @@
   }
 }</component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="cidr-memory-view://0" root0="FORCE_HIGHLIGHTING" />
+    <setting file="cidr-memory-view://1" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$USER_HOME$/Desktop/GLSL实验代码/实验四 导入模型/main.cpp" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Core/ImGuiLog.h" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$PROJECT_DIR$/Engine/src/Engine/Eval/ApplicationSpecification.h" root0="FORCE_HIGHLIGHTING" />
@@ -182,7 +182,7 @@
       <workItem from="1792931931175" duration="11605000" />
       <workItem from="1793512972402" duration="2680000" />
       <workItem from="1793955602520" duration="14073000" />
-      <workItem from="1794731321682" duration="1324000" />
+      <workItem from="1794731321682" duration="3923000" />
     </task>
     <task id="LOCAL-00001" summary="添加渲染统计面板与 GPU 计时">
       <option name="closed" value="true" />
@@ -208,7 +208,15 @@
       <option name="project" value="LOCAL" />
       <updated>1794486531971</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="加lod前存档">
+      <option name="closed" value="true" />
+      <created>1794747165755</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1794747165755</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -233,7 +241,8 @@
     <MESSAGE value="测试模式添加（统计PSNR\SSIM\FPS，目前FPS有问题）；添加视锥剔除；对齐高斯和网格渲染到lmg" />
     <MESSAGE value="搁置变更fs架构到cs" />
     <MESSAGE value="改格式为RGBA16F" />
-    <option name="LAST_COMMIT_MESSAGE" value="改格式为RGBA16F" />
+    <MESSAGE value="加lod前存档" />
+    <option name="LAST_COMMIT_MESSAGE" value="加lod前存档" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

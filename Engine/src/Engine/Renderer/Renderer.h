@@ -12,6 +12,7 @@
 #include <Platform/Vulkan/VulkanBuffer.h>
 #include <Platform/Vulkan/VulkanImage.h>
 #include <array>
+#include <chrono>
 #include "Engine/Renderer/RendererStats.h"
 
 namespace Engine {
@@ -40,13 +41,8 @@ namespace Engine {
 		static void RunMeshPass();    // 录制 Mesh Pass (天空盒 → mesh → end pass)
 		static void RunShadowPass(){ShadowRenderer::Run();}  // 录制 Shadow Pass (对每个阴影光: 渲深度到阴影贴图)
 		static void RunImGuiPass();   // 录制 ImGui Pass (开 pass → 画 ImGui → end pass)
-		static void EndScene();       // 提交命令缓冲并呈现 (RunImGuiPass 之后调用)
+		static void EndScene(std::chrono::steady_clock::time_point cpuFrameStart = {});
 		static const RendererStatistics& GetStatistics() { return s_Statistics; }
-		static void SetCpuTime(double cpuTimeMs,double cpuWaitGpuTimeMs)
-		{
-			s_FrameStatistics.CpuTimeMs = cpuTimeMs;
-			s_FrameStatistics.CpuWaitGpuTimeMs = cpuWaitGpuTimeMs;
-		}
 
 		static void OnSwapchainRecreated(); // Swapchain 重建后通知各子系统
 

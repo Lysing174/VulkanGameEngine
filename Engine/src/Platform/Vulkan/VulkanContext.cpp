@@ -188,25 +188,34 @@ namespace Engine {
     
     void VulkanContext::BeginFrame(glm::mat4 projView)
     {
-        vkQueueWaitIdle(presentQueue);
-        VkResult acquireResult = vkAcquireNextImageKHR(
-            device,
-            swapChain,
-            std::numeric_limits<uint64_t>::max(),
-            imageAvailableSemaphore,
-            VK_NULL_HANDLE,
-            &currentImageIndex);
+        using Clock = std::chrono::steady_clock;
+        m_CpuSyncTimings = {};
 
-        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+        const auto queueWaitStart = Clock::now();
+        vkQueueWaitIdle(presentQueue);
+        m_CpuSyncTimings[static_cast<size_t>(CpuSyncStage::QueueWaitIdle)] =
+            std::chrono::duration<double, std::milli>(Clock::now() - queueWaitStart).count();
+
+        const auto acquireImage = [&]()
         {
-            recreateSwapChain();
-            acquireResult = vkAcquireNextImageKHR(
+            const auto start = Clock::now();
+            const VkResult result = vkAcquireNextImageKHR(
                 device,
                 swapChain,
                 std::numeric_limits<uint64_t>::max(),
                 imageAvailableSemaphore,
                 VK_NULL_HANDLE,
                 &currentImageIndex);
+            m_CpuSyncTimings[static_cast<size_t>(CpuSyncStage::Acquire)] +=
+                std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+            return result;
+        };
+
+        VkResult acquireResult = acquireImage();
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            recreateSwapChain();
+            acquireResult = acquireImage();
         }
 
         if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
@@ -257,10 +266,10 @@ namespace Engine {
         }
     }
 
-    void VulkanContext::BeginGpuTiming(RenderStage stage)
+    void VulkanContext::BeginGpuTiming(RenderStage stage, VkPipelineStageFlagBits startStage)
     {
         if (m_TimestampQueryPool == VK_NULL_HANDLE) return;
-        vkCmdWriteTimestamp(GetCurrentCommandBuffer(), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        vkCmdWriteTimestamp(GetCurrentCommandBuffer(), startStage,
             m_TimestampQueryPool, static_cast<uint32_t>(stage) * 2);
     }
 
@@ -558,7 +567,10 @@ namespace Engine {
         presentInfo.pImageIndices = &currentImageIndex;
         presentInfo.pResults = nullptr; // Optional
 
+        const auto presentStart = std::chrono::steady_clock::now();
         VkResult presentResult = vkQueuePresentKHR(presentQueue, &presentInfo);
+        m_CpuSyncTimings[static_cast<size_t>(CpuSyncStage::Present)] =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentStart).count();
         if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
         {
             recreateSwapChain();
