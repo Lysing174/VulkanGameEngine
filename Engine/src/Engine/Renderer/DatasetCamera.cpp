@@ -188,13 +188,16 @@ namespace Engine {
             bool expectImageLine = true;
             while (std::getline(in, line))
             {
-                if (line.empty() || line[0] == '#') continue;
+                if (!line.empty() && line[0] == '#') continue;
 
                 if (!expectImageLine)
                 {
-                    expectImageLine = true;   // 跳过 POINTS2D 行
+                    // POINTS2D 可以为空行, 也必须消费它并切回位姿行状态。
+                    expectImageLine = true;
                     continue;
                 }
+
+                if (line.empty()) continue;
 
                 std::istringstream iss(line);
                 uint32_t imageId = 0, cameraId = 0;

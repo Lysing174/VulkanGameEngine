@@ -102,6 +102,8 @@ namespace Engine {
 
 
     public:
+        static constexpr uint32_t FramesInFlight = 2;
+
         VulkanContext(GLFWwindow* windowHandle);
         ~VulkanContext();
 
@@ -117,6 +119,7 @@ namespace Engine {
         void BeginGpuTiming(RenderStage stage, VkPipelineStageFlagBits startStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
         void EndGpuTiming(RenderStage stage);
         const GpuTimings& GetGpuTimings() const { return m_GpuTimings; }
+        GpuTimings WaitForSubmittedGpuTimings() const;
         const CpuSyncTimings& GetCpuSyncTimings() const { return m_CpuSyncTimings; }
         
 
@@ -154,7 +157,8 @@ namespace Engine {
             }
             return renderPassesMap[renderPassName];
         }
-        VkCommandBuffer GetCurrentCommandBuffer() { return commandBuffers[currentImageIndex]; }
+        VkCommandBuffer GetCurrentCommandBuffer() const { return commandBuffers[m_FrameSlot]; }
+        uint32_t GetFrameSlot() const { return m_FrameSlot; }
         uint32_t GetCurrentImageIndex() const { return currentImageIndex; }
         VkExtent2D GetSwapChainExtent() { return swapChainExtent; }
 		VkFormat GetSwapChainImageFormat() { return swapChainImageFormat; }
@@ -204,7 +208,14 @@ namespace Engine {
         float m_TimestampPeriod = 0.0f;
         uint32_t m_TimestampValidBits = 0;
         std::array<bool, RenderStageCount> m_TimedStages = {};
-        std::array<bool, RenderStageCount> m_SubmittedTimedStages = {};
+        struct FrameSync
+        {
+            VkFence Fence = VK_NULL_HANDLE;
+            VkSemaphore ImageAvailable = VK_NULL_HANDLE;
+            std::array<bool, RenderStageCount> TimedStages = {};
+        };
+        std::array<FrameSync, FramesInFlight> m_FrameSync = {};
+        uint32_t m_FrameSlot = 0;
         GpuTimings m_GpuTimings;
         CpuSyncTimings m_CpuSyncTimings = {};
         VkQueue presentQueue;
@@ -214,9 +225,8 @@ namespace Engine {
         VkFormat swapChainImageFormat;
         VkFormat offscreenColorFormat;
         VkExtent2D swapChainExtent;
-        std::vector<VkCommandBuffer> commandBuffers;
-        VkSemaphore imageAvailableSemaphore;
-        VkSemaphore renderFinishedSemaphore;
+        std::array<VkCommandBuffer, FramesInFlight> commandBuffers = {};
+        std::vector<VkSemaphore> m_RenderFinishedSemaphores;
         uint32_t currentImageIndex = 0;
 
         std::string currentRenderPassName="";
@@ -242,9 +252,11 @@ namespace Engine {
 		void createMSAAResources();
         void createDescriptorPool();
         void createCommandBuffers();
-        void createSemaphores();
+        void createFrameSync();
+        void createPresentSemaphores();
         void createTimestampQueries();
-        void readGpuTimings();
+        void waitForFrameFence(uint32_t slot) const;
+        GpuTimings readGpuTimings(uint32_t slot) const;
 		
         std::vector<const char*> getRequiredExtensions();
         bool checkValidationLayerSupport();

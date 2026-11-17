@@ -251,13 +251,10 @@ namespace Engine
         VulkanContext::Get()->EndRenderPass();
         Renderer::EndScene();
 
-        // 等本帧 GPU 真正跑完: 计时才包含 GPU 时间, 且 GPU 时间戳可读
-        //vkDeviceWaitIdle(VulkanContext::Get()->GetDevice());
+        // Offline evaluation measures this camera's complete render before any readback.
+        outGpu = VulkanContext::Get()->WaitForSubmittedGpuTimings();
 
         const auto end = std::chrono::steady_clock::now();
-
-        // EndScene / EndFrame 内读取的是时间戳流水线里的上一帧结果
-        outGpu = Renderer::GetStatistics().GPU;
 
         m_TimeStep = (float)std::chrono::duration<double>(end - start).count();
 

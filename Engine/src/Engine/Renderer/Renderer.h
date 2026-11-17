@@ -141,29 +141,30 @@ namespace Engine {
 
 			// set2 资源, 供 mesh pass 绑定
 			static VkDescriptorSetLayout GetLightDescriptorLayout() { return s_LightDescriptorLayout; }
-			static VkDescriptorSet       GetLightDescriptorSet()   { return s_LightDescriptorSet; }
-			//static void SetLightDescriptorSet(VkDescriptorSet set) { s_LightDescriptorSet = set; }
+			static VkDescriptorSet GetLightDescriptorSet();
 
 		private:
-			static void CreateLightBuffer();          // 创建 Light SSBO (set2 b0)
-			static void CreateShadowBuffer();         // 创建 Shadow UBO (set2 b1)
+			struct FrameResources
+			{
+				VulkanBuffer LightBuffer;
+				VulkanBuffer ShadowBuffer;
+				VkDescriptorSet DescriptorSet = VK_NULL_HANDLE;
+			};
 			static void CreateShadowResources();	  // 创建阴影贴图资源 (set2 b2)
             static void DestroyShadowResources();	  // 销毁阴影贴图资源 (set2 b2)
 			static void CreateDescriptorSetLayout();  // set2 layout: b0 LightSSBO, b1 ShadowUBO, b2 shadowmaps[]
-			static void CreateDescriptorSet();        // 分配并写入 set2
+			static void CreateDescriptorSet(FrameResources& frame);
 			static void UpdateLightBuffer();          // 更新光照 SSBO (每帧)
 			static void UpdateShadowBuffer();         // 更新阴影 UBO (每帧)
 			
 			// GPU 缓冲 (set2 数据, Init 中创建, 与 swapchain 无关)
-			static VulkanBuffer s_LightSSBO;   // set2 b0: 全部场景光源 (storage)
-			static VulkanBuffer s_ShadowUBO;   // set2 b1: 光视矩阵 + 映射 + bias (uniform)
+			static FrameResources s_Frames[];
 			static std::vector<GPULight> s_SceneLights;   // CPU 端光源列表 (收集阶段用)
 			static bool s_LightsDirty;                     // 本帧是否有新光源需要更新 SSBO
 			static uint32_t s_SceneLightCount;
 
 			// set2 descriptor (Init 后有效)
 			static VkDescriptorSetLayout s_LightDescriptorLayout;
-			static VkDescriptorSet       s_LightDescriptorSet;
 
 			static ShadowLight  s_ShadowLights[MAX_SHADOW_MAPS]; // 收集到的投射阴影方向光
 			static uint32_t     s_ShadowLightCount;              // 实际数量 (≤ MAX_SHADOW_MAPS)
@@ -261,7 +262,7 @@ namespace Engine {
 
 			// 供高斯 shader 的 pipeline layout 解析 (Renderer::GetDescriptorSetLayout(GAUSSIAN_SET))
 			static VkDescriptorSetLayout GetGaussianDescriptorLayout() { return s_GaussianDescriptorLayout; }
-			static VkDescriptorSet       GetGaussianDescriptorSet()   { return s_GaussianDescriptorSet; }
+			static VkDescriptorSet GetGaussianDescriptorSet();
 
 		private:
 			static void CreateDescriptorSetLayout();  // set0(GAUSSIAN_SET): b0 FrameInfo UBO, b1 Gaussian SSBO, b2 SortedIndex SSBO, b3 DepthMap, b4 ModelTransform SSBO
@@ -278,8 +279,17 @@ namespace Engine {
 			
 			// GPU 缓冲 (set1)
 			static VulkanBuffer s_GaussianSSBO;        // b1: 全部场景高斯 (storage, 变长)
-			static VulkanBuffer s_ModelTransformSSBO;  // b4: 每实例 model 变换 (storage, 固定一项/实例)
-			static VulkanBuffer s_FrameInfoUBO;        // b0: 帧信息 UBO (固定 192B)
+			struct FrameResources
+			{
+				VulkanBuffer ModelTransforms;
+				VulkanBuffer FrameInfo;
+				VulkanBuffer CountsReadback;
+				VkDescriptorSet DrawSet = VK_NULL_HANDLE;
+				VkDescriptorSet PrefixSet = VK_NULL_HANDLE;
+				bool HasCounts = false;
+			};
+			static FrameResources s_Frames[];
+			static void ReleaseFrameBuffers();
 		// compute 基数排序用 ping-pong 缓冲 (compute shader 的 set0)
 		static VulkanBuffer s_KeysBuffers[2];        // Dist 写 keys[0]; 每 pass 交换, 末态 keys[0] 为有序键(绘制未直接使用)
 		static VulkanBuffer s_ValuesBuffers[2];      // Dist 写 values[0](=恒等索引); 四轮排序后 values[0] 直接供绘制 b2 读取
@@ -308,7 +318,6 @@ namespace Engine {
 		static std::shared_ptr<VulkanComputeShader> s_PrefixScanShader;
 		static std::shared_ptr<VulkanComputeShader> s_PrefixCompactShader;
 		static VkDescriptorSetLayout s_PrefixDescriptorSetLayout; // b0..b9
-		static VkDescriptorSet       s_PrefixDescriptorSet;
 		static VkPipelineLayout      s_PrefixPipelineLayout;      // push const [0,128) compute
 		static VulkanBuffer s_ProjectedSplatsSSBO;  // b3: projected splats, 128 B/Gaussian
 		static VulkanBuffer s_PrefixScratchSSBO;    // b4: 8 B/高斯  (uvec2)
@@ -324,7 +333,6 @@ namespace Engine {
 		static bool s_HiZActive;
 
 			static VkDescriptorSetLayout s_GaussianDescriptorLayout;
-			static VkDescriptorSet       s_GaussianDescriptorSet;
 			static uint32_t s_TotalGaussianCount;
 			static bool     s_GaussiansDirty;
 			static bool     s_GaussianResourcesCreated;

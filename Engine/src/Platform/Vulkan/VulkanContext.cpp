@@ -95,7 +95,8 @@ namespace Engine {
         createSwapChainFramebuffers();
         createDescriptorPool();
         createCommandBuffers();
-        createSemaphores();
+        createFrameSync();
+        createPresentSemaphores();
     }
 
     void VulkanContext::cleanupSwapChain() {
@@ -105,6 +106,9 @@ namespace Engine {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
         swapChainFramebuffers.clear();
+        for (VkSemaphore semaphore : m_RenderFinishedSemaphores)
+            vkDestroySemaphore(device, semaphore, nullptr);
+        m_RenderFinishedSemaphores.clear();
         renderPassesMap["ImGui"]->cleanup();
 
         // Destroy MSAA resources
@@ -119,7 +123,6 @@ namespace Engine {
         vkDestroyImage(device, depthImage, nullptr);
         vkFreeMemory(device, depthImageMemory, nullptr);
         
-        vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             vkDestroyImageView(device, swapChainImageViews[i], nullptr);
         }
@@ -150,7 +153,7 @@ namespace Engine {
         // Mesh framebuffers are owned by VulkanFramebuffer (offscreen), as on init.
         // ImGui pass: 只需要 swapchain image，不需要 depth
         createSwapChainFramebuffers();
-        createCommandBuffers();
+        createPresentSemaphores();
 
         // 通知 Renderer 更新深度纹理 descriptor
         Renderer::OnSwapchainRecreated();
@@ -163,8 +166,11 @@ namespace Engine {
         if (m_TimestampQueryPool != VK_NULL_HANDLE)
             vkDestroyQueryPool(device, m_TimestampQueryPool, nullptr);
         
-        vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
-        vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
+        for (const auto& frame : m_FrameSync)
+        {
+            vkDestroySemaphore(device, frame.ImageAvailable, nullptr);
+            vkDestroyFence(device, frame.Fence, nullptr);
+        }
         vkDestroyCommandPool(device, commandPool, nullptr);
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
@@ -191,10 +197,11 @@ namespace Engine {
         using Clock = std::chrono::steady_clock;
         m_CpuSyncTimings = {};
 
-        const auto queueWaitStart = Clock::now();
-        vkQueueWaitIdle(presentQueue);
-        m_CpuSyncTimings[static_cast<size_t>(CpuSyncStage::QueueWaitIdle)] =
-            std::chrono::duration<double, std::milli>(Clock::now() - queueWaitStart).count();
+        const auto fenceWaitStart = Clock::now();
+        waitForFrameFence(m_FrameSlot);
+        m_CpuSyncTimings[static_cast<size_t>(CpuSyncStage::FenceWait)] =
+            std::chrono::duration<double, std::milli>(Clock::now() - fenceWaitStart).count();
+        m_GpuTimings = readGpuTimings(m_FrameSlot);
 
         const auto acquireImage = [&]()
         {
@@ -203,7 +210,7 @@ namespace Engine {
                 device,
                 swapChain,
                 std::numeric_limits<uint64_t>::max(),
-                imageAvailableSemaphore,
+                m_FrameSync[m_FrameSlot].ImageAvailable,
                 VK_NULL_HANDLE,
                 &currentImageIndex);
             m_CpuSyncTimings[static_cast<size_t>(CpuSyncStage::Acquire)] +=
@@ -223,18 +230,29 @@ namespace Engine {
             throw std::runtime_error("failed to acquire swap chain image!");
         }
         
-        vkResetCommandBuffer(commandBuffers[currentImageIndex], 0);//清空命令
+        VkCommandBuffer cmd = GetCurrentCommandBuffer();
+        if (vkResetCommandBuffer(cmd, 0) != VK_SUCCESS)
+            throw std::runtime_error("failed to reset frame command buffer");
 
         VkCommandBufferBeginInfo beginInfo = {};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-        beginInfo.pInheritanceInfo = nullptr; // Optional
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
         //开始录制命令
-        vkBeginCommandBuffer(commandBuffers[currentImageIndex], &beginInfo);
+        if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS)
+            throw std::runtime_error("failed to begin frame command buffer");
+
+        // Keep GPU use of the shared attachments and Gaussian working buffers
+        // ordered across submissions while the CPU records the next frame.
+        VkMemoryBarrier sharedResources{};
+        sharedResources.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        sharedResources.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        sharedResources.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            0, 1, &sharedResources, 0, nullptr, 0, nullptr);
 
         if (m_TimestampQueryPool != VK_NULL_HANDLE)
-            vkCmdResetQueryPool(GetCurrentCommandBuffer(), m_TimestampQueryPool, 0,
+            vkCmdResetQueryPool(cmd, m_TimestampQueryPool, m_FrameSlot * static_cast<uint32_t>(RenderStageCount * 2),
                 static_cast<uint32_t>(RenderStageCount * 2));
         m_TimedStages.fill(false);
 
@@ -258,7 +276,7 @@ namespace Engine {
         VkQueryPoolCreateInfo queryInfo{};
         queryInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
         queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        queryInfo.queryCount = static_cast<uint32_t>(RenderStageCount * 2);
+        queryInfo.queryCount = FramesInFlight * static_cast<uint32_t>(RenderStageCount * 2);
         if (vkCreateQueryPool(device, &queryInfo, nullptr, &m_TimestampQueryPool) != VK_SUCCESS)
         {
             m_TimestampQueryPool = VK_NULL_HANDLE;
@@ -270,22 +288,35 @@ namespace Engine {
     {
         if (m_TimestampQueryPool == VK_NULL_HANDLE) return;
         vkCmdWriteTimestamp(GetCurrentCommandBuffer(), startStage,
-            m_TimestampQueryPool, static_cast<uint32_t>(stage) * 2);
+            m_TimestampQueryPool, (m_FrameSlot * static_cast<uint32_t>(RenderStageCount) + static_cast<uint32_t>(stage)) * 2);
     }
 
     void VulkanContext::EndGpuTiming(RenderStage stage)
     {
         if (m_TimestampQueryPool == VK_NULL_HANDLE) return;
         vkCmdWriteTimestamp(GetCurrentCommandBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-            m_TimestampQueryPool, static_cast<uint32_t>(stage) * 2 + 1);
+            m_TimestampQueryPool, (m_FrameSlot * static_cast<uint32_t>(RenderStageCount) + static_cast<uint32_t>(stage)) * 2 + 1);
         m_TimedStages[static_cast<size_t>(stage)] = true;
     }
 
-    void VulkanContext::readGpuTimings()
+    void VulkanContext::waitForFrameFence(uint32_t slot) const
     {
-        m_GpuTimings = {};
-        m_GpuTimings.Supported = m_TimestampQueryPool != VK_NULL_HANDLE;
-        if (!m_GpuTimings.Supported) return;
+        if (vkWaitForFences(device, 1, &m_FrameSync[slot].Fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+            throw std::runtime_error("failed to wait for frame fence");
+    }
+
+    GpuTimings VulkanContext::WaitForSubmittedGpuTimings() const
+    {
+        const uint32_t slot = (m_FrameSlot + FramesInFlight - 1) % FramesInFlight;
+        waitForFrameFence(slot);
+        return readGpuTimings(slot);
+    }
+
+    GpuTimings VulkanContext::readGpuTimings(uint32_t slot) const
+    {
+        GpuTimings timings{};
+        timings.Supported = m_TimestampQueryPool != VK_NULL_HANDLE;
+        if (!timings.Supported) return timings;
 
         bool hasTimings = false;
         bool allAvailable = true;
@@ -293,7 +324,7 @@ namespace Engine {
             ? UINT64_MAX : (uint64_t{1} << m_TimestampValidBits) - 1;
         for (size_t stageIndex = 0; stageIndex < RenderStageCount; ++stageIndex)
         {
-            if (!m_SubmittedTimedStages[stageIndex]) continue;
+            if (!m_FrameSync[slot].TimedStages[stageIndex]) continue;
             hasTimings = true;
             struct TimestampResult
             {
@@ -301,7 +332,7 @@ namespace Engine {
                 uint64_t Available;
             } timestamps[2] = {};
             const VkResult result = vkGetQueryPoolResults(device, m_TimestampQueryPool,
-                static_cast<uint32_t>(stageIndex * 2), 2, sizeof(timestamps), timestamps,
+                static_cast<uint32_t>((slot * RenderStageCount + stageIndex) * 2), 2, sizeof(timestamps), timestamps,
                 sizeof(TimestampResult), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
             if (result != VK_SUCCESS || !timestamps[0].Available || !timestamps[1].Available)
             {
@@ -309,9 +340,10 @@ namespace Engine {
                 continue;
             }
             const uint64_t elapsed = (timestamps[1].Value - timestamps[0].Value) & timestampMask;
-            m_GpuTimings.Milliseconds[stageIndex] = static_cast<double>(elapsed) * m_TimestampPeriod / 1000000.0;
+            timings.Milliseconds[stageIndex] = static_cast<double>(elapsed) * m_TimestampPeriod / 1000000.0;
         }
-        m_GpuTimings.Valid = hasTimings && allAvailable;
+        timings.Valid = hasTimings && allAvailable;
+        return timings;
     }
 
     void VulkanContext::BeginMeshRenderPass(std::shared_ptr<VulkanFramebuffer> offscreenFB)
@@ -349,7 +381,7 @@ namespace Engine {
             barrier.srcAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
             barrier.dstAccessMask                   = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-            vkCmdPipelineBarrier(commandBuffers[currentImageIndex],
+            vkCmdPipelineBarrier(GetCurrentCommandBuffer(),
                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -374,7 +406,7 @@ namespace Engine {
             barrier.srcAccessMask                   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
             barrier.dstAccessMask                   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-            vkCmdPipelineBarrier(commandBuffers[currentImageIndex],
+            vkCmdPipelineBarrier(GetCurrentCommandBuffer(),
                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                 0, 0, nullptr, 0, nullptr, 1, &barrier);
@@ -403,7 +435,7 @@ namespace Engine {
             renderPassInfo.pClearValues = clearValues;
         }
 
-        vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(GetCurrentCommandBuffer(), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         // Set viewport and scissor to offscreen FBO size
         VkViewport viewport = {};
@@ -413,12 +445,12 @@ namespace Engine {
         viewport.height = (float)offscreenFB->GetHeight();
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(commandBuffers[currentImageIndex], 0, 1, &viewport);
+        vkCmdSetViewport(GetCurrentCommandBuffer(), 0, 1, &viewport);
 
         VkRect2D scissor = {};
         scissor.offset = { 0, 0 };
         scissor.extent = offscreenFB->GetExtent();
-        vkCmdSetScissor(commandBuffers[currentImageIndex], 0, 1, &scissor);
+        vkCmdSetScissor(GetCurrentCommandBuffer(), 0, 1, &scissor);
         
     }
 
@@ -443,12 +475,12 @@ namespace Engine {
         renderPassInfo.clearValueCount = 1;
         renderPassInfo.pClearValues = &clearValue;
 
-        vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(GetCurrentCommandBuffer(), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     }
     
     void VulkanContext::EndRenderPass()
     {
-        VkCommandBuffer cmd = commandBuffers[currentImageIndex];
+        VkCommandBuffer cmd = GetCurrentCommandBuffer();
 
         // 结束 Mesh RenderPass
         vkCmdEndRenderPass(cmd);
@@ -473,7 +505,7 @@ namespace Engine {
         renderPassInfo.clearValueCount = 1;
         renderPassInfo.pClearValues = &clearValue;
 
-        vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(GetCurrentCommandBuffer(), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         // viewport / scissor → 阴影贴图尺寸
         VkViewport viewport = {};
@@ -483,22 +515,23 @@ namespace Engine {
         viewport.height = (float)extent.height;
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(commandBuffers[currentImageIndex], 0, 1, &viewport);
+        vkCmdSetViewport(GetCurrentCommandBuffer(), 0, 1, &viewport);
 
         VkRect2D scissor = {};
         scissor.offset = { 0, 0 };
         scissor.extent = extent;
-        vkCmdSetScissor(commandBuffers[currentImageIndex], 0, 1, &scissor);
+        vkCmdSetScissor(GetCurrentCommandBuffer(), 0, 1, &scissor);
     }
     void VulkanContext::DrawImGui()
     {
         // ImGui 绘制在当前 RenderPass 内
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffers[currentImageIndex]);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), GetCurrentCommandBuffer());
 
     }
     void VulkanContext::EndFrame()
     {
-        readGpuTimings(); // Read the previously submitted frame, not the recording frame.
+        auto& frame = m_FrameSync[m_FrameSlot];
+        VkCommandBuffer cmd = GetCurrentCommandBuffer();
         
         VkImageMemoryBarrier presentBarrier = {};
         presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -516,7 +549,7 @@ namespace Engine {
         presentBarrier.subresourceRange.layerCount = 1;
 
         vkCmdPipelineBarrier(
-            commandBuffers[currentImageIndex],
+            cmd,
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
             0,
@@ -524,7 +557,7 @@ namespace Engine {
             0, nullptr,
             1, &presentBarrier);
 
-        if (vkEndCommandBuffer(commandBuffers[currentImageIndex]) != VK_SUCCESS) {
+        if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
             throw std::runtime_error("failed to record command buffer!");
         }
 
@@ -537,30 +570,31 @@ namespace Engine {
         VkSubmitInfo submitInfo = {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-        VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
         VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
         submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitSemaphores = &frame.ImageAvailable;
         submitInfo.pWaitDstStageMask = waitStages;
 
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffers[currentImageIndex];
+        submitInfo.pCommandBuffers = &cmd;
 
-        VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+        VkSemaphore renderFinished = m_RenderFinishedSemaphores[currentImageIndex];
         submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = signalSemaphores;
+        submitInfo.pSignalSemaphores = &renderFinished;
 
-        VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        if (vkResetFences(device, 1, &frame.Fence) != VK_SUCCESS)
+            throw std::runtime_error("failed to reset frame fence");
+        VkResult submitResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, frame.Fence);
         if (submitResult != VK_SUCCESS) {
             throw std::runtime_error("failed to submit draw command buffer!");
         }
-        m_SubmittedTimedStages = m_TimedStages;
+        frame.TimedStages = m_TimedStages;
 
         VkPresentInfoKHR presentInfo = {};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
         presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = signalSemaphores;
+        presentInfo.pWaitSemaphores = &renderFinished;
         VkSwapchainKHR swapChains[] = { swapChain };
         presentInfo.swapchainCount = 1;
         presentInfo.pSwapchains = swapChains;
@@ -582,6 +616,7 @@ namespace Engine {
 
         // 重置标记
         currentRenderPassName = "";
+        m_FrameSlot = (m_FrameSlot + 1) % FramesInFlight;
     }
 
     /// <summary>
@@ -1377,7 +1412,7 @@ namespace Engine {
         renderPassInfo.clearValueCount = 2;
         renderPassInfo.pClearValues = clearValues;
 
-        vkCmdBeginRenderPass(commandBuffers[currentImageIndex], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(GetCurrentCommandBuffer(), &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         VkViewport viewport = {};
         viewport.x = 0.0f;
@@ -1386,12 +1421,12 @@ namespace Engine {
         viewport.height = (float)offscreenFB->GetHeight();
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(commandBuffers[currentImageIndex], 0, 1, &viewport);
+        vkCmdSetViewport(GetCurrentCommandBuffer(), 0, 1, &viewport);
 
         VkRect2D scissor = {};
         scissor.offset = { 0, 0 };
         scissor.extent = offscreenFB->GetExtent();
-        vkCmdSetScissor(commandBuffers[currentImageIndex], 0, 1, &scissor);
+        vkCmdSetScissor(GetCurrentCommandBuffer(), 0, 1, &scissor);
 
     }
     VkFormat VulkanContext::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
@@ -1505,7 +1540,6 @@ namespace Engine {
     }
 
     void VulkanContext::createCommandBuffers() {
-        commandBuffers.resize(swapChainImageViews.size());
         VkCommandBufferAllocateInfo allocInfo = {};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = commandPool;
@@ -1517,15 +1551,31 @@ namespace Engine {
         }
 
     }
-    void VulkanContext::createSemaphores() {
-        VkSemaphoreCreateInfo semaphoreInfo = {};
+    void VulkanContext::createFrameSync()
+    {
+        VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS) {
-
-            throw std::runtime_error("failed to create semaphores!");
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        for (auto& frame : m_FrameSync)
+        {
+            if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &frame.ImageAvailable) != VK_SUCCESS ||
+                vkCreateFence(device, &fenceInfo, nullptr, &frame.Fence) != VK_SUCCESS)
+                throw std::runtime_error("failed to create frame synchronization objects");
         }
+    }
 
+    void VulkanContext::createPresentSemaphores()
+    {
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        m_RenderFinishedSemaphores.resize(swapChainImages.size());
+        for (VkSemaphore& semaphore : m_RenderFinishedSemaphores)
+        {
+            if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS)
+                throw std::runtime_error("failed to create present semaphore");
+        }
     }
     //void VulkanContext::updateUniformBuffer() {
     //    static auto startTime = std::chrono::high_resolution_clock::now();

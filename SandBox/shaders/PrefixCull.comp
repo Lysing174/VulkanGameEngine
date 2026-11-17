@@ -362,18 +362,20 @@ vec3 evalSH3(vec3 dir, float sh[48])
     return result + 0.5; // 3DGS 约定: 最终颜色 = 0.5 + SH_eval
 }
 
-bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
+bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key,
+    out vec3 worldCenter, out uint modelIndex)
 {
     key = 0u;
-    GaussianDataGPU g = gaussians[id];
-    if (!isFinite(g.posAndOpacity) ||
-        g.posAndOpacity.w < frameInfo.extraInfo.x ||
-        g.modelIndex >= uint(modelTransforms.length()))
+    vec4 posAndOpacity = gaussians[id].posAndOpacity;
+    modelIndex = gaussians[id].modelIndex;
+    if (!isFinite(posAndOpacity) ||
+        posAndOpacity.w < frameInfo.extraInfo.x ||
+        modelIndex >= uint(modelTransforms.length()))
         return false;
 
-    mat4 model = modelTransforms[g.modelIndex];
+    mat4 model = modelTransforms[modelIndex];
     // Preserve the existing VS's separate model and view transformations.
-    vec3 worldCenter = (model * vec4(g.posAndOpacity.xyz, 1.0)).xyz;
+    worldCenter = (model * vec4(posAndOpacity.xyz, 1.0)).xyz;
     vec4 viewCenter = camera.viewMatrix * vec4(worldCenter, 1.0);
     // LMG rejects centers at positive camera depth <= 0.2.
     if (!isFinite(viewCenter) || viewCenter.z >= -0.2)
@@ -392,10 +394,11 @@ bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
     if (!isFinite(vec4(ndcCenter, 1.0)))
         return false;
 
+    float cov3d[6] = gaussians[id].cov3d;
     mat3 covariance = mat3(
-        g.cov3d[0], g.cov3d[1], g.cov3d[2],
-        g.cov3d[1], g.cov3d[3], g.cov3d[4],
-        g.cov3d[2], g.cov3d[4], g.cov3d[5]
+        cov3d[0], cov3d[1], cov3d[2],
+        cov3d[1], cov3d[3], cov3d[4],
+        cov3d[2], cov3d[4], cov3d[5]
     );
 
     float fx = frameInfo.focal.x;
@@ -483,7 +486,7 @@ bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
 
     // alpha >= threshold iff q <= 2*log(opacity/threshold). Keep the original
     // tile domain as well, so the compact geometry cannot introduce new tails.
-    float supportRadiusSquared = 2.0 * log(g.posAndOpacity.w / frameInfo.extraInfo.x) + 0.0002;
+    float supportRadiusSquared = 2.0 * log(posAndOpacity.w / frameInfo.extraInfo.x) + 0.0002;
     vec3 conic = vec3(d, -b, a) / determinant;
     vec2 quadCenter;
     vec4 compactBasis;
@@ -526,11 +529,8 @@ bool projectAndCull(uint id, out ProjectedSplatGPU result, out uint key)
     result.ndcCenter = vec4(ndcCenter, 1.0);
     // result.ndcBasis = vec4(basis1, basis2);
     result.ndcBasis = compactBasis;
-    // SH coefficients stay in asset space when the instance is transformed.
-    vec3 camPos = frameInfo.cameraPosAndScale.xyz;
-    vec3 viewDir = normalize(inverse(mat3(model)) * (worldCenter - camPos));
-    vec3 shColor = evalSH3(viewDir, g.sh);
-    result.color = vec4(max(shColor, vec3(0.0)), g.posAndOpacity.w);
+    // The Hi-Z refinement probe only needs the base opacity.
+    result.color = vec4(0.0, 0.0, 0.0, posAndOpacity.w);
     // result.viewCenter = vec4(E, 0.0);
     // result.invSigma0 = inverse0;
     // result.invSigma1 = inverseTail;
@@ -558,12 +558,21 @@ void main()
     ProjectedSplatGPU projected;
     if (inRange)
     {
-        frustumVisible = projectAndCull(id, projected, key);
+        vec3 worldCenter;
+        uint modelIndex;
+        frustumVisible = projectAndCull(id, projected, key, worldCenter, modelIndex);
         visible = frustumVisible;
         if (visible && isOccluded(projected))
             visible = false;
         if (visible)
+        {
+            // Evaluate the asset-space SH color only for splats that will be drawn.
+            vec3 camPos = frameInfo.cameraPosAndScale.xyz;
+            vec3 viewDir = normalize(inverse(mat3(modelTransforms[modelIndex])) * (worldCenter - camPos));
+            vec3 shColor = evalSH3(viewDir, gaussians[id].sh);
+            projected.color.rgb = max(shColor, vec3(0.0));
             projectedSplats[id] = projected;
+        }
     }
 
     // Padded lanes still participate in every barrier of the inclusive scan.

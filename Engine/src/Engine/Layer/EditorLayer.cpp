@@ -406,8 +406,8 @@ namespace Engine {
 			ImGui::TableNextColumn();
 			ImGui::Text("CPU other: %.3f ms", m_Statistics.CPU.OtherMilliseconds());
 			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("Frame time minus QueueWaitIdle, Acquire and Present.\nIncludes CPU work, submission and any other waits.");
-			const std::array<const char*, CpuSyncStageCount> cpuSyncNames = { "QueueWaitIdle", "Acquire", "Present" };
+				ImGui::SetTooltip("Frame time minus Fence wait, Acquire and Present.\nIncludes CPU work, submission and any other waits.");
+			const std::array<const char*, CpuSyncStageCount> cpuSyncNames = { "Fence wait", "Acquire", "Present" };
 			for (size_t i = 0; i < CpuSyncStageCount; ++i)
 				ImGui::Text("CPU %s: %.3f ms", cpuSyncNames[i], m_Statistics.CPU.SyncMilliseconds[i]);
 

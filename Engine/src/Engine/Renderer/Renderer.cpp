@@ -25,10 +25,8 @@ namespace Engine {
 
 	// Gaussian (set0): FrameInfo UBO + 高斯 SSBO + 排序索引 SSBO + 深度 + model transform SSBO
 	VkDescriptorSetLayout Renderer::GaussianRenderer::s_GaussianDescriptorLayout = VK_NULL_HANDLE;
-	VkDescriptorSet       Renderer::GaussianRenderer::s_GaussianDescriptorSet = VK_NULL_HANDLE;
+	Renderer::GaussianRenderer::FrameResources Renderer::GaussianRenderer::s_Frames[VulkanContext::FramesInFlight];
 	VulkanBuffer         Renderer::GaussianRenderer::s_GaussianSSBO;
-	VulkanBuffer         Renderer::GaussianRenderer::s_ModelTransformSSBO;
-	VulkanBuffer         Renderer::GaussianRenderer::s_FrameInfoUBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_KeysBuffers[2];
 	VulkanBuffer         Renderer::GaussianRenderer::s_ValuesBuffers[2];
 	VulkanBuffer         Renderer::GaussianRenderer::s_GlobalHistogramSSBO;
@@ -51,7 +49,6 @@ namespace Engine {
 	VkDescriptorSet       Renderer::GaussianRenderer::s_UpsweepSet[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
 	VkDescriptorSet       Renderer::GaussianRenderer::s_SpineSet = VK_NULL_HANDLE;
 	VkDescriptorSet       Renderer::GaussianRenderer::s_DownsweepSet[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
-	VkDescriptorSet       Renderer::GaussianRenderer::s_PrefixDescriptorSet = VK_NULL_HANDLE;
 	VulkanBuffer         Renderer::GaussianRenderer::s_ProjectedSplatsSSBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_PrefixScratchSSBO;
 	VulkanBuffer         Renderer::GaussianRenderer::s_PrefixGroupSSBO;
@@ -73,10 +70,8 @@ namespace Engine {
     Renderer::SceneData Renderer::s_SceneData;
 
     // Light SSBO & Shadow UBO (set2 b0 / b1), 由 ShadowRenderer 通过 VulkanBuffer 持有
-    VulkanBuffer Renderer::ShadowRenderer::s_LightSSBO;
-    VulkanBuffer Renderer::ShadowRenderer::s_ShadowUBO;
+    Renderer::ShadowRenderer::FrameResources Renderer::ShadowRenderer::s_Frames[VulkanContext::FramesInFlight];
     VkDescriptorSetLayout Renderer::ShadowRenderer::s_LightDescriptorLayout = VK_NULL_HANDLE;
-    VkDescriptorSet Renderer::ShadowRenderer::s_LightDescriptorSet = VK_NULL_HANDLE;
 
     // 阴影贴图资源 (set2 b2)
     std::array<std::unique_ptr<VulkanImage>, MAX_SHADOW_MAPS> Renderer::ShadowRenderer::s_ShadowImages;
@@ -199,8 +194,6 @@ namespace Engine {
 
 	void Renderer::EndRenderQueueSubmit()
 	{
-    	ShadowRenderer::EndLightCollection();
-    	ShadowRenderer::EndShadowCollection();
     	// 高斯: 收集完毕, 若签名变化(高斯资产集合变更)则重建并上传 SSBO
     	GaussianRenderer::EndGaussianCollection();
 
@@ -221,7 +214,10 @@ namespace Engine {
         s_SceneData.ProjectionMatrix[1] *= -1.0f;
 
     	glm::mat4 projView = s_SceneData.ProjectionMatrix * s_SceneData.ViewMatrix;
-    	VulkanContext::Get()->BeginFrame(projView);//此处从query pool读取上一帧gpu耗时
+		VulkanContext::Get()->BeginFrame(projView);
+		// The selected slot's fence has signaled, so its host-visible buffers can be written.
+		ShadowRenderer::EndLightCollection();
+		ShadowRenderer::EndShadowCollection();
     	// 注意: set0 为高斯专属, 此处不再绑定全局 set; mesh/skybox 在各自 pass 内绑定 set1/2/3.
 	}
 
@@ -327,20 +323,9 @@ namespace Engine {
     // ============================================================
     // Light System
     // ============================================================
-    void Renderer::ShadowRenderer::CreateLightBuffer()
+    VkDescriptorSet Renderer::ShadowRenderer::GetLightDescriptorSet()
     {
-        // Light SSBO (set2 b0): 全部场景光源
-        s_LightSSBO = VulkanBuffer(MAX_LIGHTS * sizeof(GPULight),
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    }
-
-    void Renderer::ShadowRenderer::CreateShadowBuffer()
-    {
-        // Shadow UBO (set2 b1): 光视矩阵 + 映射 + bias
-        s_ShadowUBO = VulkanBuffer(sizeof(ShadowUBO),
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        return s_Frames[VulkanContext::Get()->GetFrameSlot()].DescriptorSet;
     }
 
     void Renderer::ShadowRenderer::UpdateLightBuffer()
@@ -353,7 +338,7 @@ namespace Engine {
         uint32_t count = std::min(s_SceneLightCount, MAX_LIGHTS);
         memcpy(gpuLights.data(), s_SceneLights.data(), count * sizeof(GPULight));
 
-        s_LightSSBO.SetData(gpuLights.data(), MAX_LIGHTS * sizeof(GPULight));
+        s_Frames[VulkanContext::Get()->GetFrameSlot()].LightBuffer.SetData(gpuLights.data(), MAX_LIGHTS * sizeof(GPULight));
 
         s_LightsDirty = false;
     }
@@ -502,7 +487,7 @@ namespace Engine {
             }
         }
 
-        s_ShadowUBO.SetData(&ubo, sizeof(ShadowUBO));
+        s_Frames[VulkanContext::Get()->GetFrameSlot()].ShadowBuffer.SetData(&ubo, sizeof(ShadowUBO));
     }
 
     void Renderer::ShadowRenderer::Run()
@@ -524,11 +509,12 @@ namespace Engine {
         shadowShader->Bind("Shadow");
         // 绑定 light set (局部序号, Shadow shader 的 pipeline layout 含该 set 需绑定以通过校验)
         {
-            if (s_LightDescriptorSet != VK_NULL_HANDLE)
+            const VkDescriptorSet lightSet = GetLightDescriptorSet();
+            if (lightSet != VK_NULL_HANDLE)
             {
                 int lightLocal = shadowShader->GetConfig().GetLocalSetIndex(LIGHT_SET);
                 if (lightLocal >= 0)
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, (uint32_t)lightLocal, 1, &s_LightDescriptorSet, 0, nullptr);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, (uint32_t)lightLocal, 1, &lightSet, 0, nullptr);
             }
         }
         // 对每个阴影光: 绑对应 framebuffer + 光视矩阵, 画同一份 mesh 队列
@@ -784,11 +770,16 @@ namespace Engine {
 
     void Renderer::ShadowRenderer::Init()
     {
-        CreateLightBuffer();           // s_LightSSBO (VulkanBuffer)
-        CreateShadowBuffer();          // s_ShadowUBO (VulkanBuffer)
-        CreateShadowResources();       // 阴影贴图 image/view/framebuffer/sampler (set2 b2)
-        CreateDescriptorSetLayout();   // s_LightDescriptorLayout (set2)
-        CreateDescriptorSet();         // s_LightDescriptorSet (绑定 b0/b1/b2, b2 需先有贴图)
+        CreateShadowResources();
+        CreateDescriptorSetLayout();
+        for (auto& frame : s_Frames)
+        {
+            frame.LightBuffer = VulkanBuffer(MAX_LIGHTS * sizeof(GPULight), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            frame.ShadowBuffer = VulkanBuffer(sizeof(ShadowUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            CreateDescriptorSet(frame);
+        }
     }
 
     void Renderer::ShadowRenderer::Exit()
@@ -796,14 +787,16 @@ namespace Engine {
         auto* context = VulkanContext::Get();
         VkDevice device = context->GetDevice();
 
-        if (s_LightDescriptorSet != VK_NULL_HANDLE)
-            vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &s_LightDescriptorSet);
+        for (auto& frame : s_Frames)
+        {
+            if (frame.DescriptorSet != VK_NULL_HANDLE)
+                vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &frame.DescriptorSet);
+            frame.DescriptorSet = VK_NULL_HANDLE;
+            frame.LightBuffer.Destroy();
+            frame.ShadowBuffer.Destroy();
+        }
         if (s_LightDescriptorLayout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, s_LightDescriptorLayout, nullptr);
-
-        // set2 buffer 由 VulkanBuffer RAII 管理, 显式 Destroy 释放 Vk 资源
-        s_LightSSBO.Destroy();
-        s_ShadowUBO.Destroy();
 
         // 阴影贴图资源 (image/view/framebuffer/sampler) 释放
         DestroyShadowResources();
@@ -841,7 +834,7 @@ namespace Engine {
             throw std::runtime_error("failed to create light descriptor set layout!");
     }
 
-    void Renderer::ShadowRenderer::CreateDescriptorSet()
+    void Renderer::ShadowRenderer::CreateDescriptorSet(FrameResources& frame)
     {
         auto* context = VulkanContext::Get();
         VkDevice device = context->GetDevice();
@@ -852,18 +845,18 @@ namespace Engine {
         allocInfo.descriptorSetCount = 1;
         allocInfo.pSetLayouts = &s_LightDescriptorLayout;
 
-        if (vkAllocateDescriptorSets(device, &allocInfo, &s_LightDescriptorSet) != VK_SUCCESS)
+        if (vkAllocateDescriptorSets(device, &allocInfo, &frame.DescriptorSet) != VK_SUCCESS)
             throw std::runtime_error("failed to allocate light descriptor set!");
 
         std::array<VkWriteDescriptorSet, 3> writes = {};
 
         // b0: Light SSBO
         VkDescriptorBufferInfo lightInfo = {};
-        lightInfo.buffer = s_LightSSBO.GetBuffer();
+        lightInfo.buffer = frame.LightBuffer.GetBuffer();
         lightInfo.offset = 0;
-        lightInfo.range = s_LightSSBO.GetSize();
+        lightInfo.range = frame.LightBuffer.GetSize();
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = s_LightDescriptorSet;
+        writes[0].dstSet = frame.DescriptorSet;
         writes[0].dstBinding = 0;
         writes[0].dstArrayElement = 0;
         writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -872,11 +865,11 @@ namespace Engine {
 
         // b1: Shadow UBO
         VkDescriptorBufferInfo shadowUBOInfo = {};
-        shadowUBOInfo.buffer = s_ShadowUBO.GetBuffer();
+        shadowUBOInfo.buffer = frame.ShadowBuffer.GetBuffer();
         shadowUBOInfo.offset = 0;
-        shadowUBOInfo.range = s_ShadowUBO.GetSize();
+        shadowUBOInfo.range = frame.ShadowBuffer.GetSize();
         writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = s_LightDescriptorSet;
+        writes[1].dstSet = frame.DescriptorSet;
         writes[1].dstBinding = 1;
         writes[1].dstArrayElement = 0;
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -892,7 +885,7 @@ namespace Engine {
             shadowImageInfos[s].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         }
         writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = s_LightDescriptorSet;
+        writes[2].dstSet = frame.DescriptorSet;
         writes[2].dstBinding = 2;
         writes[2].dstArrayElement = 0;
         writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1153,17 +1146,19 @@ namespace Engine {
 		s_HiZPipelineLayout = VK_NULL_HANDLE;
 		s_HiZSetLayout = VK_NULL_HANDLE;
 
-		if (s_GaussianDescriptorSet != VK_NULL_HANDLE)
-			vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &s_GaussianDescriptorSet);
-		s_GaussianDescriptorSet = VK_NULL_HANDLE;
+		ReleaseFrameBuffers();
+		for (auto& frame : s_Frames)
+		{
+			if (frame.PrefixSet != VK_NULL_HANDLE)
+				vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &frame.PrefixSet);
+			frame.PrefixSet = VK_NULL_HANDLE;
+		}
 
 		if (s_GaussianDescriptorLayout != VK_NULL_HANDLE)
 			vkDestroyDescriptorSetLayout(device, s_GaussianDescriptorLayout, nullptr);
 		s_GaussianDescriptorLayout = VK_NULL_HANDLE;
 
 		s_GaussianSSBO.Destroy();
-		s_ModelTransformSSBO.Destroy();
-		s_FrameInfoUBO.Destroy();
 		s_KeysBuffers[0].Destroy(); s_KeysBuffers[1].Destroy();
 		s_ValuesBuffers[0].Destroy(); s_ValuesBuffers[1].Destroy();
 		s_GlobalHistogramSSBO.Destroy();
@@ -1317,13 +1312,8 @@ namespace Engine {
 		s_GaussianResourcesCreated = false;
 
 		// 释放旧的 DS / 缓冲 (DS 由 descriptor pool 分配, 可单独 free)
-		if (s_GaussianDescriptorSet != VK_NULL_HANDLE)
-		{
-			vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &s_GaussianDescriptorSet);
-			s_GaussianDescriptorSet = VK_NULL_HANDLE;
-		}
+		ReleaseFrameBuffers();
 		s_GaussianSSBO.Destroy();
-		s_ModelTransformSSBO.Destroy();
 		s_KeysBuffers[0].Destroy(); s_KeysBuffers[1].Destroy();
 		s_ValuesBuffers[0].Destroy(); s_ValuesBuffers[1].Destroy();
 		s_GlobalHistogramSSBO.Destroy();
@@ -1332,13 +1322,8 @@ namespace Engine {
 		s_PrefixScratchSSBO.Destroy();
 		s_PrefixGroupSSBO.Destroy();
 		s_WorkInfoSSBO.Destroy();
-		if (!s_FrameInfoUBO.IsValid())
-			s_FrameInfoUBO = VulkanBuffer(64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
 		if (s_TotalGaussianCount == 0)
 		{
-			UpdateModelTransforms();  // 无高斯: SSBO 无效, 内部 no-op (与合并前 UploadGaussianData 一致)
 			s_GaussianResourcesCreated = true;  // 无高斯, 不分配 SSBO
 			return;
 		}
@@ -1348,8 +1333,6 @@ namespace Engine {
 			VkBufferUsageFlags storageUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 			s_GaussianSSBO       = VulkanBuffer(s_TotalGaussianCount * sizeof(GaussianDataGPU), storageUsage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-			s_ModelTransformSSBO = VulkanBuffer(s_GaussianSubmitList.size() * sizeof(glm::mat4), storageUsage,
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 			// ping-pong keys/values: values[0] 接收初始索引上传, 四轮排序后直接供绘制读取
 			s_KeysBuffers[0]     = VulkanBuffer(s_TotalGaussianCount * sizeof(uint32_t), storageUsage,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
@@ -1375,125 +1358,85 @@ namespace Engine {
 			s_PrefixGroupSSBO     = VulkanBuffer(numGroups * 2 * sizeof(uint32_t), storageUsage,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 			s_WorkInfoSSBO        = VulkanBuffer(64,
-				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+					VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 			std::array<uint32_t, 16> workInfo{};
 			workInfo[2] = s_TotalGaussianCount; // counts.z: input count, available before the first Cull.
 			workInfo[3] = numGroups;           // counts.w: input workgroup count.
 			s_WorkInfoSSBO.SetData(workInfo.data(), sizeof(workInfo));
 
-			// 分配 DS (set0)
-			VkDescriptorSetAllocateInfo allocInfo = {};
-			allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-			allocInfo.descriptorPool = context->GetDescriptorPool();
-			allocInfo.descriptorSetCount = 1;
-			allocInfo.pSetLayouts = &s_GaussianDescriptorLayout;
-
-			if (vkAllocateDescriptorSets(device, &allocInfo, &s_GaussianDescriptorSet) != VK_SUCCESS)
-				throw std::runtime_error("failed to allocate gaussian descriptor set!");
-
-			// 写 b0(FrameInfo UBO) / b1(Gaussian) / b2(SortedIndex) / b4(ModelTransform) / b5(ProjectedSplats)
-			std::array<VkWriteDescriptorSet, 5> writes = {};
-
-			VkDescriptorBufferInfo uboInfo{};
-			uboInfo.buffer = s_FrameInfoUBO.GetBuffer(); uboInfo.offset = 0; uboInfo.range = s_FrameInfoUBO.GetSize();
-			writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[0].dstSet = s_GaussianDescriptorSet;
-			writes[0].dstBinding = 0; writes[0].dstArrayElement = 0;
-			writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[0].descriptorCount = 1;
-			writes[0].pBufferInfo = &uboInfo;
-
-			VkDescriptorBufferInfo gaussianInfo{};
-			gaussianInfo.buffer = s_GaussianSSBO.GetBuffer(); gaussianInfo.offset = 0; gaussianInfo.range = s_GaussianSSBO.GetSize();
-			writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[1].dstSet = s_GaussianDescriptorSet;
-			writes[1].dstBinding = 1; writes[1].dstArrayElement = 0;
-			writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[1].descriptorCount = 1;
-			writes[1].pBufferInfo = &gaussianInfo;
-
-			VkDescriptorBufferInfo sortedInfo{};
-			sortedInfo.buffer = s_ValuesBuffers[0].GetBuffer(); sortedInfo.offset = 0; sortedInfo.range = s_ValuesBuffers[0].GetSize();
-			writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[2].dstSet = s_GaussianDescriptorSet;
-			writes[2].dstBinding = 2; writes[2].dstArrayElement = 0;
-			writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[2].descriptorCount = 1;
-			writes[2].pBufferInfo = &sortedInfo;
-
-			VkDescriptorBufferInfo modelInfo{};
-			modelInfo.buffer = s_ModelTransformSSBO.GetBuffer(); modelInfo.offset = 0; modelInfo.range = s_ModelTransformSSBO.GetSize();
-			writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[3].dstSet = s_GaussianDescriptorSet;
-			writes[3].dstBinding = 4; writes[3].dstArrayElement = 0;
-			writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[3].descriptorCount = 1;
-			writes[3].pBufferInfo = &modelInfo;
-
-			VkDescriptorBufferInfo projInfo{};
-			projInfo.buffer = s_ProjectedSplatsSSBO.GetBuffer(); projInfo.offset = 0; projInfo.range = s_ProjectedSplatsSSBO.GetSize();
-			writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[4].dstSet = s_GaussianDescriptorSet;
-			writes[4].dstBinding = 5; writes[4].dstArrayElement = 0;
-			writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; writes[4].descriptorCount = 1;
-			writes[4].pBufferInfo = &projInfo;
-
-			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-
 			// ---- 写 compute 排序 descriptor sets (缓冲句柄已重建, 需重新绑定) ----
-			auto writeStorage = [&](VkDescriptorSet set, uint32_t binding, const VulkanBuffer& buf) {
-				if (set == VK_NULL_HANDLE || !buf.IsValid()) return;
+			auto writeBuffer = [&](VkDescriptorSet set, uint32_t binding, const VulkanBuffer& buf,
+				VkDescriptorType type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
 				VkDescriptorBufferInfo info{};
 				info.buffer = buf.GetBuffer(); info.offset = 0; info.range = buf.GetSize();
 				VkWriteDescriptorSet w{};
 				w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 				w.dstSet = set; w.dstBinding = binding;
-				w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+				w.descriptorType = type;
 				w.descriptorCount = 1; w.pBufferInfo = &info;
 				vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
 			};
 			// ---- 排序 compute sets (缓冲句柄已重建, 需重新绑定) ----
 			// Upsweep[src=0/1]: b0 keys[src], b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
-			writeStorage(s_UpsweepSet[0], 0, s_KeysBuffers[0]);
-			writeStorage(s_UpsweepSet[1], 0, s_KeysBuffers[1]);
-			writeStorage(s_UpsweepSet[0], 1, s_GlobalHistogramSSBO);
-			writeStorage(s_UpsweepSet[1], 1, s_GlobalHistogramSSBO);
-			writeStorage(s_UpsweepSet[0], 2, s_PartitionHistogramSSBO);
-			writeStorage(s_UpsweepSet[1], 2, s_PartitionHistogramSSBO);
-			writeStorage(s_UpsweepSet[0], 3, s_WorkInfoSSBO);
-			writeStorage(s_UpsweepSet[1], 3, s_WorkInfoSSBO);
+			writeBuffer(s_UpsweepSet[0], 0, s_KeysBuffers[0]);
+			writeBuffer(s_UpsweepSet[1], 0, s_KeysBuffers[1]);
+			writeBuffer(s_UpsweepSet[0], 1, s_GlobalHistogramSSBO);
+			writeBuffer(s_UpsweepSet[1], 1, s_GlobalHistogramSSBO);
+			writeBuffer(s_UpsweepSet[0], 2, s_PartitionHistogramSSBO);
+			writeBuffer(s_UpsweepSet[1], 2, s_PartitionHistogramSSBO);
+			writeBuffer(s_UpsweepSet[0], 3, s_WorkInfoSSBO);
+			writeBuffer(s_UpsweepSet[1], 3, s_WorkInfoSSBO);
 			// Spine: b1 GlobalHist, b2 PartitionHist, b3 WorkInfo(counts)
-			writeStorage(s_SpineSet, 1, s_GlobalHistogramSSBO);
-			writeStorage(s_SpineSet, 2, s_PartitionHistogramSSBO);
-			writeStorage(s_SpineSet, 3, s_WorkInfoSSBO);
+			writeBuffer(s_SpineSet, 1, s_GlobalHistogramSSBO);
+			writeBuffer(s_SpineSet, 2, s_PartitionHistogramSSBO);
+			writeBuffer(s_SpineSet, 3, s_WorkInfoSSBO);
 			// Downsweep[src=0]: b0 keys[0], b1 values[0], b2 PartitionHist, b3 keys[1], b4 values[1], b5 WorkInfo
-			writeStorage(s_DownsweepSet[0], 0, s_KeysBuffers[0]);
-			writeStorage(s_DownsweepSet[0], 1, s_ValuesBuffers[0]);
-			writeStorage(s_DownsweepSet[0], 2, s_PartitionHistogramSSBO);
-			writeStorage(s_DownsweepSet[0], 3, s_KeysBuffers[1]);
-			writeStorage(s_DownsweepSet[0], 4, s_ValuesBuffers[1]);
-			writeStorage(s_DownsweepSet[0], 5, s_WorkInfoSSBO);
+			writeBuffer(s_DownsweepSet[0], 0, s_KeysBuffers[0]);
+			writeBuffer(s_DownsweepSet[0], 1, s_ValuesBuffers[0]);
+			writeBuffer(s_DownsweepSet[0], 2, s_PartitionHistogramSSBO);
+			writeBuffer(s_DownsweepSet[0], 3, s_KeysBuffers[1]);
+			writeBuffer(s_DownsweepSet[0], 4, s_ValuesBuffers[1]);
+			writeBuffer(s_DownsweepSet[0], 5, s_WorkInfoSSBO);
 			// Downsweep[src=1]: b0 keys[1], b1 values[1], b2 PartitionHist, b3 keys[0], b4 values[0], b5 WorkInfo
-			writeStorage(s_DownsweepSet[1], 0, s_KeysBuffers[1]);
-			writeStorage(s_DownsweepSet[1], 1, s_ValuesBuffers[1]);
-			writeStorage(s_DownsweepSet[1], 2, s_PartitionHistogramSSBO);
-			writeStorage(s_DownsweepSet[1], 3, s_KeysBuffers[0]);
-			writeStorage(s_DownsweepSet[1], 4, s_ValuesBuffers[0]);
-			writeStorage(s_DownsweepSet[1], 5, s_WorkInfoSSBO);
+			writeBuffer(s_DownsweepSet[1], 0, s_KeysBuffers[1]);
+			writeBuffer(s_DownsweepSet[1], 1, s_ValuesBuffers[1]);
+			writeBuffer(s_DownsweepSet[1], 2, s_PartitionHistogramSSBO);
+			writeBuffer(s_DownsweepSet[1], 3, s_KeysBuffers[0]);
+			writeBuffer(s_DownsweepSet[1], 4, s_ValuesBuffers[0]);
+			writeBuffer(s_DownsweepSet[1], 5, s_WorkInfoSSBO);
 
-			// ---- 前缀剔除集 (set0, b0..b8): Cull/Scan/Compact 共用 ----
-			if (s_PrefixDescriptorSet != VK_NULL_HANDLE)
+			VkDescriptorSetAllocateInfo allocation{};
+			allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			allocation.descriptorPool = context->GetDescriptorPool();
+			allocation.descriptorSetCount = 1;
+			allocation.pSetLayouts = &s_GaussianDescriptorLayout;
+
+			constexpr auto hostMemory = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+			for (auto& frame : s_Frames)
 			{
-				// b0 FrameInfo UBO (uniform)
-				VkDescriptorBufferInfo prefixUbo{};
-				prefixUbo.buffer = s_FrameInfoUBO.GetBuffer(); prefixUbo.offset = 0; prefixUbo.range = s_FrameInfoUBO.GetSize();
-				VkWriteDescriptorSet uboWrite{};
-				uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-				uboWrite.dstSet = s_PrefixDescriptorSet; uboWrite.dstBinding = 0;
-				uboWrite.dstArrayElement = 0; uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-				uboWrite.descriptorCount = 1; uboWrite.pBufferInfo = &prefixUbo;
-				vkUpdateDescriptorSets(device, 1, &uboWrite, 0, nullptr);
-				// b1..b8 storage
-				writeStorage(s_PrefixDescriptorSet, 1, s_GaussianSSBO);
-				writeStorage(s_PrefixDescriptorSet, 2, s_ModelTransformSSBO);
-				writeStorage(s_PrefixDescriptorSet, 3, s_ProjectedSplatsSSBO);
-				writeStorage(s_PrefixDescriptorSet, 4, s_PrefixScratchSSBO);
-				writeStorage(s_PrefixDescriptorSet, 5, s_PrefixGroupSSBO);
-				writeStorage(s_PrefixDescriptorSet, 6, s_WorkInfoSSBO);
-				writeStorage(s_PrefixDescriptorSet, 7, s_KeysBuffers[0]);
-				writeStorage(s_PrefixDescriptorSet, 8, s_ValuesBuffers[0]);
+				frame.FrameInfo = VulkanBuffer(64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, hostMemory);
+				frame.ModelTransforms = VulkanBuffer(s_GaussianSubmitList.size() * sizeof(glm::mat4), storageUsage, hostMemory);
+				frame.CountsReadback = VulkanBuffer(sizeof(workInfo), VK_BUFFER_USAGE_TRANSFER_DST_BIT, hostMemory);
+				if (vkAllocateDescriptorSets(device, &allocation, &frame.DrawSet) != VK_SUCCESS)
+					throw std::runtime_error("failed to allocate gaussian descriptor set");
+
+				writeBuffer(frame.DrawSet, 0, frame.FrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+				writeBuffer(frame.DrawSet, 1, s_GaussianSSBO);
+				writeBuffer(frame.DrawSet, 2, s_ValuesBuffers[0]);
+				writeBuffer(frame.DrawSet, 4, frame.ModelTransforms);
+				writeBuffer(frame.DrawSet, 5, s_ProjectedSplatsSSBO);
+
+				writeBuffer(frame.PrefixSet, 0, frame.FrameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+				writeBuffer(frame.PrefixSet, 1, s_GaussianSSBO);
+				writeBuffer(frame.PrefixSet, 2, frame.ModelTransforms);
+				writeBuffer(frame.PrefixSet, 3, s_ProjectedSplatsSSBO);
+				writeBuffer(frame.PrefixSet, 4, s_PrefixScratchSSBO);
+				writeBuffer(frame.PrefixSet, 5, s_PrefixGroupSSBO);
+				writeBuffer(frame.PrefixSet, 6, s_WorkInfoSSBO);
+				writeBuffer(frame.PrefixSet, 7, s_KeysBuffers[0]);
+				writeBuffer(frame.PrefixSet, 8, s_ValuesBuffers[0]);
 			}
 
 			// One staging allocation for the scene. Assets already contain GPU-format
@@ -1535,18 +1478,13 @@ namespace Engine {
 			for (uint32_t i = 0; i < s_TotalGaussianCount; i++) identity[i] = i;
 			s_ValuesBuffers[0].SetDataStaged(identity.data(), identity.size() * sizeof(uint32_t));
 
-			UpdateModelTransforms();
-
 			// b3(u_DepthMap) 运行时在 Run() 中按当前 offscreen FBO 的 1x depth resolve 实时绑定 (见 b3 遮挡).
 			s_GaussianResourcesCreated = true;
 		}
 		catch (...)
 		{
-			if (s_GaussianDescriptorSet != VK_NULL_HANDLE)
-				vkFreeDescriptorSets(device, context->GetDescriptorPool(), 1, &s_GaussianDescriptorSet);
-			s_GaussianDescriptorSet = VK_NULL_HANDLE;
+			ReleaseFrameBuffers();
 			s_GaussianSSBO.Destroy();
-			s_ModelTransformSSBO.Destroy();
 			s_KeysBuffers[0].Destroy(); s_KeysBuffers[1].Destroy();
 			s_ValuesBuffers[0].Destroy(); s_ValuesBuffers[1].Destroy();
 			s_GlobalHistogramSSBO.Destroy();
@@ -1563,21 +1501,43 @@ namespace Engine {
 	}
 
 	// 每帧刷新 model transform (gizmo 移动等, 不触发 SSBO 重建)
+	void Renderer::GaussianRenderer::ReleaseFrameBuffers()
+	{
+		auto* context = VulkanContext::Get();
+		for (auto& frame : s_Frames)
+		{
+			if (frame.DrawSet != VK_NULL_HANDLE)
+				vkFreeDescriptorSets(context->GetDevice(), context->GetDescriptorPool(), 1, &frame.DrawSet);
+			frame.DrawSet = VK_NULL_HANDLE;
+			frame.FrameInfo.Destroy();
+			frame.ModelTransforms.Destroy();
+			frame.CountsReadback.Destroy();
+			frame.HasCounts = false;
+		}
+	}
+
+	VkDescriptorSet Renderer::GaussianRenderer::GetGaussianDescriptorSet()
+	{
+		return s_Frames[VulkanContext::Get()->GetFrameSlot()].DrawSet;
+	}
+
 	void Renderer::GaussianRenderer::UpdateModelTransforms()
 	{
-		if (!s_ModelTransformSSBO.IsValid()) return;
+		auto& buffer = s_Frames[VulkanContext::Get()->GetFrameSlot()].ModelTransforms;
+		if (!buffer.IsValid()) return;
 		std::vector<glm::mat4> transforms;
 		transforms.reserve(s_GaussianSubmitList.size());
 		for (const auto& sub : s_GaussianSubmitList)
 			transforms.push_back(sub.Transform);
 		if (!transforms.empty())
-			s_ModelTransformSSBO.SetData(transforms.data(), transforms.size() * sizeof(glm::mat4));
+			buffer.SetData(transforms.data(), transforms.size() * sizeof(glm::mat4));
 	}
 
-	// 每帧刷新 FrameInfo UBO (相机相关, 固定 192B, std140)
+	// 每帧刷新相机和视口参数。
 	void Renderer::GaussianRenderer::UpdateFrameInfoUBO()
 	{
-		if (!s_FrameInfoUBO.IsValid()) return;
+		auto& buffer = s_Frames[VulkanContext::Get()->GetFrameSlot()].FrameInfo;
+		if (!buffer.IsValid()) return;
 
 		struct FrameInfoData
 		{
@@ -1601,7 +1561,7 @@ namespace Engine {
 		data.extraInfo = glm::vec4(1.0f / 255.0f, s_HiZActive ? 1.0f : 0.0f,
 			Renderer::EnableHiZRefinement ? 1.0f : 0.0f, 0.0f);
 
-		s_FrameInfoUBO.SetData(&data, sizeof(FrameInfoData));
+		buffer.SetData(&data, sizeof(FrameInfoData));
 	}
 
 	void Renderer::GaussianRenderer::DestroyHiZResources()
@@ -1656,23 +1616,27 @@ namespace Engine {
 		for (uint32_t level = 0; level < levels; ++level)
 			s_HiZMipViews.push_back(s_HiZImage->CreateView(level, 1, 0, 1));
 
-		std::vector<VkDescriptorSetLayout> layouts(levels, s_HiZSetLayout);
-		std::vector<VkDescriptorSet> buildSets(levels);
+		// Keep the level-zero depth input separate per frame slot. Higher mips
+		// always bind the same views and can share their immutable sets.
+		const uint32_t setCount = levels + VulkanContext::FramesInFlight - 1;
+		std::vector<VkDescriptorSetLayout> layouts(setCount, s_HiZSetLayout);
+		std::vector<VkDescriptorSet> buildSets(setCount);
 		VkDescriptorSetAllocateInfo allocation{};
 		allocation.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocation.descriptorPool = context->GetDescriptorPool();
-		allocation.descriptorSetCount = levels;
+		allocation.descriptorSetCount = setCount;
 		allocation.pSetLayouts = layouts.data();
 		if (vkAllocateDescriptorSets(device, &allocation, buildSets.data()) != VK_SUCCESS)
 			throw std::runtime_error("failed to allocate Hi-Z descriptor sets");
 		s_HiZBuildSets = std::move(buildSets);
 
-		for (uint32_t level = 0; level < levels; ++level)
+		for (uint32_t i = 0; i < setCount; ++i)
 		{
+			const uint32_t level = i < levels ? i : 0;
 			VkDescriptorImageInfo output{ VK_NULL_HANDLE, s_HiZMipViews[level], VK_IMAGE_LAYOUT_GENERAL };
 			VkWriteDescriptorSet write{};
 			write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			write.dstSet = s_HiZBuildSets[level];
+			write.dstSet = s_HiZBuildSets[i];
 			write.dstBinding = 1;
 			write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 			write.descriptorCount = 1;
@@ -1695,11 +1659,13 @@ namespace Engine {
 		if (!framebuffer || framebuffer->GetWidth() == 0 || framebuffer->GetHeight() == 0)
 			return false;
 		CreateHiZResources(framebuffer->GetWidth(), framebuffer->GetHeight());
-		VkDevice device = VulkanContext::Get()->GetDevice();
+		auto* context = VulkanContext::Get();
+		VkDevice device = context->GetDevice();
+		const uint32_t frameSlot = context->GetFrameSlot();
 		VkDescriptorImageInfo pyramid{ s_DepthSampler, s_HiZImage->GetImageView(), VK_IMAGE_LAYOUT_GENERAL };
 		VkWriteDescriptorSet write{};
 		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		write.dstSet = s_PrefixDescriptorSet;
+		write.dstSet = s_Frames[frameSlot].PrefixSet;
 		write.dstBinding = 9;
 		write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		write.descriptorCount = 1;
@@ -1710,7 +1676,6 @@ namespace Engine {
 		if (!Renderer::EnableHiZ || framebuffer->IsMSAA() || framebuffer->GetGaussianDepthView() == VK_NULL_HANDLE)
 			return false;
 
-		auto* context = VulkanContext::Get();
 		context->BeginGpuTiming(RenderStage::HiZBuild, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		VkImageMemoryBarrier depthBarrier{};
 		depthBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1744,7 +1709,9 @@ namespace Engine {
 
 		VkDescriptorImageInfo depth{ s_DepthSampler, framebuffer->GetGaussianDepthView(),
 			VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
-		write.dstSet = s_HiZBuildSets[0];
+		const uint32_t levels = s_HiZImage->GetMipLevels();
+		const VkDescriptorSet baseSet = s_HiZBuildSets[frameSlot == 0 ? 0 : levels + frameSlot - 1];
+		write.dstSet = baseSet;
 		write.dstBinding = 0;
 		write.pImageInfo = &depth;
 		vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
@@ -1752,13 +1719,14 @@ namespace Engine {
 		struct HiZBuildPC { glm::uvec4 sourceInfo; glm::vec4 projection; } pc{};
 		static_assert(sizeof(HiZBuildPC) == 32, "Hi-Z push constant size mismatch");
 		pc.projection = glm::vec4(s_SceneData.ProjectionMatrix[2][2], s_SceneData.ProjectionMatrix[3][2], 0.0f, 0.0f);
-		for (uint32_t level = 0; level < s_HiZImage->GetMipLevels(); ++level)
+		for (uint32_t level = 0; level < levels; ++level)
 		{
 			pc.sourceInfo = glm::uvec4(level == 0 ? 1u : 0u, framebuffer->GetWidth(), framebuffer->GetHeight(), 0u);
 			vkCmdPushConstants(cmd, s_HiZPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
 			uint32_t width = std::max(1u, s_HiZImage->GetWidth() >> level);
 			uint32_t height = std::max(1u, s_HiZImage->GetHeight() >> level);
-			s_HiZBuildShader->Dispatch(cmd, s_HiZPipelineLayout, s_HiZBuildSets[level], (width + 7) / 8, (height + 7) / 8, 1);
+			VkDescriptorSet set = level == 0 ? baseSet : s_HiZBuildSets[level];
+			s_HiZBuildShader->Dispatch(cmd, s_HiZPipelineLayout, set, (width + 7) / 8, (height + 7) / 8, 1);
 			pyramidBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
 			pyramidBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 			pyramidBarrier.subresourceRange.baseMipLevel = level;
@@ -1907,7 +1875,8 @@ namespace Engine {
 		s_SpineSet = allocSet(s_SpineSetLayout);
 		s_DownsweepSet[0] = allocSet(s_DownsweepSetLayout);
 		s_DownsweepSet[1] = allocSet(s_DownsweepSetLayout);
-		s_PrefixDescriptorSet = allocSet(s_PrefixDescriptorSetLayout);
+		for (auto& frame : s_Frames)
+			frame.PrefixSet = allocSet(s_PrefixDescriptorSetLayout);
 	}
 
 
@@ -1927,6 +1896,7 @@ namespace Engine {
 		if (s_TotalGaussianCount == 0) return;
 		const uint32_t numGroups = (s_TotalGaussianCount + 511) / 512;
 		auto* context = VulkanContext::Get();
+		const VkDescriptorSet prefixSet = s_Frames[context->GetFrameSlot()].PrefixSet;
 
 		// Measure between completion points so adjacent phases don't include the preceding phase's drain time.
 		context->BeginGpuTiming(RenderStage::PrefixCull, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -1941,7 +1911,7 @@ namespace Engine {
 		// ============ 前缀视锥剔除: Cull → Scan → Compact ============
 		// Cull: 投影 + 视锥剔除, 写 projectedSplats / prefixScratch / groupData
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixCullShader->GetPipeline());
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &s_PrefixDescriptorSet, 0, nullptr);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &prefixSet, 0, nullptr);
 		struct PrefixCamPC { glm::mat4 view; glm::mat4 proj; } camPC{ s_SceneData.ViewMatrix, s_SceneData.ProjectionMatrix };
 		vkCmdPushConstants(cmd, s_PrefixPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(camPC), &camPC);
 		vkCmdDispatch(cmd, numGroups, 1, 1);
@@ -1952,7 +1922,7 @@ namespace Engine {
 		context->BeginGpuTiming(RenderStage::ScanCompact, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		// Scan: groupData 前缀和 → offsets + 写出 workInfo (间接调度/绘制命令)
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixScanShader->GetPipeline());
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &s_PrefixDescriptorSet, 0, nullptr);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &prefixSet, 0, nullptr);
 		uint32_t scanPC[4] = { s_TotalGaussianCount, 0, 0, 0 };
 		vkCmdPushConstants(cmd, s_PrefixPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(scanPC), scanPC);
 		vkCmdDispatch(cmd, 1, 1, 1);
@@ -1962,7 +1932,7 @@ namespace Engine {
 
 		// Compact: 散射可见高斯 → keys[0]/values[0] (按原始 ID 索引)
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixCompactShader->GetPipeline());
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &s_PrefixDescriptorSet, 0, nullptr);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_PrefixPipelineLayout, 0, 1, &prefixSet, 0, nullptr);
 		uint32_t compactPC[4] = { s_TotalGaussianCount, 0, 0, 0 };
 		vkCmdPushConstants(cmd, s_PrefixPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(compactPC), compactPC);
 		vkCmdDispatch(cmd, numGroups, 1, 1);
@@ -2016,29 +1986,33 @@ namespace Engine {
 		// 经 4 次交换, src 回到 0: vertex shader 直接读取 values[0];
 		// 同步排序结果 + workInfo.draw 给顶点着色器 / 间接绘制读取
 		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
-						  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_HOST_BIT,
-						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_HOST_READ_BIT);
+						  VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+						  VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
 		context->EndGpuTiming(RenderStage::RadixSort);
 	}
 
 	void Renderer::GaussianRenderer::Run()
 	{
-		if (s_GaussianDescriptorSet == VK_NULL_HANDLE) return;
 		if (s_TotalGaussianCount == 0) return;
 		if (!s_OffscreenFramebuffer) return;
 
 		auto* context = VulkanContext::Get();
+		auto& frame = s_Frames[context->GetFrameSlot()];
+		if (frame.DrawSet == VK_NULL_HANDLE) return;
 		VkDevice device = context->GetDevice();
 		VkCommandBuffer cmd = context->GetCurrentCommandBuffer();
 
-		// BeginFrame has waited for the previous submitted frame; read both counts together.
-		void* mapped;
-		if (vkMapMemory(device, s_WorkInfoSSBO.GetMemory(), 0, 64, 0, &mapped) != VK_SUCCESS)
-			throw std::runtime_error("failed to map gaussian visible count!");
-		const auto* counts = static_cast<const uint32_t*>(mapped);
-		s_FrameStatistics.DrawnGaussianCount = counts[0];
-		s_FrameStatistics.FrustumVisibleGaussianCount = counts[12];
-		vkUnmapMemory(device, s_WorkInfoSSBO.GetMemory());
+		// BeginFrame waited for this slot. The shared WorkInfo may already be in use by the other frame.
+		if (frame.HasCounts)
+		{
+			void* mapped;
+			if (vkMapMemory(device, frame.CountsReadback.GetMemory(), 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
+				throw std::runtime_error("failed to map gaussian visible counts");
+			const auto* counts = static_cast<const uint32_t*>(mapped);
+			s_FrameStatistics.DrawnGaussianCount = counts[0];
+			s_FrameStatistics.FrustumVisibleGaussianCount = counts[12];
+			vkUnmapMemory(device, frame.CountsReadback.GetMemory());
+		}
 
 		context->BeginGpuTiming(RenderStage::GaussianPrepare, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		s_HiZActive = BuildHiZ(cmd);
@@ -2072,7 +2046,7 @@ namespace Engine {
     		depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     		VkWriteDescriptorSet depthWrite{};
     		depthWrite.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    		depthWrite.dstSet          = s_GaussianDescriptorSet;
+			depthWrite.dstSet          = frame.DrawSet;
     		depthWrite.dstBinding      = 3;
     		depthWrite.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     		depthWrite.descriptorCount = 1;
@@ -2094,7 +2068,7 @@ namespace Engine {
 		// 绑定高斯资源 set (GAUSSIAN_SET 在本 shader pipeline layout 中的局部序号)
 		int gaussianSetLocal = cfg.GetLocalSetIndex(GAUSSIAN_SET);
 		if (gaussianSetLocal >= 0)
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, (uint32_t)gaussianSetLocal, 1, &s_GaussianDescriptorSet, 0, nullptr);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, (uint32_t)gaussianSetLocal, 1, &frame.DrawSet, 0, nullptr);
 
 
 
@@ -2104,6 +2078,14 @@ namespace Engine {
 
 		VulkanRenderer::EndRenderPass();
 		context->EndGpuTiming(RenderStage::Gaussian);
+
+		InsertBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+		const VkBufferCopy copy{ 0, 0, frame.CountsReadback.GetSize() };
+		vkCmdCopyBuffer(cmd, s_WorkInfoSSBO.GetBuffer(), frame.CountsReadback.GetBuffer(), 1, &copy);
+		InsertBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
+		frame.HasCounts = true;
 	}
 
 void Renderer::MeshRenderer::SetSkyboxData(const std::shared_ptr<Shader>& shader, const std::shared_ptr<Mesh>& mesh)

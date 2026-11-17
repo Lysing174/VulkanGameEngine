@@ -31,7 +31,7 @@ namespace Engine {
 
     enum class CpuSyncStage : size_t
     {
-        QueueWaitIdle, Acquire, Present, Count
+        FenceWait, Acquire, Present, Count
     };
 
     constexpr size_t CpuSyncStageCount = static_cast<size_t>(CpuSyncStage::Count);
